@@ -124,6 +124,18 @@ describe('createScratch', () => {
 		}
 	})
 
+	it('reports a dangling link as existing but unreadable', () => {
+		const scratch = createScratch()
+		try {
+			symlinkSync('missing.txt', join(scratch.path, 'dangling'), 'file')
+
+			expect(scratch.exists('dangling')).toBe(true)
+			expect(scratch.read('dangling')).toBeUndefined()
+		} finally {
+			scratch.destroy()
+		}
+	})
+
 	it('rejects reading a directory with a package-authored error', () => {
 		const scratch = createScratch()
 		try {

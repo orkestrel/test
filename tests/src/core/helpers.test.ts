@@ -24,7 +24,8 @@ describe('waitForDelay', () => {
 
 	it('waits for the requested delay', async () => {
 		const delay = 20
-		const floor = delay * 0.9
+		const clockSlop = 2
+		const floor = delay - clockSlop
 		const start = performance.now()
 		await waitForDelay(delay)
 		const elapsed = performance.now() - start

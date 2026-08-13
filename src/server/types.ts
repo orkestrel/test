@@ -5,26 +5,29 @@ export interface ScratchInterface {
 	/**
 	 * Writes a file, creating each parent directory that does not exist.
 	 *
-	 * @param relative - The path of the file below the scratch directory.
+	 * @param target - A relative or absolute file path contained by the scratch directory.
 	 * @param text - The file contents.
 	 */
-	write(relative: string, text: string): void
+	write(target: string, text: string): void
 	/**
 	 * Reads a file.
 	 *
-	 * @param relative - The path of the file below the scratch directory.
-	 * @returns The file contents, or `undefined` when the file does not exist.
-	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
+	 * @param target - A relative or absolute file path contained by the scratch directory.
+	 * @returns The file contents, or `undefined` when no file can be read, including through a
+	 * symbolic link whose target is missing.
+	 * @throws When the path is a directory, escapes the scratch directory, or its root is a symbolic
+	 * link or file. Reading follows links, so a link the host cannot resolve — a cycle, for one —
+	 * surfaces the host's own error rather than `undefined`.
 	 */
-	read(relative: string): string | undefined
+	read(target: string): string | undefined
 	/**
 	 * Reports whether a path exists.
 	 *
-	 * @param relative - The path below the scratch directory.
-	 * @returns True when the path exists.
+	 * @param target - A relative or absolute path contained by the scratch directory.
+	 * @returns True when the entry exists, including a symbolic link whose target is missing.
 	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
 	 */
-	exists(relative: string): boolean
+	exists(target: string): boolean
 	/** Removes the directory and everything in it. */
 	destroy(): void
 }
@@ -41,6 +44,6 @@ export interface ScratchOptions {
 export interface InventoryOptions {
 	/** The file extensions to include, each written with its leading dot. */
 	readonly extensions?: readonly string[]
-	/** The path segments that exclude a file or directory from the walk. */
+	/** The root-relative path keys to exclude. A directory key also excludes its descendants. */
 	readonly exclude?: readonly string[]
 }
