@@ -67,7 +67,7 @@ import { readInventory } from '@orkestrel/test/server'
 // A suite in tests/ is one directory below the workspace root, which is what `resolveRoot` returns.
 const root = resolveRoot(import.meta)
 
-// Nothing is walked by default, so the directories are a required argument rather than an option.
+// Nothing is walked by default, so the targets are a required argument rather than an option.
 const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['.ts'] })
 
 Object.keys(sources)
@@ -77,6 +77,11 @@ Object.keys(sources)
 // The keys are paths; the values are the file contents.
 sources['src/core/index.ts']
 // "export * from './types.js'\nexport * from './helpers.js'\nexport * from './factories.js'\n"
+
+// A target is a file or a directory. A named file is read whatever the extension filter says.
+Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] }))
+// ['package.json', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+//  'src/core/types.ts']
 
 // An `exclude` entry is a whole key. A file key drops that file.
 Object.keys(
@@ -95,17 +100,20 @@ conversion. Keys are inserted in sorted order, and a plain object reads that ord
 key that is not integer-like.
 
 Two boundaries are worth stating up front, because the two filesystem helpers promise different
-things. `createScratch` allocates its own directory at POSIX mode `0700` and refuses a path that
-lexically escapes it. The suite asserts those bits on POSIX and proves nothing about a host that
-emulates them. The mode keeps another uid out, and neither a sibling test worker nor the code under
-test is another uid. It does not walk segments for symbolic links. A link inside its own allocation
-was created by the test process or by the code the test drives — handing that code `scratch.path`
-is the ordinary use of this helper — and `write` and `read` follow such a link, so either can reach
-outside the allocation through it. `readInventory` walks a directory you supply, usually a checkout
-the test did not create, so it throws on a symlinked root or requested directory and skips a
-symlink met while walking. Neither is a sandbox against hostile filesystem content:
-those refusals stop accidental escape, not an adversary who can create hard links where the test
-process already writes.
+things. `createScratch` allocates its own directory at POSIX mode `0700` — under the host temporary
+directory, or under a `parent` you name — and refuses a path that lexically escapes it. The suite
+asserts those bits on POSIX and proves nothing about a host that emulates them. The mode keeps
+another uid out, and neither a sibling test worker nor the code under test is another uid. It does
+not walk segments for symbolic links. A link inside its own allocation was created by the test
+process, by the code the test drives, or by this package's own `link` — handing that code
+`scratch.path` is the ordinary use of this helper — and `write` and `read` follow such a link, so
+either can reach outside the allocation through it. Naming a `parent` inside a package tree costs
+one more thing: while the allocation exists, everything that walks that tree sees it. `destroy()`
+is unaffected, because it matches the allocation by device, inode, and birth time rather than by
+where it sits. `readInventory` walks a checkout you supply, usually one the test did not create, so
+it throws on a symlinked root or named target and skips a symlink met while walking. Neither is a
+sandbox against hostile filesystem content: those refusals stop accidental escape, not an adversary
+who can create hard links where the test process already writes.
 
 ## Guide
 
