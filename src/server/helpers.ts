@@ -13,10 +13,23 @@ import { fileURLToPath } from 'node:url'
 export function resolveContained(root: string, target: string): string | undefined {
 	const candidate = resolve(root, target)
 	const contained = relative(root, candidate)
+	// Cross-drive containment is unproven because POSIX `relative` never returns an absolute path;
+	// a Windows gate would drive this branch.
 	if (contained === '..' || contained.startsWith(`..${sep}`) || isAbsolute(contained)) {
 		return undefined
 	}
 	return candidate
+}
+
+/**
+ * Reports whether a root-relative key matches an exclusion.
+ *
+ * @param key - The root-relative key to test.
+ * @param exclusions - The normalized root-relative exclusion keys.
+ * @returns Whether an exclusion names the key or one of its ancestors.
+ */
+export function isExcluded(key: string, exclusions: readonly string[]): boolean {
+	return exclusions.some((rule) => rule === '' || key === rule || key.startsWith(`${rule}/`))
 }
 
 /**
@@ -45,7 +58,11 @@ export function readInventory(
 	const base = realpathSync.native(supplied)
 	if (targets.length === 0) return Object.fromEntries([])
 
-	const exclusions = options?.exclude ?? []
+	const exclusions = (options?.exclude ?? []).map((rule) => {
+		const unprefixed = rule.startsWith('./') ? rule.slice(2) : rule
+		const untrailed = unprefixed.endsWith('/') ? unprefixed.slice(0, -1) : unprefixed
+		return untrailed === '.' ? '' : untrailed
+	})
 	const pending: string[] = []
 	const queued = new Set<string>()
 	const contents = new Map<string, string>()
@@ -69,7 +86,7 @@ export function readInventory(
 		}
 
 		const key = relative(base, resolved).split(sep).join('/')
-		if (exclusions.some((rule) => key === rule || key.startsWith(`${rule}/`))) continue
+		if (isExcluded(key, exclusions)) continue
 		if (status.isFile()) {
 			contents.set(key, readFileSync(physical, 'utf8'))
 			continue
@@ -89,11 +106,13 @@ export function readInventory(
 			if (status.isSymbolicLink()) continue
 
 			const key = relative(base, path).split(sep).join('/')
-			if (exclusions.some((rule) => key === rule || key.startsWith(`${rule}/`))) continue
+			if (isExcluded(key, exclusions)) continue
 
 			if (status.isDirectory()) {
 				const physical = realpathSync.native(path)
 				const resolved = resolveContained(base, relative(base, physical))
+				// Walk containment is unproven because POSIX CI skips links before `realpath`;
+				// a host that resolves a walked directory outside `base` would drive this branch.
 				if (resolved === undefined || queued.has(physical)) {
 					continue
 				}

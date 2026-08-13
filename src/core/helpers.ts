@@ -84,6 +84,9 @@ export async function collectStream<T>(stream: ReadableStream<T>): Promise<reado
  */
 export function roundTripJSON<T>(value: T & JSONSafe<T>): T {
 	const serialized = JSON.stringify(value, (_key, current) => {
+		if (current === undefined || typeof current === 'function' || typeof current === 'symbol') {
+			throw new Error('JSON values must not contain undefined, functions, or symbols')
+		}
 		if (typeof current === 'number' && !Number.isFinite(current)) {
 			throw new Error('JSON values must contain finite numbers')
 		}

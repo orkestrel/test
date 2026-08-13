@@ -35,8 +35,11 @@ export type JSONValue =
  * method, a `Date`, or a `Map` meets `never` at that member and is rejected there. A member typed
  * `undefined` is rejected the same way, because serialization drops it from an object and rewrites
  * it to `null` in an array, so the returned type would claim a member the copy does not carry. An
- * optional member survives, since its declared type still narrows to what JSON keeps. `unknown`
- * passes through, so `Record<string, unknown>` is accepted and its values are checked at runtime.
+ * optional member survives, since its declared type still narrows to what JSON keeps. A member
+ * declared `?: X | undefined` and passed an explicit `undefined` is refused; declare it `?: X` and
+ * omit the member instead. `unknown` passes through unvetted by the projection. For an `unknown`
+ * member, `roundTripJSON` refuses `undefined`, functions, symbols, and non-finite numbers at runtime;
+ * JSON otherwise may silently reshape the value, such as a `Date` to a string or a `Map` to `{}`.
  * @example
  * ```ts
  * interface Snapshot {
