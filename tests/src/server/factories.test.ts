@@ -137,34 +137,64 @@ describe('createScratch', () => {
 		}
 	})
 
-	it('refuses writes after destruction', () => {
-		const scratch = createScratch()
-		scratch.destroy()
-
-		expect(() => scratch.write('file.txt', 'file')).toThrow('Scratch directory does not exist')
-	})
-
-	it('refuses existence checks when the scratch root is a symbolic link', () => {
+	it('refuses every member that reaches the root when it is a symbolic link', () => {
 		const scratch = createScratch()
 		const moved = `${scratch.path}-moved`
 		renameSync(scratch.path, moved)
 		symlinkSync(moved, scratch.path, 'dir')
 		try {
-			expect(() => scratch.has('file.txt')).toThrow('Scratch directory is a symbolic link')
+			const message = 'Scratch directory is a symbolic link'
+			expect(() => scratch.has('file.txt')).toThrow(message)
+			expect(() => scratch.write('file.txt', 'file')).toThrow(message)
+			expect(() => scratch.read('file.txt')).toThrow(message)
+			expect(() => scratch.names()).toThrow(message)
+			expect(() => scratch.ensure('made')).toThrow(message)
+			expect(() => scratch.link('linked', 'source')).toThrow(message)
+
+			expect(readdirSync(moved)).toStrictEqual([])
 		} finally {
 			rmSync(scratch.path, { force: true })
 			rmSync(moved, { force: true, recursive: true })
 		}
 	})
 
-	it('refuses existence checks when the scratch root is a file', () => {
+	it('refuses every member that reaches the root when it is a file', () => {
 		const scratch = createScratch()
 		scratch.destroy()
 		writeFileSync(scratch.path, 'file')
 		try {
-			expect(() => scratch.has('file.txt')).toThrow('Scratch path is not a directory')
+			const message = 'Scratch path is not a directory'
+			expect(() => scratch.has('file.txt')).toThrow(message)
+			expect(() => scratch.write('file.txt', 'file')).toThrow(message)
+			expect(() => scratch.read('file.txt')).toThrow(message)
+			expect(() => scratch.names()).toThrow(message)
+			expect(() => scratch.ensure('made')).toThrow(message)
+			expect(() => scratch.link('linked', 'source')).toThrow(message)
+
+			expect(readFileSync(scratch.path, 'utf8')).toBe('file')
 		} finally {
 			rmSync(scratch.path, { force: true })
+		}
+	})
+
+	it('resolves an empty target to the allocation root', () => {
+		const scratch = createScratch()
+		try {
+			scratch.write('file.txt', 'file')
+
+			expect(scratch.ensure('')).toBe(scratch.path)
+			expect(scratch.has('')).toBe(true)
+			expect(scratch.names('')).toStrictEqual(['file.txt'])
+			expect(() => scratch.read('')).toThrow('Scratch path is a directory: ')
+
+			// An empty target names a directory that already exists, so both writing members surface
+			// the host's own refusal rather than a message from this package. The two codes are POSIX,
+			// which is the host this suite runs on.
+			expect(() => scratch.write('', 'root')).toThrow('EISDIR')
+			expect(() => scratch.link('', 'source')).toThrow('EEXIST')
+			expect(scratch.names()).toStrictEqual(['file.txt'])
+		} finally {
+			scratch.destroy()
 		}
 	})
 
@@ -182,20 +212,86 @@ describe('createScratch', () => {
 		expect(after).toStrictEqual(before)
 	})
 
+	describe('destruction', () => {
+		it('refuses writes after destruction', () => {
+			const scratch = createScratch()
+			scratch.destroy()
+
+			expect(() => scratch.write('file.txt', 'file')).toThrow('Scratch directory does not exist')
+			expect(existsSync(scratch.path)).toBe(false)
+		})
+
+		it('returns undefined from a read after destruction', () => {
+			const scratch = createScratch({ files: { 'file.txt': 'file' } })
+			scratch.destroy()
+
+			expect(scratch.read('file.txt')).toBeUndefined()
+			expect(existsSync(scratch.path)).toBe(false)
+		})
+
+		it('reports has as false after destruction', () => {
+			const scratch = createScratch({ files: { 'file.txt': 'file' } })
+			scratch.destroy()
+
+			expect(scratch.has('file.txt')).toBe(false)
+			expect(scratch.has('.')).toBe(false)
+		})
+
+		it('refuses names after destruction', () => {
+			const scratch = createScratch({ files: { 'file.txt': 'file' } })
+			scratch.destroy()
+
+			expect(() => scratch.names()).toThrow('Scratch directory does not exist')
+			expect(() => scratch.names('.')).toThrow('Scratch directory does not exist')
+		})
+
+		it('refuses ensure after destruction and does not recreate the allocation', () => {
+			const scratch = createScratch()
+			scratch.destroy()
+
+			expect(() => scratch.ensure('made')).toThrow('Scratch directory does not exist')
+			expect(existsSync(scratch.path)).toBe(false)
+			expect(existsSync(join(scratch.path, 'made'))).toBe(false)
+		})
+
+		it('refuses link after destruction and does not recreate the allocation', () => {
+			const scratch = createScratch()
+			scratch.destroy()
+
+			expect(() => scratch.link('linked', 'source')).toThrow('Scratch directory does not exist')
+			expect(existsSync(scratch.path)).toBe(false)
+			expect(existsSync(join(scratch.path, 'linked'))).toBe(false)
+		})
+	})
+
 	describe('names', () => {
-		it('lists one level of the scratch root in sorted order', () => {
+		it('lists one level of the scratch root in code-unit order', () => {
 			const scratch = createScratch()
 			try {
-				// Entries are created in descending order. Directory order is a host property, and
-				// this host returns it already sorted, so the expected order below fails for a
-				// dropped sort only on a host whose directories are hash-ordered.
+				// Entries are created in descending order, and the population mixes case with
+				// digit-leading names so the expectation pins `.sort()`'s code-unit order rather
+				// than a locale-aware or numeric order. It cannot discriminate a dropped sort:
+				// directory order is a host property, and closing that gap needs a filesystem whose
+				// native enumeration order differs from sorted, which this one's does not.
 				scratch.write('zeta.txt', 'zeta')
+				scratch.write('nested/deep.txt', 'deep')
 				scratch.write('mid.txt', 'mid')
 				scratch.write('alpha.txt', 'alpha')
-				scratch.ensure('nested')
-				scratch.write('nested/deep.txt', 'deep')
+				scratch.write('Zeta.txt', 'upper zeta')
+				scratch.write('Alpha.txt', 'upper alpha')
+				scratch.write('2.txt', 'two')
+				scratch.write('10.txt', 'ten')
 
-				expect(scratch.names()).toStrictEqual(['alpha.txt', 'mid.txt', 'nested', 'zeta.txt'])
+				expect(scratch.names()).toStrictEqual([
+					'10.txt',
+					'2.txt',
+					'Alpha.txt',
+					'Zeta.txt',
+					'alpha.txt',
+					'mid.txt',
+					'nested',
+					'zeta.txt',
+				])
 			} finally {
 				scratch.destroy()
 			}
@@ -359,6 +455,52 @@ describe('createScratch', () => {
 			}
 		})
 
+		it('surfaces the host EEXIST when something already occupies the target', () => {
+			const scratch = createScratch()
+			try {
+				scratch.write('taken.txt', 'taken')
+				scratch.ensure('taken')
+
+				expect(() => scratch.link('taken.txt', 'source')).toThrow('EEXIST')
+				expect(() => scratch.link('taken', 'source')).toThrow('EEXIST')
+
+				expect(scratch.read('taken.txt')).toBe('taken')
+				expect(lstatSync(join(scratch.path, 'taken')).isDirectory()).toBe(true)
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('lets every member act at a planted link destination while refusing a lexical escape', () => {
+			// The package's contract is lexical containment, not a sandbox: a link inside the
+			// allocation is resolved through, so a member can act outside the allocation. That is
+			// what `link` exists for, so this pins it rather than guarding against it.
+			const destination = createScratch({ prefix: 'orkestrel-test-link-destination-' })
+			const scratch = createScratch()
+			try {
+				destination.write('planted.txt', 'planted')
+				scratch.link('gate', destination.path)
+
+				expect(scratch.ensure('gate/made')).toBe(join(scratch.path, 'gate', 'made'))
+				expect(destination.has('made')).toBe(true)
+				expect(scratch.names('gate')).toStrictEqual(['made', 'planted.txt'])
+				expect(scratch.has('gate/planted.txt')).toBe(true)
+				expect(scratch.read('gate/planted.txt')).toBe('planted')
+
+				scratch.write('gate/written.txt', 'written')
+				expect(destination.read('written.txt')).toBe('written')
+
+				// The other half of the contract: an escape spelled lexically is still refused.
+				expect(() => scratch.ensure(`../${basename(destination.path)}`)).toThrow(
+					`Path outside scratch directory: ../${basename(destination.path)}`,
+				)
+				expect(() => scratch.names('..')).toThrow('Path outside scratch directory: ..')
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
+
 		it('refuses an escaping target while accepting an escaping source', () => {
 			const source = createScratch({ prefix: 'orkestrel-test-link-refusal-' })
 			const scratch = createScratch()
@@ -461,7 +603,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('refuses a prefix containing a path separator', () => {
+		it('refuses a prefix containing either path separator', () => {
 			const parent = createScratch({ prefix: 'orkestrel-test-prefix-separator-' })
 			try {
 				parent.ensure('nested')
@@ -469,13 +611,37 @@ describe('createScratch', () => {
 				expect(() => createScratch({ parent: parent.path, prefix: 'nested/child-' })).toThrow(
 					'Scratch prefix must be a name fragment',
 				)
+				expect(() => createScratch({ parent: parent.path, prefix: 'nested\\child-' })).toThrow(
+					'Scratch prefix must be a name fragment',
+				)
+				// `\` is a name character on this host, so a dropped backslash branch allocates a
+				// directory literally named `nested\child-…` directly beneath the parent.
+				expect(parent.names()).toStrictEqual(['nested'])
 				expect(parent.names('nested')).toStrictEqual([])
 			} finally {
 				parent.destroy()
 			}
 		})
 
-		it('refuses a prefix containing ..', () => {
+		it('accepts a fragment carrying dots', () => {
+			const parent = createScratch({ prefix: 'orkestrel-test-prefix-dotted-' })
+			try {
+				const scratch = createScratch({ parent: parent.path, prefix: 'release-0..2-' })
+
+				expect(dirname(scratch.path)).toBe(resolve(parent.path))
+				expect(basename(scratch.path).startsWith('release-0..2-')).toBe(true)
+				expect(parent.names()).toStrictEqual([basename(scratch.path)])
+
+				scratch.destroy()
+				expect(parent.names()).toStrictEqual([])
+			} finally {
+				parent.destroy()
+			}
+		})
+
+		// A dotted fragment allocates; what is refused here is the separator that would let the
+		// fragment walk out of its parent, which is why the sibling control counts entries there.
+		it('refuses a prefix that walks out of its parent', () => {
 			const parent = createScratch({ prefix: 'orkestrel-test-prefix-escape-' })
 			const sibling = `${basename(parent.path)}-evil-`
 			const before = readdirSync(dirname(parent.path))

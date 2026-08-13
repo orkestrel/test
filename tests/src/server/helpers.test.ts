@@ -152,16 +152,32 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('excludes a directory and every file below it', () => {
+	it('excludes a directory and every file below it at both doors, on whole segments', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-excluded-directory-'))
 		try {
 			mkdirSync(join(root, 'included'))
 			mkdirSync(join(root, 'excluded'))
+			mkdirSync(join(root, 'excluded-other'))
 			writeFileSync(join(root, 'included', 'file.ts'), 'included')
 			writeFileSync(join(root, 'excluded', 'file.ts'), 'excluded')
+			writeFileSync(join(root, 'excluded-other', 'file.ts'), 'sibling')
 
+			// The walked door.
 			expect(readInventory(root, ['.'], { exclude: ['excluded'] })).toStrictEqual({
+				'excluded-other/file.ts': 'sibling',
 				'included/file.ts': 'included',
+			})
+
+			// The named door: a target below an excluded key is excluded there too.
+			expect(readInventory(root, ['excluded/file.ts'], { exclude: ['excluded'] })).toStrictEqual({})
+			expect(readInventory(root, ['excluded'], { exclude: ['excluded'] })).toStrictEqual({})
+
+			// The segment boundary. A raw string prefix would drop the sibling at both doors.
+			expect(
+				readInventory(root, ['excluded-other/file.ts'], { exclude: ['excluded'] }),
+			).toStrictEqual({ 'excluded-other/file.ts': 'sibling' })
+			expect(readInventory(root, ['excluded-other'], { exclude: ['excluded'] })).toStrictEqual({
+				'excluded-other/file.ts': 'sibling',
 			})
 		} finally {
 			rmSync(root, { force: true, recursive: true })

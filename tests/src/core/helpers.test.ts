@@ -152,6 +152,21 @@ describe('roundTripJSON', () => {
 		expect(() => roundTripJSON(session)).toThrow('JSON values must contain finite numbers')
 	})
 
+	it('copies a record of unknown values and refuses a non-finite number inside one', () => {
+		// `JSONSafe` passes `unknown` through, so `Record<string, unknown>` satisfies the bound and
+		// its values are the runtime check's job. The compile-time half of that claim is not
+		// assertable here: this suite has no type-level project.
+		const record: Record<string, unknown> = { flag: true, nested: { count: 2 }, tags: ['x'] }
+		const copy: Record<string, unknown> = roundTripJSON(record)
+
+		expect(copy).toStrictEqual({ flag: true, nested: { count: 2 }, tags: ['x'] })
+		expect(copy).not.toBe(record)
+		expect(copy['nested']).not.toBe(record['nested'])
+
+		const invalid: Record<string, unknown> = { nested: { deep: [Number.NaN] } }
+		expect(() => roundTripJSON(invalid)).toThrow('JSON values must contain finite numbers')
+	})
+
 	it('returns an equal value with fresh object and array references', () => {
 		const value = { enabled: false, nested: ['value', 0, null] }
 		const copy = roundTripJSON(value)
