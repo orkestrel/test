@@ -6,12 +6,13 @@ import { readInventory, resolveContained } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('resolveContained', () => {
-	it('resolves contained targets and rejects relative and absolute escapes', () => {
+	it('resolves relative and absolute contained targets and rejects escapes', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
 		try {
 			expect(resolveContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
+			expect(resolveContained(root, join(root, 'nested'))).toBe(join(root, 'nested'))
 			expect(resolveContained(root, '../outside')).toBeUndefined()
-			expect(resolveContained(root, join(root, 'nested'))).toBeUndefined()
+			expect(resolveContained(root, join(root, '..', 'outside'))).toBeUndefined()
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}
@@ -146,6 +147,22 @@ describe('readInventory', () => {
 				'zeta/c.ts': 'c',
 			})
 			expect(readInventory(root, ['.'], { extensions: [] })).toStrictEqual({})
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it('excludes a directory and every file below it', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-excluded-directory-'))
+		try {
+			mkdirSync(join(root, 'included'))
+			mkdirSync(join(root, 'excluded'))
+			writeFileSync(join(root, 'included', 'file.ts'), 'included')
+			writeFileSync(join(root, 'excluded', 'file.ts'), 'excluded')
+
+			expect(readInventory(root, ['.'], { exclude: ['excluded'] })).toStrictEqual({
+				'included/file.ts': 'included',
+			})
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}

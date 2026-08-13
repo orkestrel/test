@@ -97,9 +97,9 @@ export function roundTripJSON<T extends JSONValue>(value: T): T {
 			throw new Error('JSON values must contain finite numbers')
 		}
 		if (Array.isArray(current)) {
-			pending.push(...current)
+			for (const child of current) pending.push(child)
 		} else if (typeof current === 'object' && current !== null) {
-			pending.push(...Object.values(current))
+			for (const child of Object.values(current)) pending.push(child)
 		}
 	}
 	return parsed

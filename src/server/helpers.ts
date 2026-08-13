@@ -4,21 +4,16 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
- * Resolves a relative target that stays below a root directory.
+ * Resolves a target that stays below a root directory.
  *
  * @param root - The absolute root directory.
- * @param target - The relative target to resolve.
+ * @param target - The relative or absolute target to resolve.
  * @returns The absolute target, or `undefined` when the target escapes the root.
  */
 export function resolveContained(root: string, target: string): string | undefined {
 	const candidate = resolve(root, target)
 	const contained = relative(root, candidate)
-	if (
-		isAbsolute(target) ||
-		contained === '..' ||
-		contained.startsWith(`..${sep}`) ||
-		isAbsolute(contained)
-	) {
+	if (contained === '..' || contained.startsWith(`..${sep}`) || isAbsolute(contained)) {
 		return undefined
 	}
 	return candidate
@@ -52,8 +47,7 @@ export function readInventory(
 	const contents = new Map<string, string>()
 
 	for (const directory of directories) {
-		const target = isAbsolute(directory) ? relative(base, directory) : directory
-		const candidate = resolveContained(base, target)
+		const candidate = resolveContained(base, directory)
 		if (candidate === undefined) {
 			throw new Error(`Directory outside root: ${directory}`)
 		}

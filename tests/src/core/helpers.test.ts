@@ -24,10 +24,11 @@ describe('waitForDelay', () => {
 
 	it('waits for the requested delay', async () => {
 		const delay = 20
+		const floor = delay * 0.9
 		const start = performance.now()
 		await waitForDelay(delay)
 		const elapsed = performance.now() - start
-		expect(elapsed).toBeGreaterThanOrEqual(delay / 2)
+		expect(elapsed).toBeGreaterThanOrEqual(floor)
 	})
 })
 
@@ -66,6 +67,10 @@ describe('requireValue', () => {
 	it('throws for undefined with the requested message', () => {
 		expect(() => requireValue(undefined, 'undefined control')).toThrow('undefined control')
 	})
+
+	it('uses the default message when none is requested', () => {
+		expect(() => requireValue(undefined)).toThrow('Value is required')
+	})
 })
 
 describe('collect', () => {
@@ -87,6 +92,13 @@ describe('collectStream', () => {
 		await expect(
 			collectStream(createStreamSource(['third', 'first', 'second'])),
 		).resolves.toStrictEqual(['third', 'first', 'second'])
+	})
+
+	it('releases the reader lock after collection', async () => {
+		const stream = createStreamSource(['value'])
+		await collectStream(stream)
+
+		expect(stream.locked).toBe(false)
 	})
 })
 
@@ -111,6 +123,21 @@ describe('roundTripJSON', () => {
 		expect(copy).toStrictEqual({ enabled: false, nested: ['value', 0, null] })
 		expect(copy).not.toBe(value)
 		expect(copy.nested).not.toBe(value.nested)
+	})
+
+	it('normalizes negative zero to zero', () => {
+		const copy = roundTripJSON(-0)
+
+		expect(copy).toBe(0)
+		expect(Object.is(copy, -0)).toBe(false)
+	})
+
+	it('copies large arrays and objects without exceeding the argument limit', () => {
+		const values = Array.from({ length: 300_000 }, () => 0)
+		const object = Object.fromEntries(values.map((_value, index) => [String(index), 0]))
+
+		expect(roundTripJSON(values)).toHaveLength(values.length)
+		expect(Object.keys(roundTripJSON(object))).toHaveLength(values.length)
 	})
 
 	it('rejects non-finite numbers at every depth', () => {

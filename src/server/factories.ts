@@ -56,8 +56,13 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			writeFileSync(candidate, text)
 		},
 		read(target) {
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
 			if (!scratch.exists(target)) return undefined
-			return readFileSync(resolve(path, target), 'utf8')
+			if (statSync(candidate).isDirectory()) {
+				throw new Error(`Scratch path is a directory: ${target}`)
+			}
+			return readFileSync(candidate, 'utf8')
 		},
 		exists(target) {
 			const candidate = resolveContained(path, target)

@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	renameSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
@@ -15,6 +16,15 @@ import { createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('createScratch', () => {
+	it('allocates its directory with mode 0700', () => {
+		const scratch = createScratch()
+		try {
+			expect(statSync(scratch.path).mode & 0o777).toBe(0o700)
+		} finally {
+			scratch.destroy()
+		}
+	})
+
 	it('allocates below the temporary directory and seeds nested files', () => {
 		const scratch = createScratch({
 			files: { 'nested/file.txt': 'seeded' },
@@ -111,6 +121,17 @@ describe('createScratch', () => {
 		} finally {
 			scratch.destroy()
 			rmSync(outside, { force: true, recursive: true })
+		}
+	})
+
+	it('rejects reading a directory with a package-authored error', () => {
+		const scratch = createScratch()
+		try {
+			mkdirSync(join(scratch.path, 'nested'))
+
+			expect(() => scratch.read('nested')).toThrow('Scratch path is a directory: nested')
+		} finally {
+			scratch.destroy()
 		}
 	})
 
