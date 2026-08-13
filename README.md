@@ -57,8 +57,10 @@ interface-typed one, and throws rather than turning a non-finite number into `nu
 `resolveRoot` (the directory above the calling module, from `import.meta`).
 
 The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
-file text that a parity suite can assert against, plus `resolveContained`, the lexical check it
-refuses escapes with.
+file text that a parity suite can assert against, plus the three pure leaves behind it and
+`createScratch`: `resolveContained`, the lexical check both refuse escapes with; `isExcluded`, the
+exclusion rule the walk applies; and `matchesIdentity`, the comparison `destroy()` makes before it
+removes anything.
 
 ```ts
 import { resolveRoot } from '@orkestrel/test'
@@ -106,17 +108,17 @@ asserts those bits on POSIX and proves nothing about a host that emulates them. 
 another uid out, and neither a sibling test worker nor the code under test is another uid. It does
 not walk segments for symbolic links. A link inside its own allocation was created by the test
 process, by the code the test drives, or by this package's own `link` — handing that code
-`scratch.path` is the ordinary use of this helper — and every member that takes a target resolves
-through such a link and acts at its destination, so `write`, `read`, `has`, `names`, `ensure`, and
-`link` can all reach outside the allocation through it. Naming a `parent` inside a package tree
-costs one more thing: while the allocation exists, everything that walks that tree sees it.
-`destroy()` is unaffected by where the allocation sits, because it matches by device, inode, and
-birth time. That last one is the host's to supply: where a host has none, libuv reports `ctime` in its
-place, the first write moves it, and `destroy()` then removes nothing and returns as if it had.
-`readInventory` walks a checkout you supply, usually one the test did not create, so
-it throws on a symlinked root or named target and skips a symlink met while walking. Neither is a
-sandbox against hostile filesystem content: those refusals stop accidental escape, not an adversary
-who can create hard links where the test process already writes.
+`scratch.path` is the ordinary use of this helper — and a contained path reaches outside the
+allocation through one. The guide's [traversal](guides/test.md#traversal) section states what each
+member does with a link it meets. Naming a `parent` inside a package tree costs one more thing:
+while the allocation exists, everything that walks that tree sees it. `destroy()` is unaffected by
+where the allocation sits, because it matches the allocation's identity rather than its path. One
+field of that identity is the host's to supply: where a host reports no real creation time, libuv
+reports `ctime` in its place, the first write moves it, and `destroy()` then removes nothing and
+returns as if it had. `readInventory` walks a checkout you supply, usually one the test did not
+create, so it throws on a symlinked root or named target and skips a symlink met while walking.
+Neither is a sandbox against hostile filesystem content: those refusals stop accidental escape, not
+an adversary who can create hard links where the test process already writes.
 
 ## Guide
 

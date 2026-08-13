@@ -20,12 +20,12 @@ npm install --save-dev @orkestrel/test
 ```
 
 `@orkestrel/test` is the host-independent core. `@orkestrel/test/server` is the Node face — the
-filesystem helpers and their containment check. Core touches neither `node:*` nor the DOM, so a
-browser test project imports it unchanged.
+filesystem helpers and the pure leaves they are built from. Core touches neither `node:*` nor the
+DOM, so a browser test project imports it unchanged.
 
 ## Surface
 
-Seventeen exports: eleven values and six types, across two environments.
+Twenty exports: thirteen values and seven types, across two environments.
 
 ```ts
 import { createRecorder, waitForDelay } from '@orkestrel/test'
@@ -89,6 +89,7 @@ Imported from `@orkestrel/test/server`.
 | Type               | Kind      | Shape                                                                                                     |
 | ------------------ | --------- | --------------------------------------------------------------------------------------------------------- |
 | `ScratchInterface` | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `destroy` — one owned directory. |
+| `ScratchIdentity`  | interface | `{ device, inode, birth }` — the three fields that together name one allocation on its host.              |
 | `ScratchOptions`   | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`.                         |
 | `InventoryOptions` | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                        |
 
@@ -98,6 +99,8 @@ Imported from `@orkestrel/test/server`.
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `readInventory`    | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Named files and walked directories, keyed by root-relative path in sorted order. |
 | `resolveContained` | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                |
+| `isExcluded`       | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                      |
+| `matchesIdentity`  | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                 |
 
 `resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
 both call it. It resolves the target against the root — relative or absolute — and returns
@@ -113,6 +116,21 @@ and it lives in a build tool. A test helper with zero runtime dependencies does 
 dependency on the scaffolding tool to obtain a path predicate. If that difference ever stops holding,
 delete `resolveContained` and import `resolveContainedPath` from the `@orkestrel/scaffold` every
 package already has, rather than adding a third variant.
+
+`isExcluded` is the exclusion rule itself, and `readInventory` applies it to a named target and a
+walked entry alike. An exclusion matches whole segments of a root-relative key, so it drops the key
+it names and every key below it, and it leaves a sibling whose name merely starts the same way. It
+takes exclusions already normalized: `readInventory` normalizes the spellings its `exclude` option
+accepts before calling it, so a caller applying the rule to its own keys normalizes its own list. It
+is exported because a consumer walking its own tree wants that rule rather than a second reading of
+what `exclude` means.
+
+`matchesIdentity` is the comparison `destroy()` makes before it removes anything: whether the
+identity read from the allocated path now is the identity recorded when the directory was allocated.
+All three fields are compared because none of them alone identifies an allocation. A device is
+shared by every directory on one filesystem, an index node is reused once its directory is removed,
+and a creation time repeats within the host's timestamp resolution. It is exported so a fixture that
+manages its own directory can make the same check rather than trusting a path.
 
 #### Factories
 
@@ -154,20 +172,31 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 | `names`   | `readonly string[]`   | The entry names directly inside a lexically contained directory, sorted, without their parent paths — the allocated directory itself when the target is omitted. Throws on an escaping path, on a target that is missing or is not a directory, and on a root that is missing, a link, or not a directory.                                                                                         |
 | `ensure`  | `string`              | Creates a directory at a lexically contained path and every missing parent, and returns that lexical path. It is the one member that produces an empty directory, because `write` always creates a file. Idempotent on a directory that already exists. Throws when the target exists and is not a directory, on an escaping path, and on a root that is missing, a link, or not a directory.      |
 | `link`    | `void`                | Creates a symbolic link at a contained path, creating its missing parents. The source is link text rather than a checked path, so it may point outside the directory. Throws on an escaping path, on a root that is missing, a link, or not a directory, and when the host refuses the link — `EEXIST` when something already occupies the path.                                                   |
-| `destroy` | `void`                | Removes the directory this call allocated, and only that: it compares device, inode, and birth time, and removes nothing when any of the three has changed. Idempotent.                                                                                                                                                                                                                            |
-
-Every member that takes a target resolves that target through a symbolic link inside the allocation.
-`write`, `read`, `has`, `names`, `ensure`, and `link` all act on what the link points at, so a
-lexically contained path can read, list, create, and write outside the allocation. That is the
-contract rather than a hole in it: containment here is lexical, `link` is the member that creates
-such a link, and the [threat model](#threat-model) names who else creates one. `ensure` returns the
-lexical path it was given rather than the destination, so `ensure('gate/made')` returns
-`<allocation>/gate/made` while the directory is made wherever `gate` points.
+| `destroy` | `void`                | Removes the directory this call allocated, and only that: it removes the entry at the allocated path while `matchesIdentity` holds against the allocation, and removes nothing when it does not. Idempotent.                                                                                                                                                                                       |
 
 An empty target names the allocation root. `ensure('')` returns the root path, `has('')` reports
 `true`, and `names('')` lists the root. `write('', …)` surfaces the host's `EISDIR` and `link('', …)`
 its `EEXIST`, because the root is a directory that already exists. The host code is the accurate
 answer there, so this package adds no refusal of its own.
+
+### Traversal
+
+Every member that takes a target resolves that target's **intermediate** segments through a symbolic
+link inside the allocation and acts at the destination. `write`, `read`, `has`, `names`, `ensure`,
+and `link` all do this, so a lexically contained path can read, list, create, and write outside the
+allocation. That is the contract rather than a hole in it: containment here is lexical, `link` is
+the member that creates such a link, and the [threat model](#threat-model) names who else creates
+one.
+
+The **final** segment is where two members differ. `has` reads it with `lstat` rather than following
+it, so `has('gate')` reports the link itself and stays `true` after whatever `gate` pointed at is
+removed. `link` acts at the final segment rather than through it, so a second `link('gate', …)`
+surfaces the host's `EEXIST` instead of creating a link inside the destination. `write`, `read`, and
+`names` act at what a final-segment link points at.
+
+`ensure` returns the lexical path it was given rather than the destination, so `ensure('gate/made')`
+returns `<allocation>/gate/made` while the directory is made wherever `gate` points, and
+`ensure('gate')` returns `<allocation>/gate` and leaves the directory it points at alone.
 
 ## Contract
 
@@ -222,9 +251,16 @@ These hold across `src/core`, `src/server`, and this guide.
    nor a directory, or when a target resolves outside the root. A missing target surfaces the host's
    own `ENOENT` rather than a message from this package. It skips a symlink met while walking rather
    than following it. A target may be written relative to the root or as an absolute path inside it,
-   and one that escapes is refused either way. Keys are root-relative and separated by `/` whatever
-   the host separator is. The suite runs on POSIX, where `/` is already the separator, so it proves
-   the key shape and not the conversion. The map is built by inserting
+   and one that escapes is refused either way. An exclusion applies to a named target as well as a
+   walked entry, so exclusion beats naming:
+   `readInventory(root, ['src/core/index.ts'], { exclude: ['src/core'] })` returns `{}`. A
+   `tsconfig` reader expects the more specific entry to win, the way a `files` entry survives
+   `exclude`; here the more specific entry is the one that disappears. Express an exception with a
+   second call that names the kept file and passes no exclusion, and merge the two maps. An
+   exclusion is normalized before the rule applies: a leading `./` and a trailing `/` are stripped,
+   and `''` and `'.'` both name the root, so either drops every key. Keys are root-relative and
+   separated by `/` whatever the host separator is. The suite runs on POSIX, where `/` is already
+   the separator, so it proves the key shape and not the conversion. The map is built by inserting
    the keys in sorted order. Read back, non-integer keys hold that order. Integer-like keys do not,
    because a plain object enumerates them numerically first: four files named `0`, `2`, `10`, and
    `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`. Returning a
@@ -240,38 +276,38 @@ These hold across `src/core`, `src/server`, and this guide.
    throws when that target lexically escapes the allocated directory, and a failed seed removes the
    directory before rethrowing. `link` checks its target and not its source, so a contained link may
    point anywhere. It does not walk the path's segments for symbolic links: that is sandbox behavior
-   and this is not a sandbox. So all six resolve through a link inside the allocation and act at its
-   destination, and a lexically contained path acts outside the allocation. The
-   [threat model](#threat-model) says who creates such a link.
+   and this is not a sandbox. So a lexically contained path can act outside the allocation;
+   [Traversal](#traversal) states what each member does with a link it meets, and the
+   [threat model](#threat-model) says who creates one.
 
-   `names` sorts, and this host cannot show that it does. No name population here makes
-   `readdirSync` return an order that differs from sorted, and a 128-name control mixing case with
-   digit-leading names still came back sorted, so the suite pins the order without discriminating a
-   dropped `.sort()`. What would close it is a filesystem whose native enumeration order differs
-   from sorted, which is a host to run on rather than a test to write.
+   `names` sorts, and the suite discriminates a dropped `.sort()`. Two filenames written from raw
+   bytes give `readdirSync` the reverse of sorted order: `0x80` is an invalid UTF-8 lead byte, so
+   that name reaches JavaScript as `U+FFFD` and sorts after `é`, while on disk `0x80` sorts before
+   `é`'s leading `0xc3`. The suite asserts the host's order, the sorted order, and that the two
+   differ, so it fails rather than going quiet if that population ever stops discriminating.
 
-   `destroy()` is idempotent, and identity is what makes it safe rather than location: it compares
-   the entry at the allocated path against the allocation's device, inode, and birth time, and
-   removes it only while all three still match. A replacement directory left at that path is not
-   removed, and an allocation moved elsewhere is not removed at all. That comparison never consulted
-   the host temporary directory, so it holds unchanged wherever `parent` puts the allocation. Two
-   limits sit beside the `0700` one. The check reads the entry and then removes the path as two
-   steps, so an allocation swapped between them is removed anyway; whoever swaps it runs as the same
-   uid, which is the population the threat model already declines to defend against. And birth time
-   is the host's to supply. This host supplies a real one — the allocation's `birthtimeMs` does not
-   move when files are written into it, while its `ctimeMs` does — so `destroy()` is sound here.
-   Where a host has none, libuv reports `ctime` in its place, the first seeded write moves it, and
-   `destroy()` takes its early return. It returns `void`, so that refusal is indistinguishable from
-   success and the allocation leaks silently.
+   `destroy()` is idempotent, and identity is what makes it safe rather than location: it removes
+   the entry at the allocated path only while `matchesIdentity` holds against the allocation. A
+   replacement directory left at that path is not removed, and an allocation moved elsewhere is not
+   removed at all. That comparison never consulted the host temporary directory, so it holds
+   unchanged wherever `parent` puts the allocation. Two limits sit beside the `0700` one. The check
+   reads the entry and then removes the path as two steps, so an allocation swapped between them is
+   removed anyway; whoever swaps it runs as the same uid, which is the population the threat model
+   already declines to defend against. And birth time is the host's to supply. This host supplies a
+   real one — the allocation's `birthtimeMs` does not move when files are written into it, while its
+   `ctimeMs` does — so `destroy()` is sound here. Where a host has none, libuv reports `ctime` in its
+   place, the first seeded write moves it, and `destroy()` takes its early return. It returns `void`,
+   so that refusal is indistinguishable from success and the allocation leaks silently.
 
 8. **A destroyed allocation answers presence and refuses action.** `read` returns `undefined` and
    `has` returns `false`; `write`, `names`, `ensure`, and `link` throw
-   `Scratch directory does not exist`. The split follows the question rather than the member asking
-   it: whether an entry is present still has a true answer once the directory is gone, and acting on
-   a directory that is gone has none. So the two members that ask answer, and the four that act
-   refuse. `ensure` is why the refusal is written out rather than left to the host: `mkdirSync` with
-   `recursive` recreates every missing parent, so without the check it would rebuild the allocation
-   root and leave a destroyed fixture looking alive.
+   `Scratch directory does not exist`. The split follows the return type: a member whose return type
+   carries absence answers with it, and a member whose return type does not, refuses. `names` asks a
+   question and changes nothing, and it refuses anyway, because `readonly string[]` has no value
+   meaning gone. `write`, `ensure`, and `link` are why the refusal is written out rather than left to
+   the host: each calls `mkdirSync` with `recursive`, which recreates every missing parent, so
+   without the check any of the three would rebuild the allocation root and leave a destroyed
+   fixture looking alive.
 9. **Zero runtime dependencies, and no foreign type in a signature.** `dependencies` is empty and
    stays empty. No exported signature names an `@orkestrel/*` type, so no consumer can be handed a
    two-copies type failure by installing this package.
@@ -292,10 +328,9 @@ walking is sandbox behavior and this is not a sandbox.
 So a link inside the allocation was created by the test process or by the code the test drives, and
 handing `scratch.path` to the code under test is the ordinary use of this helper. `link` is this
 package's own entry in that population: it creates a symbolic link on request, it refuses only an
-escaping target, and its source may name anything. Every member that takes a target — `write`,
-`read`, `has`, `names`, `ensure`, and `link` — resolves through such a link and acts at its
-destination, so any of the six can reach outside the allocation. This helper does not defend against
-that.
+escaping target, and its source may name anything. [Traversal](#traversal) states what each member
+does with a link it meets, and a contained path reaching outside the allocation through one is the
+result. This helper does not defend against that.
 
 `parent` adds one limit, and it is visibility. An allocation under the host temporary directory is
 seen by nothing in the repository. An allocation under a path inside a package tree is seen by
@@ -349,14 +384,15 @@ named reason. Each is revisited when its count or its second reason changes.
 | Numeric corpora, hostile-key tables, deep-freeze, raw invocation, revoked proxies, throwing getters, cyclic and deep record builders | 2–3 each | Fails  | Every group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                                                                                                                                                                                                                                                                                                                                               |
 | Removing one contained entry from a scratch directory without destroying it — `scaffold`, `database`                                 | 2        | Fails  | Two members, `scaffold` at 23 sites and `database` at 8, and the two are independent, so the count is two groups — below three and below five. `sqlite` is not a third member: its one removal deletes a lone `.db` file with no enclosing directory, so that file is the whole fixture and removing it is `destroy` rather than this. `scaffold` has already promoted it to a `remove(relative)` method on the same interface as its `destroy()`, so the row is well-formed and fails on count alone. The cost is real: a migrating `scaffold` or `database` test reaches for `node:fs` beside the scratch, and mixing the two is the failure mode this package exists to end. |
 
-The last row is the only member of `ScratchInterface` the rule kept out, and the same rule decided
-the rest of that interface. `ensure` has 5 members — `scaffold`, `database`, `sea`, `middleware`,
-`browser` — so it clears on count alone. `names` has 4: `middleware` at 14 sites, `scaffold` 11,
-`database` 5, `sea` 2. `link` has 3, and `sea`, `scaffold`, and `middleware` are mutually
-independent, so it clears the three-member half. `has` renames the `exists` this interface already
-carried, so it was never a candidate. `remove` has 2 and is the row above. Every member of that
-interface therefore carries its count, so the one exclusion is checkable against the same numbers as
-the inclusions.
+The last row is a candidate for `ScratchInterface` rather than a member of it: `remove` has 2
+members and is not published. The same rule ruled three names that are published, and each is
+checkable against the same numbers. `ensure` has 5 members — `scaffold`, `database`, `sea`,
+`middleware`, `browser` — so it clears on count alone. `names` has 4: `middleware` at 14 sites,
+`scaffold` 11, `database` 5, `sea` 2. Four is below five, so `names` clears the three-member half
+instead, on `middleware`, `scaffold`, and `sea` being mutually independent. `link` has 3, the same
+three packages, and clears that half the same way. `has` renames the `exists` this interface already
+carried, so it was never a candidate. `path`, `write`, `read`, and `destroy` are what an owned
+directory is rather than candidates measured against the rule, so they carry no count.
 
 Three smaller candidates clear the threshold and are excluded anyway. An error-recording wrapper has
 11 members, and in 10 of them it is a five-line delegate to the recorder that already ships. A
@@ -475,9 +511,8 @@ captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
 ### Read a source inventory
 
 The pairing `resolveRoot` and `readInventory` is what a guides-parity suite needs: the workspace
-root from `import.meta`, then the file map. `exclude` matches whole segments of a root-relative key,
-and a matched key takes every key below it with it, so `src/server` drops the whole directory while
-leaving a sibling `src/server-legacy` alone.
+root from `import.meta`, then the file map. Rule 6 states what an exclusion matches; the last call
+below is the part that surprises people.
 
 ```ts
 import { resolveRoot } from '@orkestrel/test'
@@ -506,6 +541,11 @@ Object.keys(
 // A directory key takes every key below it.
 Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
 // ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts']
+
+// An exclusion also applies to a target you name, so naming one file below an excluded directory
+// does not reinstate it.
+readInventory(root, ['src/core/index.ts'], { extensions: ['.ts'], exclude: ['src/core'] })
+// {} — take the exception in a second call, and merge the two maps
 ```
 
 ### Own a temporary directory
@@ -542,6 +582,14 @@ scratch.link('gate', outside.path)
 scratch.ensure('gate/made') // `${scratch.path}/gate/made` — the lexical path, not the destination
 outside.names() // ['made'] — the directory was made under `outside.path`
 scratch.names('gate') // ['made'] — the same entries, listed through the link
+
+// `link` acts at the final segment rather than through it, so `gate` is occupied.
+scratch.link('gate', outside.path) // throws Error: EEXIST: file already exists
+
+// `has` reads the final segment without following it, and `read` follows it.
+scratch.link('dangling', 'missing.ts')
+scratch.has('dangling') // true — the link is there
+scratch.read('dangling') // undefined — what it points at is not
 
 scratch.destroy()
 scratch.destroy() // no-op — destroy is idempotent
@@ -585,44 +633,36 @@ scratch.destroy()
 
 ## Tests
 
-- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `waitForDelay` against a
-  real elapsed interval, `captureError` on both outcomes and on the exact thrown value,
-  `requireValue` across `0` / `''` / `false` / `null` / `undefined` and its default message,
-  `collect` and `collectStream` on empty and ordered sources plus the reader lock released after
-  collection, `roundTripJSON` reference freshness, its copies of a flat and a nested interface-typed
-  value with fresh references, its non-finite refusal at every depth, inside an interface-typed
-  value, and through `JSON.rawJSON`, its `-0` normalization, and a 300,000-element array and object
-  copied without exceeding the host's argument limit, and `resolveRoot`.
-- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRecorder` call
-  order and typed tuples, and the `clear()` truncation ruling against a captured reference.
-- [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — `resolveContained` on
-  relative and absolute contained targets and on relative and absolute escapes, and `readInventory`
-  key sorting, extension filtering, exact-path exclusion and directory exclusion that prunes the
-  subtree, relative and absolute contained targets, a named file target included regardless of the
-  extension filter and a named directory target walked under it, empty input with root validation, a
-  root-level `__proto__` file, symlinked root refusal for a path and for a trailing-slash file URL,
-  symlinked directory-target and file-target refusal, a non-directory root refused, descendant-link
-  skipping, escaping-target refusal, and host case behavior probed at runtime rather than assumed.
-- [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — `createScratch`
-  allocation below the temporary directory at POSIX mode `0700`, nested seeding, lexical containment
-  refusals, a symbolic-link segment left unwalked, the directory-read refusal, the empty target's six
-  answers, cleanup after a failed seed, every member refused at a symbolic-link root and at a file
-  root, idempotent `destroy()`, and both a replacement directory and a moved allocation left alone.
-  Then one group per ruled member. `destruction` takes all six members after `destroy()`: `read`
-  returning `undefined`, `has` returning `false`, and `write`, `names`, `ensure`, and `link`
-  refusing, with `ensure` and `link` also proven not to recreate the allocation root. `names` sorted
-  at the root and in a subdirectory named either way, plus its escape, missing-target and file-target
-  refusals; `ensure` creating a genuinely empty directory, every missing parent, and the same path
-  twice, plus its file-target and escape refusals; `link` creating a contained link with its parents,
-  pointing one outside the allocation, a dangling link that `has` reports and `read` returns
-  `undefined` for, its `EEXIST` on an occupied target, every member acting at a planted link
-  destination while a lexical escape is still refused, and an escaping target refused while an
-  escaping source is accepted; `parent` allocating and destroying beneath a caller-supplied parent,
-  leaving a foreign directory standing there, and refusing a missing, file, and symlinked parent; and
-  `prefix` accepting a plain fragment and a dotted one while refusing both path separators and a
-  fragment that walks out of its parent.
-- [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ source bijection, the
-  barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
+Each entry names the rules its file proves. The test names carry the cases.
+
+- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — rules 3, 4, and 5, plus
+  `waitForDelay` against a real elapsed interval and `resolveRoot` against the calling file.
+  `collect` and `collectStream` drain an empty and an ordered source, and the stream's reader lock is
+  released afterwards. `roundTripJSON` carries the longest list: a copy of a flat and a nested
+  interface-typed value with fresh references, a record of `unknown` values, the non-finite refusal
+  at every depth and through `JSON.rawJSON`, the `-0` normalization, and a large array and object
+  copied without exceeding the host's argument limit.
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rule 2. It records
+  typed tuples in call order, and truncates a `calls` array the test captured before the `clear()`.
+- [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rule 6, and each pure
+  leaf against its own inputs. `resolveContained` takes contained relative and absolute targets and
+  both spellings of an escape. `matchesIdentity` takes a triple matching in every field and one
+  differing in each. `isExcluded` takes a key, an ancestor, the root, and a sibling that only looks
+  like a match. `readInventory` takes key order, extension filtering, exclusion at the named door and
+  at the walked one with its spellings normalized to one rule, its three link refusals, a root-level
+  `__proto__` file, and the host's own case behavior probed rather than assumed.
+- [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — rules 7 and 8. The
+  ungrouped cases take the `0700` mode, nested seeding, the cleanup after a failed seed, the lexical
+  refusals, the empty target's answers, and every member refused at a symbolic-link root and at a
+  file root; `destroy()` is idempotent, leaves a replacement directory standing, and leaves a moved
+  allocation alone. Then one group per ruled member. `destruction` takes all six members after
+  `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root.
+  `names` takes its sorted output, including the population that discriminates a dropped `.sort()`.
+  `ensure` takes an empty directory, every missing parent, and a repeated call. `link` takes
+  traversal through a planted link, the final segment `has` reports rather than follows, and the
+  `EEXIST` an occupied final segment throws. `parent` and `prefix` take their own refusals.
+- [`tests/guides.test.ts`](../tests/guides.test.ts) — rule 1: the `## Surface` ↔ source bijection,
+  the barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.
 
 ## See also
