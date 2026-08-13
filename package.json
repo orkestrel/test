@@ -1,7 +1,7 @@
 {
 	"name": "@orkestrel/test",
 	"version": "0.0.1",
-	"description": "The @orkestrel/test package.",
+	"description": "The test helpers the Orkestrel fleet repeats — a call recorder, a real delay, JSON and async collectors, and an owned scratch directory with a source-file walker. Zero runtime dependencies. Part of the @orkestrel line.",
 	"keywords": [],
 	"homepage": "https://github.com/orkestrel/test#readme",
 	"bugs": "https://github.com/orkestrel/test/issues",
@@ -61,7 +61,7 @@
 		"test:src:server": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:server",
 		"test:policy": "vitest run --config vite.config.ts --no-cache --reporter=dot --project policy",
 		"test:config": "vitest run --config vite.config.ts --no-cache --reporter=dot --project config",
-		"test:guides": "vitest run --config vite.config.ts --reporter=dot --project guides",
+		"test:guides": "vitest run --config vite.config.ts --no-cache --reporter=dot --project guides",
 		"test:probe": "vitest run --config vite.config.ts --no-cache --reporter=verbose --project probe",
 		"build": "npm run clean && npm run build:src",
 		"build:src": "npm run build:src:core && npm run build:src:server",

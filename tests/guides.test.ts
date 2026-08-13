@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	createGuide,
 	createSource,
+	fenceImports,
 	findMissing,
 	isExternalLink,
 	missingSymbols,
@@ -21,6 +22,10 @@ const files = readInventory(resolveRoot(import.meta), ['src', 'tests', 'guides']
 
 const manifest = parseManifest(requireValue(files['guides/README.md']), 'guides')
 
+// A guide fence imports through the published specifier, so only this package's own specifiers name
+// symbols the reflected source can confirm. Everything else in a fence belongs to another package.
+const specifier = '@orkestrel/test'
+
 describe('guides parity', () => {
 	it('parses a non-empty manifest', () => {
 		expect(manifest.length).toBeGreaterThan(0)
@@ -30,6 +35,13 @@ describe('guides parity', () => {
 		describe(`${entry.concept}`, () => {
 			const guide = createGuide(requireValue(files[entry.spec], `Missing guide: ${entry.spec}`))
 			const source = createSource({ files, module: entry.source })
+			// Derived from source, not from the guide: deleting the guide's `## Methods` section
+			// empties `guide.methods()`, and a check anchored only to the guide then passes with
+			// nothing left to compare.
+			const behavioral = source
+				.exports()
+				.filter((symbol) => symbol.kind === 'interface' && source.methods(symbol.name).length > 0)
+				.map((symbol) => symbol.name)
 
 			it('documents every source export', () => {
 				expect(missingSymbols(source.exports(), guide.surface())).toEqual([])
@@ -45,6 +57,12 @@ describe('guides parity', () => {
 
 			it('declares every barrel symbol directly', () => {
 				expect(missingSymbols(source.surface(), source.exports())).toEqual([])
+			})
+
+			it('documents every behavioral interface', () => {
+				const documented = guide.methods().map((group) => group.interface)
+				expect(findMissing(behavioral, documented)).toEqual([])
+				expect(findMissing(documented, behavioral)).toEqual([])
 			})
 
 			it('documents every public method on implementing interfaces', () => {
@@ -71,8 +89,20 @@ describe('guides parity', () => {
 				}
 			})
 
+			it('imports only real exports in its examples', () => {
+				const exported = source.exports().map((symbol) => symbol.name)
+				const imported = guide
+					.patterns()
+					.flatMap((fence) => fenceImports(fence))
+					.filter((row) => row.specifier === specifier || row.specifier.startsWith(`${specifier}/`))
+					.flatMap((row) => [...row.names])
+				expect(imported.length).toBeGreaterThan(0)
+				expect(findMissing(imported, exported)).toEqual([])
+			})
+
 			it('extracts non-vacuous surface and methods', () => {
 				expect(guide.surface().length).toBeGreaterThan(0)
+				expect(behavioral.length).toBeGreaterThan(0)
 				for (const group of guide.methods()) {
 					expect(group.methods.length).toBeGreaterThan(0)
 				}
