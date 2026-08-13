@@ -52,8 +52,9 @@ scratch.destroy() // idempotent, and it removes only the directory it allocated
 ```
 
 The rest of core is `collect` (drains an async iterable), `collectStream` (drains a
-`ReadableStream`), `roundTripJSON` (copies a `JSONValue`, and throws rather than turning a non-finite
-number into `null`), and `resolveRoot` (the directory above the calling module, from `import.meta`).
+`ReadableStream`), `roundTripJSON` (copies any value `JSONSafe` accepts, including an
+interface-typed one, and throws rather than turning a non-finite number into `null`), and
+`resolveRoot` (the directory above the calling module, from `import.meta`).
 
 The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
 file text that a parity suite can assert against, plus `resolveContained`, the lexical check it

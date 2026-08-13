@@ -1,4 +1,4 @@
-import type { JSONValue } from './types.js'
+import type { JSONSafe } from './types.js'
 
 /**
  * Waits for a host timer to elapse.
@@ -75,13 +75,14 @@ export async function collectStream<T>(stream: ReadableStream<T>): Promise<reado
 /**
  * Copies a JSON value through serialization and parsing.
  *
- * @typeParam T - The JSON value type.
- * @param value - The value to copy.
+ * @typeParam T - The copied value's type, which the copy keeps.
+ * @param value - The value to copy, bounded by its own `JSONSafe` projection.
  * @returns The parsed JSON copy.
  * @remarks Non-finite numbers throw because JSON would replace them with `null`. Negative zero is
- * normalized to zero by JSON serialization.
+ * normalized to zero by JSON serialization. The bound intersects `JSONSafe<T>` rather than
+ * constraining `T` to `JSONValue`, so an interface-typed value round-trips.
  */
-export function roundTripJSON<T extends JSONValue>(value: T): T {
+export function roundTripJSON<T>(value: T & JSONSafe<T>): T {
 	const serialized = JSON.stringify(value, (_key, current) => {
 		if (typeof current === 'number' && !Number.isFinite(current)) {
 			throw new Error('JSON values must contain finite numbers')
@@ -89,10 +90,9 @@ export function roundTripJSON<T extends JSONValue>(value: T): T {
 		return current
 	})
 	const parsed: T = JSON.parse(serialized)
-	const pending: JSONValue[] = [parsed]
+	const pending: unknown[] = [parsed]
 	while (pending.length > 0) {
 		const current = pending.pop()
-		if (current === undefined) continue
 		if (typeof current === 'number' && !Number.isFinite(current)) {
 			throw new Error('JSON values must contain finite numbers')
 		}

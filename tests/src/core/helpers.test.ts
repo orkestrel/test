@@ -10,6 +10,18 @@ import {
 import { describe, expect, it } from 'vitest'
 import { createAsyncSource, createStreamSource } from '../../setup.js'
 
+// Interfaces rather than type aliases: TypeScript grants an implicit index signature to an alias
+// and never to an interface, so only an interface exercises what the `JSONValue` bound rejected.
+interface Snapshot {
+	readonly id: string
+	readonly turns: number
+}
+
+interface Session {
+	readonly snapshot: Snapshot
+	readonly tags: readonly string[]
+}
+
 describe('waitForDelay', () => {
 	it('uses a real timer for the default delay', async () => {
 		let resolved = false
@@ -115,6 +127,29 @@ describe('roundTripJSON', () => {
 		expect(() => roundTripJSON({ nested: Number.POSITIVE_INFINITY })).toThrow(
 			'JSON values must contain finite numbers',
 		)
+	})
+
+	it('copies an interface-typed value', () => {
+		const snapshot: Snapshot = { id: 'a', turns: 2 }
+		const copy: Snapshot = roundTripJSON(snapshot)
+
+		expect(copy).toStrictEqual({ id: 'a', turns: 2 })
+		expect(copy).not.toBe(snapshot)
+	})
+
+	it('copies a nested interface-typed value with fresh references', () => {
+		const session: Session = { snapshot: { id: 'a', turns: 2 }, tags: ['x', 'y'] }
+		const copy: Session = roundTripJSON(session)
+
+		expect(copy).toStrictEqual({ snapshot: { id: 'a', turns: 2 }, tags: ['x', 'y'] })
+		expect(copy.snapshot).not.toBe(session.snapshot)
+		expect(copy.tags).not.toBe(session.tags)
+	})
+
+	it('rejects a non-finite number inside an interface-typed value', () => {
+		const session: Session = { snapshot: { id: 'a', turns: Number.NaN }, tags: [] }
+
+		expect(() => roundTripJSON(session)).toThrow('JSON values must contain finite numbers')
 	})
 
 	it('returns an equal value with fresh object and array references', () => {

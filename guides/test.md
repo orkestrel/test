@@ -25,7 +25,7 @@ browser test project imports it unchanged.
 
 ## Surface
 
-Sixteen exports: eleven values and five types, across two environments.
+Seventeen exports: eleven values and six types, across two environments.
 
 ```ts
 import { createRecorder, waitForDelay } from '@orkestrel/test'
@@ -57,6 +57,7 @@ Imported from `@orkestrel/test`.
 | ------------------- | --------- | ------------------------------------------------------------------------------------------------------- |
 | `RecorderInterface` | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                          |
 | `JSONValue`         | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`. |
+| `JSONSafe`          | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops mapped to `never`.   |
 
 Each interface's `readonly` data members are the row above; its call-signature members are listed
 under [Methods](#methods).
@@ -70,7 +71,7 @@ under [Methods](#methods).
 | `requireValue`  | function | `<T>(value: T \| null \| undefined, message?: string) => T` | Narrows away `null` and `undefined` by throwing.            |
 | `collect`       | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`    | Drains an async iterable into an array, in iteration order. |
 | `collectStream` | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`   | Drains a readable stream into an array, in read order.      |
-| `roundTripJSON` | function | `<T extends JSONValue>(value: T) => T`                      | Copies a JSON value; throws on a non-finite number.         |
+| `roundTripJSON` | function | `<T>(value: T & JSONSafe<T>) => T`                          | Copies a JSON value; throws on a non-finite number.         |
 | `resolveRoot`   | function | `(meta: ImportMeta) => URL`                                 | The URL one directory above the calling module's own file.  |
 
 #### Factories
@@ -166,9 +167,18 @@ These hold across `src/core`, `src/server`, and this guide.
 4. **`requireValue` tests presence, not truth.** `0`, `''`, and `false` pass through unchanged; only
    `null` and `undefined` throw. It exists because `!` and `as` are banned, so a throwing narrowing
    helper is the sanctioned way to reach a value's non-nullable type.
-5. **`roundTripJSON` throws rather than returning `null` quietly.** The `JSONValue` constraint is
-   not enough on its own: `NaN`, `Infinity`, and `-Infinity` are numbers, they satisfy the
-   constraint, and `JSON.stringify` turns each of them into `null`. So the helper rejects a
+5. **`roundTripJSON` bounds its parameter by `JSONSafe<T>`, and throws rather than returning `null`
+   quietly.** The parameter is `T & JSONSafe<T>` rather than `T extends JSONValue`, because a
+   `JSONValue` constraint rejects every `interface`: TypeScript grants an implicit index signature
+   to a type alias and never to an interface, and interfaces are what this fleet's public types are.
+   The projection accepts an interface-typed value, keeps `T` as the return type, and refuses a
+   `Date`, a `Map`, or any method-bearing type at the member that carries it. Two consequences come
+   with the wider bound. `undefined` satisfies it, so a member typed `undefined` is accepted and
+   dropped by serialization — `{ a: undefined }` copies to `{}`, which the copy's type still
+   describes — and a top-level `undefined` is accepted and fails inside `JSON.parse` with
+   `SyntaxError: "undefined" is not valid JSON` rather than with this helper's own message. The
+   bound is also not enough on its own: `NaN`, `Infinity`, and `-Infinity` are numbers, they satisfy
+   it, and `JSON.stringify` turns each of them into `null`. So the helper rejects a
    non-finite number at any depth with `JSON values must contain finite numbers`, and the copy's
    type claim holds for every value it does return. The replacer alone would not close it: a
    `JSON.rawJSON` value carries text `JSON.stringify` emits without inspecting, so
@@ -361,10 +371,19 @@ await collectStream(stream) // [1, 2]
 ```ts
 import { captureError, roundTripJSON } from '@orkestrel/test'
 
-const original = { name: 'a', tags: ['x'] }
-const copy = roundTripJSON(original)
+// An interface, not a type alias: the bound is a projection rather than an index signature, so an
+// interface-typed value copies and keeps its own type.
+interface Snapshot {
+	readonly name: string
+	readonly tags: readonly string[]
+}
+
+const original: Snapshot = { name: 'a', tags: ['x'] }
+const copy: Snapshot = roundTripJSON(original)
 copy // { name: 'a', tags: ['x'] }
 copy.tags === original.tags // false — fresh references all the way down
+
+// roundTripJSON(new Date()) — does not compile; a member JSON cannot carry is typed `never`.
 
 roundTripJSON(-0) // 0 — JSON has no negative zero
 captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
@@ -450,9 +469,10 @@ scratch.destroy()
   real elapsed interval, `captureError` on both outcomes and on the exact thrown value,
   `requireValue` across `0` / `''` / `false` / `null` / `undefined` and its default message,
   `collect` and `collectStream` on empty and ordered sources plus the reader lock released after
-  collection, `roundTripJSON` reference freshness, its non-finite refusal at every depth and through
-  `JSON.rawJSON`, its `-0` normalization, and a 300,000-element array and object copied without
-  exceeding the host's argument limit, and `resolveRoot`.
+  collection, `roundTripJSON` reference freshness, its copies of a flat and a nested interface-typed
+  value with fresh references, its non-finite refusal at every depth, inside an interface-typed
+  value, and through `JSON.rawJSON`, its `-0` normalization, and a 300,000-element array and object
+  copied without exceeding the host's argument limit, and `resolveRoot`.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRecorder` call
   order and typed tuples, and the `clear()` truncation ruling against a captured reference.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — `resolveContained` on
