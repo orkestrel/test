@@ -1,17 +1,17 @@
 # Test
 
-> The test helpers the fleet had already written forty-one times, published once. Every Orkestrel
-> package hand-rolls a call recorder, a delay, a temporary directory, and a source-file walker in its
-> own `tests/setup*.ts`; this package holds one implementation of each and ships as a
-> `devDependency`. Nothing here runs in production code. Source: [`src/core`](../src/core) and
-> [`src/server`](../src/server).
+> The test helpers the fleet kept rewriting, published once: a call recorder, a delay, a temporary
+> directory, and a source-file walker. Each one ships because at least 3 of the 41 published packages
+> had already hand-rolled it in their own `tests/setup*.ts`, and the widest shipped group,
+> `captureError`, had 13. [Limits](#limits) carries the membership rule and the count behind each
+> row. This package holds one implementation of each and ships as a `devDependency`. Nothing here
+> runs in production code. Source: [`src/core`](../src/core) and [`src/server`](../src/server).
 >
-> It has **zero runtime dependencies**, and that is load-bearing rather than tidy. A helper package
-> that depended on `@orkestrel/emitter` would install a second copy of it into every consumer that
-> already pins one, and the compiler reads two copies as two distinct types. Zero dependencies is
-> what makes this package incapable of causing that failure for anyone. The same rule reaches the
-> signatures: no exported type here names an `@orkestrel/*` type, because such a signature rejects
-> the consumer's own local value inside the consumer's own repository.
+> It has **zero runtime dependencies**, and no exported type here names an `@orkestrel/*` type. A
+> dependency on `@orkestrel/emitter` would install a second copy of it beside the one a consumer
+> already pins, and the compiler reads two copies as two distinct types. A foreign type in a
+> signature fails the other way, rejecting the consumer's own local value inside the consumer's own
+> repository. Rule 9 holds both.
 
 ## Install
 
@@ -53,11 +53,11 @@ Imported from `@orkestrel/test`.
 
 #### Types
 
-| Type                | Kind      | Shape                                                                                                                                                                                                       |
-| ------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RecorderInterface` | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                              |
-| `JSONValue`         | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`.                                                                                                     |
-| `JSONSafe`          | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops, including one typed `undefined`, mapped to `never`. `unknown` passes through, so `Record<string, unknown>` is accepted. |
+| Type                | Kind      | Shape                                                                                                                                                                                                                                                                                    |
+| ------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RecorderInterface` | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                                                                                                           |
+| `JSONValue`         | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`.                                                                                                                                                                                  |
+| `JSONSafe`          | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops or reshapes outside its declared type mapped to `never`: `undefined`, an opaque `object` member, and a symbol-keyed member. `unknown` still passes through, so `Record<string, unknown>` is accepted. |
 
 Each interface's `readonly` data members are the row above; its call-signature members are listed
 under [Methods](#methods).
@@ -114,8 +114,8 @@ predicate. This one is lexical only and dependency-free. That one is lexical plu
 refuses a link that leaves the root and a dangling link whose raw target contains a `..` segment —
 and it lives in a build tool. A test helper with zero runtime dependencies does not take a runtime
 dependency on the scaffolding tool to obtain a path predicate. If that difference ever stops holding,
-delete `resolveContained` and import `resolveContainedPath` from the `@orkestrel/scaffold` every
-package already has, rather than adding a third variant.
+delete `resolveContained` and import `resolveContainedPath` from `@orkestrel/scaffold`, which this
+package already carries as a `devDependency`, rather than adding a third variant.
 
 `isExcluded` is the exclusion rule itself, and `readInventory` applies it to a named target and a
 walked entry alike. An exclusion matches whole segments of a root-relative key, so it drops the key
@@ -191,8 +191,9 @@ one.
 The **final** segment is where two members differ. `has` reads it with `lstat` rather than following
 it, so `has('gate')` reports the link itself and stays `true` after whatever `gate` pointed at is
 removed. `link` acts at the final segment rather than through it, so a second `link('gate', …)`
-surfaces the host's `EEXIST` instead of creating a link inside the destination. `write`, `read`, and
-`names` act at what a final-segment link points at.
+surfaces the host's `EEXIST` instead of creating a link inside the destination. `write`, `read`,
+`names`, and `ensure` act at what a final-segment link points at, so `ensure` against a dangling
+final link throws the host's `ENOENT` and creates nothing at the destination.
 
 `ensure` returns the lexical path it was given rather than the destination, so `ensure('gate/made')`
 returns `<allocation>/gate/made` while the directory is made wherever `gate` points, and
@@ -230,16 +231,18 @@ These hold across `src/core`, `src/server`, and this guide.
    `JSONValue` constraint rejects every `interface`: TypeScript grants an implicit index signature
    to a type alias and never to an interface, and interfaces are what this fleet's public types are.
    The projection accepts an interface-typed value, keeps `T` as the return type, and refuses a
-   `Date`, a `Map`, or any method-bearing type at the member that carries it. A member typed
-   `undefined` meets `never` the same way, because serialization drops it from an object and
-   rewrites it to `null` in an array, so the copy's type would claim a member the copy does not
-   carry; `{ a: undefined }` and a top-level `undefined` are both refused at the call. One member
-   type does pass through: `unknown`, so `Record<string, unknown>` is accepted and what its values
-   hold is a runtime question rather than a typed one. The bound is not enough on its own either:
-   `NaN`, `Infinity`, and `-Infinity` are numbers, they satisfy it, and `JSON.stringify` turns each
-   of them into `null`. So the helper rejects a non-finite number at any depth with
-   `JSON values must contain finite numbers`, and the copy's type claim holds for every value it
-   does return. The replacer alone would not close it: a
+   `Date`, a `Map`, or any method-bearing type at the member that carries it. Three more members
+   meet `never` for one reason: the copy would not carry what the type claims. Serialization drops a
+   member typed `undefined` from an object and rewrites it to `null` in an array, so
+   `{ a: undefined }` and a top-level `undefined` are both refused at the call. `JSON.stringify`
+   never enumerates a symbol-keyed member, so the copy arrives without it. And a member declared as
+   the opaque `object` type projects over no members at all, so a `Date` under it would copy back as
+   a string, off the type the member declares. One member type does pass through: `unknown`, so
+   `Record<string, unknown>` is accepted and what its values hold is a runtime question rather than
+   a typed one. The bound is not enough on its own either: `NaN`, `Infinity`, and `-Infinity` are
+   numbers, they satisfy it, and `JSON.stringify` turns each of them into `null`. So the helper
+   rejects a non-finite number at any depth with `JSON values must contain finite numbers`, and the
+   copy's type claim holds for every value it does return. The replacer alone would not close it: a
    `JSON.rawJSON` value carries text `JSON.stringify` emits without inspecting, so
    `JSON.rawJSON('1e400')` passes the replacer untouched and parses back as `Infinity`. The helper
    therefore checks the parsed graph as well, and both doors report the same message. One
@@ -251,8 +254,16 @@ These hold across `src/core`, `src/server`, and this guide.
    nor a directory, or when a target resolves outside the root. A missing target surfaces the host's
    own `ENOENT` rather than a message from this package. It skips a symlink met while walking rather
    than following it. A target may be written relative to the root or as an absolute path inside it,
-   and one that escapes is refused either way. An exclusion applies to a named target as well as a
-   walked entry, so exclusion beats naming:
+   and one that escapes is refused either way.
+
+   A link in the **middle** of a named target is the fourth refusal, and the only one that reaches
+   it: the symbolic-link check reads the final segment, which such a link is not. The named target is
+   resolved with `realpath` and refused when the real path leaves the root, so
+   `readInventory(root, ['link/file.txt'])` with `link` pointing outside throws
+   `Target outside root: link/file.txt`. When that link stays inside the root the target resolves,
+   and the entry is keyed by its **real** path rather than by the path the caller named.
+
+   An exclusion applies to a named target as well as a walked entry, so exclusion beats naming:
    `readInventory(root, ['src/core/index.ts'], { exclude: ['src/core'] })` returns `{}`. A
    `tsconfig` reader expects the more specific entry to win, the way a `files` entry survives
    `exclude`; here the more specific entry is the one that disappears. Express an exception with a
@@ -269,6 +280,7 @@ These hold across `src/core`, `src/server`, and this guide.
    is the host's decision, not this package's: whether two names differing only in case are one file
    varies by filesystem, so the suite probes the running host and asserts what the probe returned
    instead of assuming either answer.
+
 7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
    `mkdtempSync` below `parent`, which creates the directory at POSIX mode `0700`. The suite asserts
    that mode unguarded, so it is proven on POSIX and unproven on a host that emulates permission
@@ -340,10 +352,10 @@ it unset and take the host temporary directory. `destroy()` is unaffected either
 matches on identity rather than on where the allocation sits.
 
 `readInventory` walks a directory the caller supplies, usually a real checkout the test did not
-create, so it does refuse links. It keeps three separate refusals with three outcomes: it throws on
-a symlinked root, throws on a symlinked named target, and skips a symlink met while walking.
-They are three decisions rather than one rule, which is why they are three inline checks and not a
-shared predicate.
+create, so it does refuse links. It keeps four separate refusals: it throws on a symlinked root,
+throws on a symlinked named target, throws on a named target whose real path leaves the root through
+a link in the middle, and skips a symlink met while walking. They are four decisions rather than one
+rule, and each is its own check at the door it guards.
 
 Neither helper stops hard links. A hard link is an ordinary directory entry: `lstat` reports a
 regular file, so `readInventory` reads the outside inode and `createScratch` writes through it.
@@ -639,9 +651,10 @@ Each entry names the rules its file proves. The test names carry the cases.
   `waitForDelay` against a real elapsed interval and `resolveRoot` against the calling file.
   `collect` and `collectStream` drain an empty and an ordered source, and the stream's reader lock is
   released afterwards. `roundTripJSON` carries the longest list: a copy of a flat and a nested
-  interface-typed value with fresh references, a record of `unknown` values, the non-finite refusal
-  at every depth and through `JSON.rawJSON`, the `-0` normalization, and a large array and object
-  copied without exceeding the host's argument limit.
+  interface-typed value with fresh references, a record of `unknown` values, the projection's `never`
+  at an opaque `object` member and at a symbol-keyed one, the non-finite refusal at every depth and
+  through `JSON.rawJSON`, the `-0` normalization, and a large array and object copied without
+  exceeding the host's argument limit.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rule 2. It records
   typed tuples in call order, and truncates a `calls` array the test captured before the `clear()`.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rule 6, and each pure
@@ -649,8 +662,9 @@ Each entry names the rules its file proves. The test names carry the cases.
   both spellings of an escape. `matchesIdentity` takes a triple matching in every field and one
   differing in each. `isExcluded` takes a key, an ancestor, the root, and a sibling that only looks
   like a match. `readInventory` takes key order, extension filtering, exclusion at the named door and
-  at the walked one with its spellings normalized to one rule, its three link refusals, a root-level
-  `__proto__` file, and the host's own case behavior probed rather than assumed.
+  at the walked one with its spellings normalized to one rule, its four link refusals with a
+  contained intermediate link as the control on the fourth, a root-level `__proto__` file, and the
+  host's own case behavior probed rather than assumed.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — rules 7 and 8. The
   ungrouped cases take the `0700` mode, nested seeding, the cleanup after a failed seed, the lexical
   refusals, the empty target's answers, and every member refused at a symbolic-link root and at a
