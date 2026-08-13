@@ -132,12 +132,12 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `ScratchInterface`
 
-| Method    | Returns               | Behavior                                                                                                                                                                                            |
-| --------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write`   | `void`                | Writes a file below the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                 |
-| `read`    | `string \| undefined` | Reads a file, or `undefined` when it does not exist. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. |
-| `exists`  | `boolean`             | Whether a path below the directory exists. Throws on an escaping path, and on a root that is a link or not a directory.                                                                             |
-| `destroy` | `void`                | Removes the directory this call allocated, and only that. Idempotent.                                                                                                                               |
+| Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                          |
+| --------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write`   | `void`                | Writes a file at a path lexically contained by the directory, creating missing parents. Writing follows a symbolic link, so a link inside the directory writes through it to wherever it points, which may be outside. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                     |
+| `read`    | `string \| undefined` | Reads a file, or `undefined` when no file can be read, including through a link whose target is missing. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. Reading follows links, so a link the host cannot resolve, such as a cycle, surfaces the host's own error. |
+| `exists`  | `boolean`             | Whether the entry at a contained path is present, including a link whose target is missing. Throws on an escaping path, and on a root that is a link or not a directory.                                                                                                                                                                                          |
+| `destroy` | `void`                | Removes the directory this call allocated, and only that. Idempotent.                                                                                                                                                                                                                                                                                             |
 
 ## Contract
 
@@ -179,24 +179,27 @@ These hold across `src/core`, `src/server`, and this guide.
    link, or is not a directory, or resolves outside the root. It skips a symlink met while walking
    rather than following it. A requested directory may be written relative to the root or as an
    absolute path inside it, and one that escapes is refused either way. Keys are root-relative and
-   separated by `/` whatever the host separator is, and the map is built by inserting them in sorted
-   order. Read back, non-integer keys hold that order. Integer-like keys do not, because a plain
-   object enumerates them numerically first: four files named `0`, `2`, `10`, and `a.txt` insert as
-   `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`. Returning a `ReadonlyMap` would
-   keep the order and break the structural match with `@orkestrel/guide`'s `SourceOptions.files`
-   that the whole helper is shaped for, so the guarantee narrows instead. Case is the host's
-   decision, not this package's: whether two names differing only in case are one file varies by
-   filesystem, so the suite probes the running host and asserts what the probe returned instead of
-   assuming either answer.
+   separated by `/` whatever the host separator is. The suite runs on POSIX, where `/` is already
+   the separator, so it proves the key shape and not the conversion. The map is built by inserting
+   the keys in sorted order. Read back, non-integer keys hold that order. Integer-like keys do not,
+   because a plain object enumerates them numerically first: four files named `0`, `2`, `10`, and
+   `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`. Returning a
+   `ReadonlyMap` would keep the order and break the structural match with `@orkestrel/guide`'s
+   `SourceOptions.files` that the whole helper is shaped for, so the guarantee narrows instead. Case
+   is the host's decision, not this package's: whether two names differing only in case are one file
+   varies by filesystem, so the suite probes the running host and asserts what the probe returned
+   instead of assuming either answer.
 7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
-   `mkdtempSync`, which creates the directory at mode `0700`, and the suite asserts that mode on the
-   host it runs on. Every `write`, `read`, and `exists` path that lexically escapes the allocated
-   directory throws, and a failed seed removes the directory before rethrowing. It does not walk the
-   path's segments for symbolic links: that is sandbox behavior, this is not a sandbox, and a link
-   inside the allocation is one the test itself created. `destroy()` is idempotent,
-   and it removes only the directory this call allocated. It compares the entry at the allocated
-   path against the allocation's device, inode, and birth time, so a replacement directory left
-   there is not removed, and an allocation moved elsewhere is not removed at all.
+   `mkdtempSync`, which creates the directory at POSIX mode `0700`. The suite asserts that mode
+   unguarded, so it is proven on POSIX and unproven on a host that emulates permission bits. Every
+   `write`, `read`, and `exists` path that lexically escapes the allocated directory throws, and a
+   failed seed removes the directory before rethrowing. It does not walk the path's segments for
+   symbolic links: that is sandbox behavior and this is not a sandbox, so `write` and `read` follow
+   a link inside the allocation and can reach outside it. The [threat model](#threat-model) says who
+   creates such a link. `destroy()` is idempotent, and it removes only the directory this call
+   allocated. It compares the entry at the allocated path against the allocation's device, inode,
+   and birth time, so a replacement directory left there is not removed, and an allocation moved
+   elsewhere is not removed at all.
 8. **Zero runtime dependencies, and no foreign type in a signature.** `dependencies` is empty and
    stays empty. No exported signature names an `@orkestrel/*` type, so no consumer can be handed a
    two-copies type failure by installing this package.
@@ -204,16 +207,20 @@ These hold across `src/core`, `src/server`, and this guide.
 ### Threat model
 
 The two filesystem helpers make different promises, because they work on different directories.
-Read rule 7 against the first paragraph below and rule 6 against the second.
+Read rule 7 against the `createScratch` paragraphs below and rule 6 against the `readInventory` one.
 
-`createScratch` allocates its own directory with `mkdtempSync` at mode `0700`, and the suite asserts
-that mode. The mode keeps another uid out. It does not keep out a sibling test worker or the code
-under test, because both run as the same uid, and they are the population that would create a link
-here. Its containment check is lexical: it refuses a relative path that escapes the allocated
-directory, which is the accident that actually happens — a test writing `../foo`. It does not walk
-the path's segments for symbolic links. Per-segment walking is sandbox behavior, this is not a
-sandbox, and a link inside that directory is one the test put there — which is true whatever the
-permissions are.
+`createScratch` allocates its own directory with `mkdtempSync` at POSIX mode `0700`, and the suite
+asserts that mode on POSIX, the only host CI runs. The mode keeps another uid out. It does not keep
+out a sibling test worker or the code under test, because both run as the same uid, and they are the
+population that would create a link here. Its containment check is lexical: it refuses a relative
+path that escapes the allocated directory, which is the accident that actually happens — a test
+writing `../foo`. It does not walk the path's segments for symbolic links, because per-segment
+walking is sandbox behavior and this is not a sandbox.
+
+So a link inside the allocation was created by the test process or by the code the test drives, and
+handing `scratch.path` to the code under test is the ordinary use of this helper. `write` and `read`
+follow such a link, so either one can reach outside the allocation through it. This helper does not
+defend against that.
 
 `readInventory` walks a directory the caller supplies, usually a real checkout the test did not
 create, so it does refuse links. It keeps three separate refusals with three outcomes: it throws on
@@ -441,22 +448,27 @@ scratch.destroy()
 
 - [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `waitForDelay` against a
   real elapsed interval, `captureError` on both outcomes and on the exact thrown value,
-  `requireValue` across `0` / `''` / `false` / `null` / `undefined`, `collect` and `collectStream` on
-  empty and ordered sources, `roundTripJSON` reference freshness and its non-finite refusal at every
-  depth, and `resolveRoot`.
+  `requireValue` across `0` / `''` / `false` / `null` / `undefined` and its default message,
+  `collect` and `collectStream` on empty and ordered sources plus the reader lock released after
+  collection, `roundTripJSON` reference freshness, its non-finite refusal at every depth and through
+  `JSON.rawJSON`, its `-0` normalization, and a 300,000-element array and object copied without
+  exceeding the host's argument limit, and `resolveRoot`.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRecorder` call
   order and typed tuples, and the `clear()` truncation ruling against a captured reference.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — `resolveContained` on
   relative and absolute contained targets and on relative and absolute escapes, and `readInventory`
-  key sorting, extension filtering, exact-path exclusion, relative and absolute contained
-  directories, empty input with root validation, a root-level `__proto__` file, symlinked root and
-  requested directory refusal, descendant-link skipping, escaping-directory refusal, and host case
-  behavior probed at runtime rather than assumed.
+  key sorting, extension filtering, exact-path exclusion and directory exclusion that prunes the
+  subtree, relative and absolute contained directories, empty input with root validation, a
+  root-level `__proto__` file, symlinked root refusal for a path and for a trailing-slash file URL,
+  symlinked requested-directory refusal, a non-directory root and a requested file refused,
+  descendant-link skipping, escaping-directory refusal, and host case behavior probed at runtime
+  rather than assumed.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — `createScratch`
-  allocation below the temporary directory at mode `0700`, nested seeding, the prefix guard, lexical
-  containment refusals, a symbolic-link segment left unwalked, the directory-read refusal, cleanup
-  after a failed seed, refusal after destruction, a symbolic-link root and a file root, idempotent
-  `destroy()`, and both a replacement directory and a moved allocation left alone.
+  allocation below the temporary directory at POSIX mode `0700`, nested seeding, the prefix guard,
+  lexical containment refusals, a symbolic-link segment left unwalked, a dangling link that `exists`
+  reports and `read` returns `undefined` for, the directory-read refusal, cleanup after a failed
+  seed, refusal after destruction, a symbolic-link root and a file root, idempotent `destroy()`, and
+  both a replacement directory and a moved allocation left alone.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ source bijection, the
   barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.

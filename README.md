@@ -55,8 +55,9 @@ The rest of core is `collect` (drains an async iterable), `collectStream` (drain
 `ReadableStream`), `roundTripJSON` (copies a `JSONValue`, and throws rather than turning a non-finite
 number into `null`), and `resolveRoot` (the directory above the calling module, from `import.meta`).
 
-The server face adds `readInventory`, which reads a checkout into a file map a parity suite can
-assert against, plus `resolveContained`, the lexical check it refuses escapes with.
+The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
+file text that a parity suite can assert against, plus `resolveContained`, the lexical check it
+refuses escapes with.
 
 ```ts
 import { resolveRoot } from '@orkestrel/test'
@@ -72,22 +73,38 @@ Object.keys(sources)
 // ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
 //  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts', 'src/server/types.ts']
 
-// Keys are root-relative and `/`-separated whatever the host uses, so an `exclude` is a whole key.
+// The keys are paths; the values are the file contents.
+sources['src/core/index.ts']
+// "export * from './types.js'\nexport * from './helpers.js'\nexport * from './factories.js'\n"
+
+// An `exclude` entry is a whole key. A file key drops that file.
 Object.keys(
 	readInventory(root, ['src/core'], { extensions: ['.ts'], exclude: ['src/core/index.ts'] }),
 )
 // ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts']
+
+// A directory key prunes its whole subtree.
+Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
+// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts']
 ```
 
+Keys are root-relative and `/`-separated whatever the host separator is, though this package's own
+suite runs on POSIX, where that conversion is an identity, so it proves the key shape and not the
+conversion. Keys are inserted in sorted order, and a plain object reads that order back for every
+key that is not integer-like.
+
 Two boundaries are worth stating up front, because the two filesystem helpers promise different
-things. `createScratch` allocates its own directory at mode `0700` and refuses a path that lexically
-escapes it. It does not walk segments for symbolic links: a link inside its own allocation is one
-the test put there. The mode keeps another uid out, and neither a sibling test worker nor the code
-under test is another uid. `readInventory` walks a directory you supply, usually a checkout the test
-did not create, so it throws on a symlinked root or requested directory and skips a symlink met
-while walking. Neither is a sandbox against hostile filesystem content: those refusals stop
-accidental escape, not an adversary who can create hard links where the test process already
-writes.
+things. `createScratch` allocates its own directory at POSIX mode `0700` and refuses a path that
+lexically escapes it. The suite asserts those bits on POSIX and proves nothing about a host that
+emulates them. The mode keeps another uid out, and neither a sibling test worker nor the code under
+test is another uid. It does not walk segments for symbolic links. A link inside its own allocation
+was created by the test process or by the code the test drives — handing that code `scratch.path`
+is the ordinary use of this helper — and `write` and `read` follow such a link, so either can reach
+outside the allocation through it. `readInventory` walks a directory you supply, usually a checkout
+the test did not create, so it throws on a symlinked root or requested directory and skips a
+symlink met while walking. Neither is a sandbox against hostile filesystem content:
+those refusals stop accidental escape, not an adversary who can create hard links where the test
+process already writes.
 
 ## Guide
 
