@@ -83,7 +83,7 @@ Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.t
 // ['package.json', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts']
 
-// An `exclude` entry is a whole key. A file key drops that file.
+// An `exclude` entry matches whole key segments. A file key drops that file.
 Object.keys(
 	readInventory(root, ['src/core'], { extensions: ['.ts'], exclude: ['src/core/index.ts'] }),
 )
@@ -106,11 +106,14 @@ asserts those bits on POSIX and proves nothing about a host that emulates them. 
 another uid out, and neither a sibling test worker nor the code under test is another uid. It does
 not walk segments for symbolic links. A link inside its own allocation was created by the test
 process, by the code the test drives, or by this package's own `link` — handing that code
-`scratch.path` is the ordinary use of this helper — and `write` and `read` follow such a link, so
-either can reach outside the allocation through it. Naming a `parent` inside a package tree costs
-one more thing: while the allocation exists, everything that walks that tree sees it. `destroy()`
-is unaffected, because it matches the allocation by device, inode, and birth time rather than by
-where it sits. `readInventory` walks a checkout you supply, usually one the test did not create, so
+`scratch.path` is the ordinary use of this helper — and every member that takes a target resolves
+through such a link and acts at its destination, so `write`, `read`, `has`, `names`, `ensure`, and
+`link` can all reach outside the allocation through it. Naming a `parent` inside a package tree
+costs one more thing: while the allocation exists, everything that walks that tree sees it.
+`destroy()` is unaffected by where the allocation sits, because it matches by device, inode, and
+birth time. That last one is the host's to supply: where a host has none, libuv reports `ctime` in its
+place, the first write moves it, and `destroy()` then removes nothing and returns as if it had.
+`readInventory` walks a checkout you supply, usually one the test did not create, so
 it throws on a symlinked root or named target and skips a symlink met while walking. Neither is a
 sandbox against hostile filesystem content: those refusals stop accidental escape, not an adversary
 who can create hard links where the test process already writes.
