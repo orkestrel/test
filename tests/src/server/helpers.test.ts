@@ -32,7 +32,7 @@ describe('readInventory', () => {
 
 			expect(readInventory(root, ['src'])).toStrictEqual({ 'src/file.txt': 'source' })
 			expect(readInventory(root, [source])).toStrictEqual({ 'src/file.txt': 'source' })
-			expect(() => readInventory(root, [outside])).toThrow(`Directory outside root: ${outside}`)
+			expect(() => readInventory(root, [outside])).toThrow(`Target outside root: ${outside}`)
 		} finally {
 			rmSync(parent, { force: true, recursive: true })
 		}
@@ -168,18 +168,18 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('refuses directories outside the root', () => {
+	it('refuses a target outside the root', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-escape-'))
 		const root = join(parent, 'root')
 		try {
 			mkdirSync(root)
-			expect(() => readInventory(root, ['..'])).toThrow('Directory outside root: ..')
+			expect(() => readInventory(root, ['..'])).toThrow('Target outside root: ..')
 		} finally {
 			rmSync(parent, { force: true, recursive: true })
 		}
 	})
 
-	it('refuses a symlinked requested directory and a requested file', () => {
+	it('refuses a symlinked directory target and a symlinked file target', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-directory-'))
 		const root = join(parent, 'root')
 		try {
@@ -187,11 +187,52 @@ describe('readInventory', () => {
 			mkdirSync(join(root, 'real'))
 			writeFileSync(join(root, 'file.txt'), 'file')
 			symlinkSync(join(root, 'real'), join(root, 'linked'), 'dir')
+			symlinkSync(join(root, 'file.txt'), join(root, 'linked.txt'), 'file')
 
-			expect(() => readInventory(root, ['linked'])).toThrow('Directory is a symbolic link: linked')
-			expect(() => readInventory(root, ['file.txt'])).toThrow('Not a directory: file.txt')
+			expect(() => readInventory(root, ['linked'])).toThrow('Target is a symbolic link: linked')
+			expect(() => readInventory(root, ['linked.txt'])).toThrow(
+				'Target is a symbolic link: linked.txt',
+			)
+			expect(readInventory(root, ['file.txt'])).toStrictEqual({ 'file.txt': 'file' })
 		} finally {
 			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+
+	it('includes a named file target regardless of the extension filter', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-file-target-'))
+		try {
+			mkdirSync(join(root, 'src'))
+			writeFileSync(join(root, 'notes.md'), 'notes')
+			writeFileSync(join(root, 'src', 'index.ts'), 'index')
+
+			expect(readInventory(root, ['notes.md', 'src'], { extensions: ['.ts'] })).toStrictEqual({
+				'notes.md': 'notes',
+				'src/index.ts': 'index',
+			})
+			expect(Object.keys(readInventory(root, ['.'], { extensions: ['.ts'] }))).toStrictEqual([
+				'src/index.ts',
+			])
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it('walks a named directory target under the extension filter', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-directory-target-'))
+		try {
+			mkdirSync(join(root, 'src', 'nested'), { recursive: true })
+			writeFileSync(join(root, 'outside.ts'), 'outside')
+			writeFileSync(join(root, 'src', 'index.ts'), 'index')
+			writeFileSync(join(root, 'src', 'data.json'), 'data')
+			writeFileSync(join(root, 'src', 'nested', 'deep.ts'), 'deep')
+
+			expect(readInventory(root, ['src'], { extensions: ['.ts'] })).toStrictEqual({
+				'src/index.ts': 'index',
+				'src/nested/deep.ts': 'deep',
+			})
+		} finally {
+			rmSync(root, { force: true, recursive: true })
 		}
 	})
 
