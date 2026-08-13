@@ -1,7 +1,16 @@
 import type { ScratchInterface, ScratchOptions } from './types.js'
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { hasSymbolicLink, resolveContained } from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -17,26 +26,13 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		throw new Error('Scratch prefix must stay within the temporary directory')
 
 	const path = mkdtempSync(prefix)
+	const allocation = statSync(path)
+	const outside = 'Path outside scratch directory'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
-			const candidate = resolve(path, target)
-			const contained = relative(path, candidate)
-			if (
-				isAbsolute(target) ||
-				contained === '..' ||
-				contained.startsWith(`..${sep}`) ||
-				isAbsolute(contained)
-			) {
-				throw new Error(`Path outside scratch directory: ${target}`)
-			}
-
-			let current = path
-			for (const segment of contained.split(sep)) {
-				current = resolve(current, segment)
-				const status = lstatSync(current, { throwIfNoEntry: false })
-				if (status === undefined) break
-				if (status.isSymbolicLink()) throw new Error(`Path is a symbolic link: ${target}`)
-			}
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			if (hasSymbolicLink(path, candidate)) throw new Error(`Path is a symbolic link: ${target}`)
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
@@ -46,90 +42,43 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		throw error
 	}
 
-	return {
+	const scratch: ScratchInterface = {
 		path,
 		write(target, text) {
+			if (!scratch.exists('.')) throw new Error('Scratch directory does not exist')
+			scratch.exists(target)
+
 			const candidate = resolve(path, target)
-			const contained = relative(path, candidate)
-			if (
-				isAbsolute(target) ||
-				contained === '..' ||
-				contained.startsWith(`..${sep}`) ||
-				isAbsolute(contained)
-			) {
-				throw new Error(`Path outside scratch directory: ${target}`)
-			}
-
-			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
-			if (rootStatus === undefined) throw new Error('Scratch directory does not exist')
-			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
-			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
-
-			let current = path
-			for (const segment of contained.split(sep)) {
-				current = resolve(current, segment)
-				const status = lstatSync(current, { throwIfNoEntry: false })
-				if (status === undefined) break
-				if (status.isSymbolicLink()) throw new Error(`Path is a symbolic link: ${target}`)
-			}
-
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
 		},
 		read(target) {
-			const candidate = resolve(path, target)
-			const contained = relative(path, candidate)
-			if (
-				isAbsolute(target) ||
-				contained === '..' ||
-				contained.startsWith(`..${sep}`) ||
-				isAbsolute(contained)
-			) {
-				throw new Error(`Path outside scratch directory: ${target}`)
-			}
-
-			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
-			if (rootStatus === undefined) return undefined
-			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
-			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
-
-			let current = path
-			for (const segment of contained.split(sep)) {
-				current = resolve(current, segment)
-				const status = lstatSync(current, { throwIfNoEntry: false })
-				if (status === undefined) return undefined
-				if (status.isSymbolicLink()) throw new Error(`Path is a symbolic link: ${target}`)
-			}
-			return readFileSync(candidate, 'utf8')
+			if (!scratch.exists(target)) return undefined
+			return readFileSync(resolve(path, target), 'utf8')
 		},
 		exists(target) {
-			const candidate = resolve(path, target)
-			const contained = relative(path, candidate)
-			if (
-				isAbsolute(target) ||
-				contained === '..' ||
-				contained.startsWith(`..${sep}`) ||
-				isAbsolute(contained)
-			) {
-				throw new Error(`Path outside scratch directory: ${target}`)
-			}
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
 
 			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
 			if (rootStatus === undefined) return false
 			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
 			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
 
-			let current = path
-			for (const segment of contained.split(sep)) {
-				current = resolve(current, segment)
-				const status = lstatSync(current, { throwIfNoEntry: false })
-				if (status === undefined) return false
-				if (status.isSymbolicLink()) throw new Error(`Path is a symbolic link: ${target}`)
-			}
-			return true
+			if (hasSymbolicLink(path, candidate)) throw new Error(`Path is a symbolic link: ${target}`)
+			return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined
 		},
 		destroy() {
+			const status = lstatSync(path, { throwIfNoEntry: false })
+			if (
+				status === undefined ||
+				status.dev !== allocation.dev ||
+				status.ino !== allocation.ino ||
+				status.birthtimeMs !== allocation.birthtimeMs
+			)
+				return
 			rmSync(path, { force: true, recursive: true })
 		},
 	}
+	return scratch
 }

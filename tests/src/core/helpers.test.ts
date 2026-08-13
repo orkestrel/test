@@ -99,6 +99,21 @@ describe('roundTripJSON', () => {
 		expect(copy).not.toBe(value)
 		expect(copy.nested).not.toBe(value.nested)
 	})
+
+	it('rejects non-finite numbers at every depth', () => {
+		expect(() => roundTripJSON(Number.NaN)).toThrow('JSON values must contain finite numbers')
+		expect(() => roundTripJSON(Number.POSITIVE_INFINITY)).toThrow(
+			'JSON values must contain finite numbers',
+		)
+		expect(() => roundTripJSON(Number.NEGATIVE_INFINITY)).toThrow(
+			'JSON values must contain finite numbers',
+		)
+		expect(() => roundTripJSON([0, Number.NaN])).toThrow('JSON values must contain finite numbers')
+		expect(() => roundTripJSON({ nested: Number.POSITIVE_INFINITY })).toThrow(
+			'JSON values must contain finite numbers',
+		)
+		expect(roundTripJSON({ nested: [0, 1.5, -2] })).toStrictEqual({ nested: [0, 1.5, -2] })
+	})
 })
 
 describe('resolveRoot', () => {

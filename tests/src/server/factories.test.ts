@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	rmSync,
 	symlinkSync,
+	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, isAbsolute, join, relative } from 'node:path'
@@ -42,6 +43,21 @@ describe('createScratch', () => {
 		scratch.destroy()
 		expect(existsSync(scratch.path)).toBe(false)
 		expect(() => scratch.destroy()).not.toThrow()
+	})
+
+	it('leaves a replacement directory at the allocated path', () => {
+		const scratch = createScratch()
+		rmSync(scratch.path, { recursive: true })
+		mkdirSync(scratch.path)
+		writeFileSync(join(scratch.path, 'replacement.txt'), 'replacement')
+		try {
+			scratch.destroy()
+
+			expect(existsSync(scratch.path)).toBe(true)
+			expect(readFileSync(join(scratch.path, 'replacement.txt'), 'utf8')).toBe('replacement')
+		} finally {
+			rmSync(scratch.path, { force: true, recursive: true })
+		}
 	})
 
 	it('refuses escaping paths while allowing contained paths', () => {

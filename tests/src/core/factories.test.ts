@@ -1,4 +1,4 @@
-import { createClock, createRecorder } from '@src/core'
+import { createRecorder } from '@src/core'
 import { describe, expect, it } from 'vitest'
 
 describe('createRecorder', () => {
@@ -31,26 +31,5 @@ describe('createRecorder', () => {
 		recorder.handler('after')
 		expect(calls).toStrictEqual([['after']])
 		expect(recorder.count).toBe(1)
-	})
-})
-
-describe('createClock', () => {
-	it('starts at zero by default', () => {
-		expect(createClock().now()).toBe(0)
-	})
-
-	it('accumulates advances', () => {
-		const clock = createClock(-5)
-		expect(clock.now()).toBe(-5)
-
-		clock.advance(2)
-		clock.advance(2)
-		expect(clock.now()).toBe(-1)
-	})
-
-	it('replaces the time when set', () => {
-		const clock = createClock(-5)
-		clock.set(0)
-		expect(clock.now()).toBe(0)
 	})
 })

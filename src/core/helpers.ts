@@ -78,13 +78,22 @@ export async function collectStream<T>(stream: ReadableStream<T>): Promise<reado
  * @typeParam T - The JSON value type.
  * @param value - The value to copy.
  * @returns The parsed JSON copy.
+ * @remarks Non-finite numbers throw because JSON would replace them with `null`. Negative zero is
+ * normalized to zero by JSON serialization.
  */
 export function roundTripJSON<T extends JSONValue>(value: T): T {
-	return JSON.parse(JSON.stringify(value))
+	const serialized = JSON.stringify(value, (_key, current) => {
+		if (typeof current === 'number' && !Number.isFinite(current)) {
+			throw new Error('JSON values must contain finite numbers')
+		}
+		return current
+	})
+	return JSON.parse(serialized)
 }
 
 /**
- * Resolves the workspace root above a calling module.
+ * Resolves the parent directory of a calling module, which is the workspace root when called from
+ * the conventional `tests/setup.ts` location.
  *
  * @param meta - The calling module metadata.
  * @returns The root URL one directory above the calling file.

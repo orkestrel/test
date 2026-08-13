@@ -1,16 +1,90 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { readInventory } from '@src/server'
+import { hasSymbolicLink, readInventory, resolveContained } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
-describe('readInventory', () => {
-	it('returns no files when no directories are requested', () => {
-		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-empty-'))
-		rmSync(root, { recursive: true })
+describe('resolveContained', () => {
+	it('resolves contained targets and rejects lexical and physical escapes', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
+		const root = join(parent, 'root')
+		const outside = join(parent, 'outside')
+		try {
+			mkdirSync(root)
+			mkdirSync(outside)
+			symlinkSync(outside, join(root, 'linked'), 'dir')
 
-		expect(readInventory(root, [])).toStrictEqual({})
+			expect(resolveContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
+			expect(resolveContained(root, '../outside')).toBeUndefined()
+			expect(resolveContained(root, join(root, 'nested'))).toBeUndefined()
+
+			const physical = realpathSync(join(root, 'linked'))
+			expect(resolveContained(root, relative(root, physical))).toBeUndefined()
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('hasSymbolicLink', () => {
+	it('finds a linked segment while accepting regular and missing segments', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-symbolic-link-'))
+		const root = join(parent, 'root')
+		const outside = join(parent, 'outside')
+		try {
+			mkdirSync(root)
+			mkdirSync(join(root, 'regular'))
+			mkdirSync(outside)
+			symlinkSync(outside, join(root, 'linked'), 'dir')
+
+			expect(hasSymbolicLink(root, join(root, 'regular'))).toBe(false)
+			expect(hasSymbolicLink(root, join(root, 'missing', 'file.txt'))).toBe(false)
+			expect(hasSymbolicLink(root, join(root, 'linked', 'file.txt'))).toBe(true)
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('readInventory', () => {
+	it('validates the root when no directories are requested', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-empty-'))
+		const root = join(parent, 'root')
+		const linked = join(parent, 'linked')
+		try {
+			mkdirSync(root)
+			symlinkSync(root, linked, 'dir')
+
+			expect(readInventory(root, [])).toStrictEqual({})
+			expect(() => readInventory(linked, [])).toThrow('Root is a symbolic link')
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+
+	it('keeps a root-level __proto__ file as an own property', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-prototype-'))
+		try {
+			writeFileSync(join(root, '__proto__'), 'prototype')
+			writeFileSync(join(root, 'control.txt'), 'control')
+
+			const files = readInventory(root, ['.'])
+			expect(Object.keys(files)).toStrictEqual(['__proto__', 'control.txt'])
+			expect(Object.hasOwn(files, '__proto__')).toBe(true)
+			expect(files['__proto__']).toBe('prototype')
+			expect(files['control.txt']).toBe('control')
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
 	})
 
 	it('refuses a symlinked root while accepting the real directory', () => {
@@ -24,6 +98,26 @@ describe('readInventory', () => {
 
 			expect(readInventory(pathToFileURL(root), ['.'])).toStrictEqual({ 'file.txt': 'real' })
 			expect(() => readInventory(linked, ['.'])).toThrow('Root is a symbolic link')
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+
+	it('refuses a symlinked root supplied as a URL with a trailing slash', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-url-root-'))
+		const root = join(parent, 'root')
+		const linked = join(parent, 'linked')
+		try {
+			mkdirSync(root)
+			writeFileSync(join(root, 'file.txt'), 'real')
+			symlinkSync(root, linked, 'dir')
+
+			const linkedUrl = pathToFileURL(`${linked}/`)
+			expect(() => readInventory(linkedUrl, ['.'])).toThrow('Root is a symbolic link')
+			expect(() => readInventory(linkedUrl, [])).toThrow('Root is a symbolic link')
+
+			const rootUrl = pathToFileURL(`${root}/`)
+			expect(readInventory(rootUrl, ['.'])).toStrictEqual({ 'file.txt': 'real' })
 		} finally {
 			rmSync(parent, { force: true, recursive: true })
 		}

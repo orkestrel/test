@@ -1,4 +1,4 @@
-import type { ClockInterface, RecorderInterface } from './types.js'
+import type { RecorderInterface } from './types.js'
 
 /**
  * Creates a recorder for callback arguments.
@@ -18,25 +18,6 @@ export function createRecorder<TArgs extends readonly unknown[]>(): RecorderInte
 		},
 		clear() {
 			calls.length = 0
-		},
-	}
-}
-
-/**
- * Creates a clock controlled by the caller.
- *
- * @param start - The initial time in milliseconds.
- * @returns A clock that can advance or replace its current time.
- */
-export function createClock(start = 0): ClockInterface {
-	let current = start
-	return {
-		now: () => current,
-		advance(ms) {
-			current += ms
-		},
-		set(value) {
-			current = value
 		},
 	}
 }
