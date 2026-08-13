@@ -32,14 +32,15 @@ export type JSONValue =
  * constraint rejects every `interface`, because TypeScript grants an implicit index signature to a
  * type alias and never to an interface, and interfaces are what this project's public types are. A
  * value whose type survives the projection satisfies the intersection unchanged; one that carries a
- * method, a `Date`, or a `Map` meets `never` at that member and is rejected there. A member typed
- * `undefined` is rejected the same way, because serialization drops it from an object and rewrites
- * it to `null` in an array, so the returned type would claim a member the copy does not carry. An
- * optional member survives, since its declared type still narrows to what JSON keeps. A member
- * declared `?: X | undefined` and passed an explicit `undefined` is refused; declare it `?: X` and
- * omit the member instead. `unknown` passes through unvetted by the projection. For an `unknown`
- * member, `roundTripJSON` refuses `undefined`, functions, symbols, and non-finite numbers at runtime;
- * JSON otherwise may silently reshape the value, such as a `Date` to a string or a `Map` to `{}`.
+ * method, a `Date`, a `Map`, the opaque `object` type, or a symbol-keyed member meets `never` at that
+ * member and is rejected there. A member typed `undefined` is rejected the same way, because
+ * serialization drops it from an object and rewrites it to `null` in an array, so the returned type
+ * would claim a member the copy does not carry. An optional member survives, since its declared type
+ * still narrows to what JSON keeps. A member declared `?: X | undefined` and passed an explicit
+ * `undefined` is refused; declare it `?: X` and omit the member instead. `unknown` passes through
+ * unvetted by the projection. For an `unknown` member, `roundTripJSON` refuses `undefined`,
+ * functions, symbols, and non-finite numbers at runtime; JSON otherwise may silently reshape the
+ * value, such as a `Date` to a string or a `Map` to `{}`.
  * @example
  * ```ts
  * interface Snapshot {
@@ -60,5 +61,7 @@ export type JSONSafe<T> = unknown extends T
 			: T extends (...args: never[]) => unknown
 				? never
 				: T extends object
-					? { readonly [K in keyof T]: JSONSafe<T[K]> }
+					? object extends T
+						? never
+						: { readonly [K in keyof T]: K extends symbol ? never : JSONSafe<T[K]> }
 					: never

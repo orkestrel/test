@@ -58,6 +58,39 @@ describe('isExcluded', () => {
 })
 
 describe('readInventory', () => {
+	it('refuses a named target whose intermediate link leaves the root', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-linked-escape-'))
+		const root = join(parent, 'root')
+		const outside = join(parent, 'outside')
+		try {
+			mkdirSync(root)
+			mkdirSync(outside)
+			writeFileSync(join(outside, 'file.txt'), 'outside')
+			symlinkSync(outside, join(root, 'link'), 'dir')
+
+			expect(() => readInventory(root, ['link/file.txt'])).toThrow(
+				'Target outside root: link/file.txt',
+			)
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+
+	it('keys a named target through an intermediate link by its real path', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-linked-contained-'))
+		try {
+			mkdirSync(join(root, 'real'))
+			writeFileSync(join(root, 'real', 'file.txt'), 'inside')
+			symlinkSync(join(root, 'real'), join(root, 'link'), 'dir')
+
+			expect(readInventory(root, ['link/file.txt'])).toStrictEqual({
+				'real/file.txt': 'inside',
+			})
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
 	it('accepts relative and absolute contained directories and refuses an absolute escape', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-targets-'))
 		const root = join(parent, 'root')
@@ -237,14 +270,16 @@ describe('readInventory', () => {
 				'src/file.ts': 'source',
 			})
 
-			// A directory rule keeps its sibling, and its three spellings normalize to one rule at
+			// A directory rule keeps its sibling, and its four spellings normalize to one rule at
 			// the walked door and the named one alike.
 			const kept = { 'src-other/file.ts': 'sibling' }
 			expect(readInventory(root, ['.'], { exclude: ['src'] })).toStrictEqual(kept)
 			expect(readInventory(root, ['.'], { exclude: ['src/'] })).toStrictEqual(kept)
+			expect(readInventory(root, ['.'], { exclude: ['src//'] })).toStrictEqual(kept)
 			expect(readInventory(root, ['.'], { exclude: ['./src'] })).toStrictEqual(kept)
 			expect(readInventory(root, ['src/file.ts'], { exclude: ['src'] })).toStrictEqual({})
 			expect(readInventory(root, ['src/file.ts'], { exclude: ['src/'] })).toStrictEqual({})
+			expect(readInventory(root, ['src/file.ts'], { exclude: ['src//'] })).toStrictEqual({})
 			expect(readInventory(root, ['src/file.ts'], { exclude: ['./src'] })).toStrictEqual({})
 
 			// The two root spellings are the rule that drops everything, and they agree at both

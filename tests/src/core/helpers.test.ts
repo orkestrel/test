@@ -1,3 +1,4 @@
+import type { JSONSafe } from '@src/core'
 import {
 	captureError,
 	collect,
@@ -7,7 +8,7 @@ import {
 	roundTripJSON,
 	waitForDelay,
 } from '@src/core'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import { createAsyncSource, createStreamSource } from '../../setup.js'
 
 // Interfaces rather than type aliases: TypeScript grants an implicit index signature to an alias
@@ -20,6 +21,17 @@ interface Snapshot {
 interface Session {
 	readonly snapshot: Snapshot
 	readonly tags: readonly string[]
+}
+
+interface Envelope {
+	readonly value: object
+}
+
+declare const tag: unique symbol
+
+interface Tagged {
+	readonly [tag]: string
+	readonly id: string
 }
 
 describe('waitForDelay', () => {
@@ -46,6 +58,15 @@ describe('waitForDelay', () => {
 })
 
 describe('captureError', () => {
+	it('invokes a completing thunk exactly once', () => {
+		let count = 0
+		captureError(() => {
+			count += 1
+		})
+
+		expect(count).toBe(1)
+	})
+
 	it('returns undefined when the thunk does not throw', () => {
 		expect(captureError(() => 'completed')).toBeUndefined()
 	})
@@ -116,6 +137,11 @@ describe('collectStream', () => {
 })
 
 describe('roundTripJSON', () => {
+	it('refuses opaque object and symbol-keyed members in its type projection', () => {
+		expectTypeOf<JSONSafe<Envelope>['value']>().toEqualTypeOf<never>()
+		expectTypeOf<JSONSafe<Tagged>[typeof tag]>().toEqualTypeOf<never>()
+	})
+
 	it('rejects a raw JSON non-finite number and an ordinary nested non-finite number', () => {
 		const rawJSON: unknown = Reflect.get(JSON, 'rawJSON')
 		if (typeof rawJSON !== 'function') throw new Error('JSON.rawJSON is required')

@@ -78,7 +78,8 @@ export function readInventory(
 
 	const exclusions = (options?.exclude ?? []).map((rule) => {
 		const unprefixed = rule.startsWith('./') ? rule.slice(2) : rule
-		const untrailed = unprefixed.endsWith('/') ? unprefixed.slice(0, -1) : unprefixed
+		const collapsed = unprefixed.replace(/\/+/g, '/')
+		const untrailed = collapsed.endsWith('/') ? collapsed.slice(0, -1) : collapsed
 		return untrailed === '.' ? '' : untrailed
 	})
 	const pending: string[] = []
