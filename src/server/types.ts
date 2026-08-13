@@ -7,6 +7,8 @@ export interface ScratchInterface {
 	 *
 	 * @param target - A relative or absolute file path contained by the scratch directory.
 	 * @param text - The file contents.
+	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
+	 * link, or a file, or the host refuses to write the file.
 	 */
 	write(target: string, text: string): void
 	/**
@@ -21,22 +23,68 @@ export interface ScratchInterface {
 	 */
 	read(target: string): string | undefined
 	/**
-	 * Reports whether a path exists.
+	 * Reports whether a path exists without following its final symbolic link.
 	 *
 	 * @param target - A relative or absolute path contained by the scratch directory.
 	 * @returns True when the entry exists, including a symbolic link whose target is missing.
 	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
 	 */
-	exists(target: string): boolean
-	/** Removes the directory and everything in it. */
+	has(target: string): boolean
+	/**
+	 * Lists the names directly inside a directory in sorted order.
+	 *
+	 * @param target - A relative or absolute directory path contained by the scratch directory. The
+	 * scratch root is used when omitted.
+	 * @returns The sorted entry names, without their parent paths.
+	 * @throws When the path escapes the scratch directory, the target is missing or is not a
+	 * directory, or the scratch root is a symbolic link or file.
+	 */
+	names(target?: string): readonly string[]
+	/**
+	 * Creates a directory and every missing parent.
+	 *
+	 * @param target - A relative or absolute directory path contained by the scratch directory.
+	 * @returns The absolute path of the directory.
+	 * @throws When the path escapes the scratch directory, the target exists and is not a directory,
+	 * or the scratch root is missing, a symbolic link, or a file.
+	 */
+	ensure(target: string): string
+	/**
+	 * Creates a symbolic link at a contained path, creating its missing parent directories.
+	 *
+	 * @param target - The relative or absolute contained path where the link is created. Unlike
+	 * `node:fs`'s `symlinkSync(target, path)` vocabulary, this interface consistently calls the
+	 * contained path the target.
+	 * @param source - The link text naming the pointed-at path. It may name a path outside the scratch
+	 * directory and is not containment-checked.
+	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
+	 * link, or a file, or the host refuses to create the link.
+	 */
+	link(target: string, source: string): void
+	/**
+	 * Removes the allocated directory and everything in it when its identity still matches.
+	 *
+	 * @throws When the host refuses to inspect or remove the matching allocation.
+	 */
 	destroy(): void
 }
 
 /** Options for allocating a scratch directory. */
 export interface ScratchOptions {
-	/** The leading text of the generated directory name. */
+	/**
+	 * The existing directory in which to create the allocation. Defaults to the host temporary
+	 * directory. Allocation throws when this path is missing, a symbolic link, or not a directory.
+	 */
+	readonly parent?: string
+	/**
+	 * The name fragment that starts the generated directory name. Allocation throws when this value
+	 * contains a path separator or `..`.
+	 */
 	readonly prefix?: string
-	/** Files to write on allocation, keyed by path below the scratch directory. */
+	/**
+	 * Files to write on allocation, keyed by path below the scratch directory. Allocation removes its
+	 * directory and rethrows when a key escapes or the host refuses a write.
+	 */
 	readonly files?: Readonly<Record<string, string>>
 }
 

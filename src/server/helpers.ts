@@ -20,17 +20,20 @@ export function resolveContained(root: string, target: string): string | undefin
 }
 
 /**
- * Reads files from selected directories below a root directory.
+ * Reads files from selected targets below a root directory.
  *
  * @param root - The root directory as a path or file URL.
- * @param directories - The directories to visit below the root.
+ * @param targets - The files to read directly and directories to visit below the root.
  * @param options - Optional file extension and exact-path exclusions.
  * @returns File contents keyed by sorted root-relative paths.
- * @remarks An absent extension filter includes every file. Exclusions match full root-relative keys.
+ * @throws When the root or a named target is a symbolic link, is not a supported entry, or resolves
+ * outside the root.
+ * @remarks A named file is included regardless of the extension filter. An absent extension filter
+ * includes every walked file. Exclusions match full root-relative keys.
  */
 export function readInventory(
 	root: URL | string,
-	directories: readonly string[],
+	targets: readonly string[],
 	options?: InventoryOptions,
 ): Readonly<Record<string, string>> {
 	const supplied = resolve(typeof root === 'string' ? root : fileURLToPath(root))
@@ -39,31 +42,38 @@ export function readInventory(
 	if (!rootStatus.isDirectory()) throw new Error('Root is not a directory')
 
 	const base = realpathSync.native(supplied)
-	if (directories.length === 0) return Object.fromEntries([])
+	if (targets.length === 0) return Object.fromEntries([])
 
 	const excluded = new Set(options?.exclude)
 	const pending: string[] = []
 	const queued = new Set<string>()
 	const contents = new Map<string, string>()
 
-	for (const directory of directories) {
-		const candidate = resolveContained(base, directory)
+	for (const target of targets) {
+		const candidate = resolveContained(base, target)
 		if (candidate === undefined) {
-			throw new Error(`Directory outside root: ${directory}`)
+			throw new Error(`Target outside root: ${target}`)
 		}
 
 		const status = lstatSync(candidate)
-		if (status.isSymbolicLink()) throw new Error(`Directory is a symbolic link: ${directory}`)
-		if (!status.isDirectory()) throw new Error(`Not a directory: ${directory}`)
+		if (status.isSymbolicLink()) throw new Error(`Target is a symbolic link: ${target}`)
+		if (!status.isDirectory() && !status.isFile()) {
+			throw new Error(`Target is not a file or directory: ${target}`)
+		}
 
 		const physical = realpathSync.native(candidate)
 		const resolved = resolveContained(base, relative(base, physical))
 		if (resolved === undefined) {
-			throw new Error(`Directory outside root: ${directory}`)
+			throw new Error(`Target outside root: ${target}`)
 		}
 
 		const key = relative(base, resolved).split(sep).join('/')
-		if (excluded.has(key) || queued.has(physical)) continue
+		if (excluded.has(key)) continue
+		if (status.isFile()) {
+			contents.set(key, readFileSync(physical, 'utf8'))
+			continue
+		}
+		if (queued.has(physical)) continue
 		queued.add(physical)
 		pending.push(physical)
 	}
