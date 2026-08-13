@@ -1,61 +1,42 @@
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	realpathSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { hasSymbolicLink, readInventory, resolveContained } from '@src/server'
+import { readInventory, resolveContained } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('resolveContained', () => {
-	it('resolves contained targets and rejects lexical and physical escapes', () => {
-		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
-		const root = join(parent, 'root')
-		const outside = join(parent, 'outside')
+	it('resolves contained targets and rejects relative and absolute escapes', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
 		try {
-			mkdirSync(root)
-			mkdirSync(outside)
-			symlinkSync(outside, join(root, 'linked'), 'dir')
-
 			expect(resolveContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
 			expect(resolveContained(root, '../outside')).toBeUndefined()
 			expect(resolveContained(root, join(root, 'nested'))).toBeUndefined()
-
-			const physical = realpathSync(join(root, 'linked'))
-			expect(resolveContained(root, relative(root, physical))).toBeUndefined()
 		} finally {
-			rmSync(parent, { force: true, recursive: true })
-		}
-	})
-})
-
-describe('hasSymbolicLink', () => {
-	it('finds a linked segment while accepting regular and missing segments', () => {
-		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-symbolic-link-'))
-		const root = join(parent, 'root')
-		const outside = join(parent, 'outside')
-		try {
-			mkdirSync(root)
-			mkdirSync(join(root, 'regular'))
-			mkdirSync(outside)
-			symlinkSync(outside, join(root, 'linked'), 'dir')
-
-			expect(hasSymbolicLink(root, join(root, 'regular'))).toBe(false)
-			expect(hasSymbolicLink(root, join(root, 'missing', 'file.txt'))).toBe(false)
-			expect(hasSymbolicLink(root, join(root, 'linked', 'file.txt'))).toBe(true)
-		} finally {
-			rmSync(parent, { force: true, recursive: true })
+			rmSync(root, { force: true, recursive: true })
 		}
 	})
 })
 
 describe('readInventory', () => {
+	it('accepts relative and absolute contained directories and refuses an absolute escape', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-targets-'))
+		const root = join(parent, 'root')
+		const source = join(root, 'src')
+		const outside = join(parent, 'outside')
+		try {
+			mkdirSync(source, { recursive: true })
+			mkdirSync(outside)
+			writeFileSync(join(source, 'file.txt'), 'source')
+
+			expect(readInventory(root, ['src'])).toStrictEqual({ 'src/file.txt': 'source' })
+			expect(readInventory(root, [source])).toStrictEqual({ 'src/file.txt': 'source' })
+			expect(() => readInventory(root, [outside])).toThrow(`Directory outside root: ${outside}`)
+		} finally {
+			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+
 	it('validates the root when no directories are requested', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-empty-'))
 		const root = join(parent, 'root')

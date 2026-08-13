@@ -88,7 +88,21 @@ export function roundTripJSON<T extends JSONValue>(value: T): T {
 		}
 		return current
 	})
-	return JSON.parse(serialized)
+	const parsed: T = JSON.parse(serialized)
+	const pending: JSONValue[] = [parsed]
+	while (pending.length > 0) {
+		const current = pending.pop()
+		if (current === undefined) continue
+		if (typeof current === 'number' && !Number.isFinite(current)) {
+			throw new Error('JSON values must contain finite numbers')
+		}
+		if (Array.isArray(current)) {
+			pending.push(...current)
+		} else if (typeof current === 'object' && current !== null) {
+			pending.push(...Object.values(current))
+		}
+	}
+	return parsed
 }
 
 /**

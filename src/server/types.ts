@@ -14,6 +14,7 @@ export interface ScratchInterface {
 	 *
 	 * @param relative - The path of the file below the scratch directory.
 	 * @returns The file contents, or `undefined` when the file does not exist.
+	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
 	 */
 	read(relative: string): string | undefined
 	/**
@@ -21,6 +22,7 @@ export interface ScratchInterface {
 	 *
 	 * @param relative - The path below the scratch directory.
 	 * @returns True when the path exists.
+	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
 	 */
 	exists(relative: string): boolean
 	/** Removes the directory and everything in it. */

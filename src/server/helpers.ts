@@ -25,29 +25,6 @@ export function resolveContained(root: string, target: string): string | undefin
 }
 
 /**
- * Reports whether an existing segment from a root through a target is a symbolic link.
- *
- * @param root - The absolute root directory.
- * @param target - The absolute target below the root.
- * @returns True when an existing path segment is a symbolic link.
- */
-export function hasSymbolicLink(root: string, target: string): boolean {
-	let current = root
-	const rootStatus = lstatSync(current, { throwIfNoEntry: false })
-	if (rootStatus?.isSymbolicLink() === true) return true
-	if (rootStatus === undefined) return false
-
-	for (const segment of relative(root, target).split(sep)) {
-		if (segment.length === 0) continue
-		current = resolve(current, segment)
-		const status = lstatSync(current, { throwIfNoEntry: false })
-		if (status === undefined) return false
-		if (status.isSymbolicLink()) return true
-	}
-	return false
-}
-
-/**
  * Reads files from selected directories below a root directory.
  *
  * @param root - The root directory as a path or file URL.
@@ -75,7 +52,8 @@ export function readInventory(
 	const contents = new Map<string, string>()
 
 	for (const directory of directories) {
-		const candidate = resolveContained(base, directory)
+		const target = isAbsolute(directory) ? relative(base, directory) : directory
+		const candidate = resolveContained(base, target)
 		if (candidate === undefined) {
 			throw new Error(`Directory outside root: ${directory}`)
 		}

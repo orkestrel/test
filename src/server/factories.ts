@@ -10,7 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
-import { hasSymbolicLink, resolveContained } from './helpers.js'
+import { resolveContained } from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -32,7 +32,6 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
 			const candidate = resolveContained(path, target)
 			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
-			if (hasSymbolicLink(path, candidate)) throw new Error(`Path is a symbolic link: ${target}`)
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
@@ -45,10 +44,14 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	const scratch: ScratchInterface = {
 		path,
 		write(target, text) {
-			if (!scratch.exists('.')) throw new Error('Scratch directory does not exist')
-			scratch.exists(target)
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
 
-			const candidate = resolve(path, target)
+			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
+			if (rootStatus === undefined) throw new Error('Scratch directory does not exist')
+			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
+			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
+
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
 		},
@@ -65,7 +68,6 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
 			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
 
-			if (hasSymbolicLink(path, candidate)) throw new Error(`Path is a symbolic link: ${target}`)
 			return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined
 		},
 		destroy() {

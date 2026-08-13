@@ -4,12 +4,13 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, isAbsolute, join, relative } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
@@ -60,6 +61,18 @@ describe('createScratch', () => {
 		}
 	})
 
+	it('leaves a moved allocation and does not throw during destruction', () => {
+		const scratch = createScratch()
+		const moved = `${scratch.path}-moved`
+		renameSync(scratch.path, moved)
+		try {
+			expect(() => scratch.destroy()).not.toThrow()
+			expect(existsSync(moved)).toBe(true)
+		} finally {
+			rmSync(moved, { force: true, recursive: true })
+		}
+	})
+
 	it('refuses escaping paths while allowing contained paths', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-scratch-control-'))
 		const scratch = createScratch()
@@ -85,28 +98,67 @@ describe('createScratch', () => {
 		}
 	})
 
-	it('refuses paths through symlinks while allowing regular directories', () => {
+	it('uses lexical containment without walking symbolic-link segments', () => {
 		const outside = mkdtempSync(join(tmpdir(), 'orkestrel-test-scratch-outside-'))
 		const scratch = createScratch()
 		try {
-			mkdirSync(join(scratch.path, 'regular'))
-			scratch.write('regular/file.txt', 'regular')
-			expect(scratch.read('regular/file.txt')).toBe('regular')
-
 			symlinkSync(outside, join(scratch.path, 'linked'), 'dir')
-			expect(() => scratch.write('linked/file.txt', 'outside')).toThrow(
-				'Path is a symbolic link: linked/file.txt',
-			)
-			expect(() => scratch.read('linked/file.txt')).toThrow(
-				'Path is a symbolic link: linked/file.txt',
-			)
-			expect(() => scratch.exists('linked/file.txt')).toThrow(
-				'Path is a symbolic link: linked/file.txt',
-			)
-			expect(existsSync(join(outside, 'file.txt'))).toBe(false)
+			scratch.write('linked/file.txt', 'linked')
+
+			expect(scratch.read('linked/file.txt')).toBe('linked')
+			expect(scratch.exists('linked/file.txt')).toBe(true)
+			expect(readFileSync(join(outside, 'file.txt'), 'utf8')).toBe('linked')
 		} finally {
 			scratch.destroy()
 			rmSync(outside, { force: true, recursive: true })
+		}
+	})
+
+	it('refuses a prefix that would allocate outside the temporary directory', () => {
+		const prefix = '../evil-'
+		const outside = resolve(tmpdir(), prefix)
+		const before = readdirSync(dirname(outside))
+			.filter((name) => name.startsWith(basename(outside)))
+			.sort()
+
+		expect(() => createScratch({ prefix })).toThrow(
+			'Scratch prefix must stay within the temporary directory',
+		)
+
+		const after = readdirSync(dirname(outside))
+			.filter((name) => name.startsWith(basename(outside)))
+			.sort()
+		expect(after).toStrictEqual(before)
+	})
+
+	it('refuses writes after destruction', () => {
+		const scratch = createScratch()
+		scratch.destroy()
+
+		expect(() => scratch.write('file.txt', 'file')).toThrow('Scratch directory does not exist')
+	})
+
+	it('refuses existence checks when the scratch root is a symbolic link', () => {
+		const scratch = createScratch()
+		const moved = `${scratch.path}-moved`
+		renameSync(scratch.path, moved)
+		symlinkSync(moved, scratch.path, 'dir')
+		try {
+			expect(() => scratch.exists('file.txt')).toThrow('Scratch directory is a symbolic link')
+		} finally {
+			rmSync(scratch.path, { force: true })
+			rmSync(moved, { force: true, recursive: true })
+		}
+	})
+
+	it('refuses existence checks when the scratch root is a file', () => {
+		const scratch = createScratch()
+		scratch.destroy()
+		writeFileSync(scratch.path, 'file')
+		try {
+			expect(() => scratch.exists('file.txt')).toThrow('Scratch path is not a directory')
+		} finally {
+			rmSync(scratch.path, { force: true })
 		}
 	})
 

@@ -91,6 +91,19 @@ describe('collectStream', () => {
 })
 
 describe('roundTripJSON', () => {
+	it('rejects a raw JSON non-finite number and an ordinary nested non-finite number', () => {
+		const rawJSON: unknown = Reflect.get(JSON, 'rawJSON')
+		if (typeof rawJSON !== 'function') throw new Error('JSON.rawJSON is required')
+		const raw: unknown = rawJSON('1e400')
+
+		expect(() => Reflect.apply(roundTripJSON, undefined, [raw])).toThrow(
+			'JSON values must contain finite numbers',
+		)
+		expect(() => roundTripJSON({ nested: Number.POSITIVE_INFINITY })).toThrow(
+			'JSON values must contain finite numbers',
+		)
+	})
+
 	it('returns an equal value with fresh object and array references', () => {
 		const value = { enabled: false, nested: ['value', 0, null] }
 		const copy = roundTripJSON(value)
