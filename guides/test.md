@@ -99,10 +99,11 @@ Imported from `@orkestrel/test/server`.
 | `resolveContained` | function | `(root: string, target: string) => string \| undefined`                                                                 | The absolute target below `root`, or `undefined` when it escapes.    |
 
 `resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
-both call it. It resolves a relative target against the root and returns `undefined` when the result
-is not below it. An absolute target never resolves, so `readInventory` makes an absolute requested
-directory root-relative before the check. It is exported because a consumer writing its own
-filesystem fixture needs the same check and would otherwise write another copy of it.
+both call it. It resolves the target against the root — relative or absolute — and returns
+`undefined` when the result is not below it. An absolute target inside the root resolves, so a
+caller hands it the path it already has rather than making it root-relative first. It is exported
+because a consumer writing its own filesystem fixture needs the same check and would otherwise write
+another copy of it.
 
 `@orkestrel/scaffold` publishes `resolveContainedPath`, one word away, and the two are not the same
 predicate. This one is lexical only and dependency-free. That one is lexical plus physical — it also
@@ -131,12 +132,12 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `ScratchInterface`
 
-| Method    | Returns               | Behavior                                                                                                                                            |
-| --------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write`   | `void`                | Writes a file below the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory. |
-| `read`    | `string \| undefined` | Reads a file, or `undefined` when it does not exist. Throws on an escaping path, and on a root that is a link or not a directory.                   |
-| `exists`  | `boolean`             | Whether a path below the directory exists. Throws on an escaping path, and on a root that is a link or not a directory.                             |
-| `destroy` | `void`                | Removes the directory this call allocated, and only that. Idempotent.                                                                               |
+| Method    | Returns               | Behavior                                                                                                                                                                                            |
+| --------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write`   | `void`                | Writes a file below the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                 |
+| `read`    | `string \| undefined` | Reads a file, or `undefined` when it does not exist. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. |
+| `exists`  | `boolean`             | Whether a path below the directory exists. Throws on an escaping path, and on a root that is a link or not a directory.                                                                             |
+| `destroy` | `void`                | Removes the directory this call allocated, and only that. Idempotent.                                                                                                                               |
 
 ## Contract
 
@@ -177,21 +178,22 @@ These hold across `src/core`, `src/server`, and this guide.
 6. **`readInventory` refuses links.** It throws when the root or a requested directory is a symbolic
    link, or is not a directory, or resolves outside the root. It skips a symlink met while walking
    rather than following it. A requested directory may be written relative to the root or as an
-   absolute path inside it; an absolute one is made root-relative first, and one that escapes is
-   refused either way. Keys are root-relative and separated by `/` whatever the host separator is,
-   and the map is built by inserting them in sorted order. Read back, non-integer keys hold that
-   order. Integer-like keys do not, because a plain object enumerates them numerically first: four
-   files named `0`, `2`, `10`, and `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`,
-   `2`, `10`, `a.txt`. Returning a `ReadonlyMap` would keep the order and break the structural match
-   with `@orkestrel/guide`'s `SourceOptions.files` that the whole helper is shaped for, so the
-   guarantee narrows instead. Case is the host's decision, not this package's: whether two names
-   differing only in case are one file varies by filesystem, so the suite probes the running host
-   and asserts what the probe returned instead of assuming either answer.
-7. **`createScratch` stays inside its own directory.** It allocates with `mkdtempSync`, which creates
-   the directory at mode `0700`, so only the test's own uid can place an entry inside it. Every
-   `write`, `read`, and `exists` path that lexically escapes the allocated directory throws, and a
-   failed seed removes the directory before rethrowing. It does not walk the path's segments for
-   symbolic links: that is sandbox behavior, and this is not a sandbox. `destroy()` is idempotent,
+   absolute path inside it, and one that escapes is refused either way. Keys are root-relative and
+   separated by `/` whatever the host separator is, and the map is built by inserting them in sorted
+   order. Read back, non-integer keys hold that order. Integer-like keys do not, because a plain
+   object enumerates them numerically first: four files named `0`, `2`, `10`, and `a.txt` insert as
+   `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`. Returning a `ReadonlyMap` would
+   keep the order and break the structural match with `@orkestrel/guide`'s `SourceOptions.files`
+   that the whole helper is shaped for, so the guarantee narrows instead. Case is the host's
+   decision, not this package's: whether two names differing only in case are one file varies by
+   filesystem, so the suite probes the running host and asserts what the probe returned instead of
+   assuming either answer.
+7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
+   `mkdtempSync`, which creates the directory at mode `0700`, and the suite asserts that mode on the
+   host it runs on. Every `write`, `read`, and `exists` path that lexically escapes the allocated
+   directory throws, and a failed seed removes the directory before rethrowing. It does not walk the
+   path's segments for symbolic links: that is sandbox behavior, this is not a sandbox, and a link
+   inside the allocation is one the test itself created. `destroy()` is idempotent,
    and it removes only the directory this call allocated. It compares the entry at the allocated
    path against the allocation's device, inode, and birth time, so a replacement directory left
    there is not removed, and an allocation moved elsewhere is not removed at all.
@@ -204,11 +206,14 @@ These hold across `src/core`, `src/server`, and this guide.
 The two filesystem helpers make different promises, because they work on different directories.
 Read rule 7 against the first paragraph below and rule 6 against the second.
 
-`createScratch` allocates its own directory with `mkdtempSync` at mode `0700`, so only the test's
-own uid can place an entry inside it. Its containment check is lexical: it refuses a relative path
-that escapes the allocated directory, which is the accident that actually happens — a test writing
-`../foo`. It does not walk the path's segments for symbolic links. Per-segment walking is sandbox
-behavior, this is not a sandbox, and a link inside that directory is one the test put there.
+`createScratch` allocates its own directory with `mkdtempSync` at mode `0700`, and the suite asserts
+that mode. The mode keeps another uid out. It does not keep out a sibling test worker or the code
+under test, because both run as the same uid, and they are the population that would create a link
+here. Its containment check is lexical: it refuses a relative path that escapes the allocated
+directory, which is the accident that actually happens — a test writing `../foo`. It does not walk
+the path's segments for symbolic links. Per-segment walking is sandbox behavior, this is not a
+sandbox, and a link inside that directory is one the test put there — which is true whatever the
+permissions are.
 
 `readInventory` walks a directory the caller supplies, usually a real checkout the test did not
 create, so it does refuse links. It keeps three separate refusals with three outcomes: it throws on
@@ -231,7 +236,9 @@ guarantee of shipping. A candidate is considered when it has **three or more mem
 all inside one dependency cluster, or five or more members regardless** — where a cluster is a set
 of packages one of which runtime-depends on another. Two related packages sharing a helper is one
 team's convention, not a fleet pattern. A candidate that clears the threshold can still be excluded,
-and several below are.
+and several below are. The threshold is therefore necessary and not sufficient: a candidate that
+fails it is excluded, and a candidate that clears it either ships or appears below with the second
+reason that excluded it.
 
 A member is one package carrying an implementation, under whatever name that package spells it and
 whether it exports the helper or declares it inside a test file. Counts are of those groups, so the
@@ -390,6 +397,7 @@ const scratch = createScratch({ prefix: 'guide-', files: { 'src/index.ts': 'expo
 
 scratch.read('src/index.ts') // 'export {}\n'
 scratch.exists('src') // true
+scratch.read('src') // throws Error: Scratch path is a directory: src
 scratch.read('missing.ts') // undefined
 scratch.write('../escape.ts', '') // throws Error: Path outside scratch directory: ../escape.ts
 
@@ -409,13 +417,10 @@ const scratch = createScratch({ files: { 'src/index.ts': 'export {}\n' } })
 const root = scratch.path
 
 resolveContained(root, 'src/index.ts') // `${root}/src/index.ts`
+resolveContained(root, `${root}/src/index.ts`) // `${root}/src/index.ts` — absolute and inside
 resolveContained(root, '../escape.ts') // undefined — lexically outside
-resolveContained(root, '/etc/passwd') // undefined — an absolute target never resolves
-
-// An absolute target inside the root is refused too. Make it root-relative first, the way
-// `readInventory` does with an absolute requested directory.
-resolveContained(root, `${root}/src/index.ts`) // undefined
-resolveContained(root, 'src/index.ts') // `${root}/src/index.ts`
+resolveContained(root, `${root}/../escape.ts`) // undefined — absolute and outside
+resolveContained(root, '/etc/passwd') // undefined — absolute and outside
 
 scratch.destroy()
 ```
@@ -442,16 +447,16 @@ scratch.destroy()
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRecorder` call
   order and typed tuples, and the `clear()` truncation ruling against a captured reference.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — `resolveContained` on
-  contained targets and on relative and absolute escapes, and `readInventory` key sorting, extension
-  filtering, exact-path exclusion, relative and absolute contained directories, empty input with
-  root validation, a root-level `__proto__` file, symlinked root and requested directory refusal,
-  descendant-link skipping, escaping-directory refusal, and host case behavior probed at runtime
-  rather than assumed.
+  relative and absolute contained targets and on relative and absolute escapes, and `readInventory`
+  key sorting, extension filtering, exact-path exclusion, relative and absolute contained
+  directories, empty input with root validation, a root-level `__proto__` file, symlinked root and
+  requested directory refusal, descendant-link skipping, escaping-directory refusal, and host case
+  behavior probed at runtime rather than assumed.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — `createScratch`
-  allocation below the temporary directory, nested seeding, the prefix guard, lexical containment
-  refusals, a symbolic-link segment left unwalked, cleanup after a failed seed, refusal after
-  destruction, a symbolic-link root and a file root, idempotent `destroy()`, and both a replacement
-  directory and a moved allocation left alone.
+  allocation below the temporary directory at mode `0700`, nested seeding, the prefix guard, lexical
+  containment refusals, a symbolic-link segment left unwalked, the directory-read refusal, cleanup
+  after a failed seed, refusal after destruction, a symbolic-link root and a file root, idempotent
+  `destroy()`, and both a replacement directory and a moved allocation left alone.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ source bijection, the
   barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.

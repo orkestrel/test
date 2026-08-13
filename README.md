@@ -54,16 +54,40 @@ scratch.destroy() // idempotent, and it removes only the directory it allocated
 The rest of core is `collect` (drains an async iterable), `collectStream` (drains a
 `ReadableStream`), `roundTripJSON` (copies a `JSONValue`, and throws rather than turning a non-finite
 number into `null`), and `resolveRoot` (the directory above the calling module, from `import.meta`).
-The server face adds `readInventory` for a root-relative file map keyed in sorted order, plus
-`resolveContained`, the lexical check it refuses escapes with.
+
+The server face adds `readInventory`, which reads a checkout into a file map a parity suite can
+assert against, plus `resolveContained`, the lexical check it refuses escapes with.
+
+```ts
+import { resolveRoot } from '@orkestrel/test'
+import { readInventory } from '@orkestrel/test/server'
+
+// A suite in tests/ is one directory below the workspace root, which is what `resolveRoot` returns.
+const root = resolveRoot(import.meta)
+
+// Nothing is walked by default, so the directories are a required argument rather than an option.
+const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['.ts'] })
+
+Object.keys(sources)
+// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
+//  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts', 'src/server/types.ts']
+
+// Keys are root-relative and `/`-separated whatever the host uses, so an `exclude` is a whole key.
+Object.keys(
+	readInventory(root, ['src/core'], { extensions: ['.ts'], exclude: ['src/core/index.ts'] }),
+)
+// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts']
+```
 
 Two boundaries are worth stating up front, because the two filesystem helpers promise different
 things. `createScratch` allocates its own directory at mode `0700` and refuses a path that lexically
-escapes it; it does not walk segments for symbolic links. `readInventory` walks a directory you
-supply, usually a checkout the test did not create, so it throws on a symlinked root or requested
-directory and skips a symlink met while walking. Neither is a sandbox against hostile filesystem
-content: those refusals stop accidental escape, not an adversary who can create hard links where the
-test process already writes.
+escapes it. It does not walk segments for symbolic links: a link inside its own allocation is one
+the test put there. The mode keeps another uid out, and neither a sibling test worker nor the code
+under test is another uid. `readInventory` walks a directory you supply, usually a checkout the test
+did not create, so it throws on a symlinked root or requested directory and skips a symlink met
+while walking. Neither is a sandbox against hostile filesystem content: those refusals stop
+accidental escape, not an adversary who can create hard links where the test process already
+writes.
 
 ## Guide
 
