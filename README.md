@@ -54,12 +54,16 @@ scratch.destroy() // idempotent, and it removes only the directory it allocated
 The rest of core is `collect` (drains an async iterable), `collectStream` (drains a
 `ReadableStream`), `roundTripJSON` (copies a `JSONValue`, and throws rather than turning a non-finite
 number into `null`), and `resolveRoot` (the directory above the calling module, from `import.meta`).
-The server face adds `readInventory` for a sorted root-relative file map, plus the two predicates it
-refuses escapes with, `resolveContained` and `hasSymbolicLink`.
+The server face adds `readInventory` for a root-relative file map keyed in sorted order, plus
+`resolveContained`, the lexical check it refuses escapes with.
 
-One boundary is worth stating up front. This package operates on directories the test itself
-created. It is not a sandbox against hostile filesystem content: the symlink refusals stop
-accidental escape, not an adversary who can create hard links where the test process already writes.
+Two boundaries are worth stating up front, because the two filesystem helpers promise different
+things. `createScratch` allocates its own directory at mode `0700` and refuses a path that lexically
+escapes it; it does not walk segments for symbolic links. `readInventory` walks a directory you
+supply, usually a checkout the test did not create, so it throws on a symlinked root or requested
+directory and skips a symlink met while walking. Neither is a sandbox against hostile filesystem
+content: those refusals stop accidental escape, not an adversary who can create hard links where the
+test process already writes.
 
 ## Guide
 

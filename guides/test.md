@@ -20,12 +20,12 @@ npm install --save-dev @orkestrel/test
 ```
 
 `@orkestrel/test` is the host-independent core. `@orkestrel/test/server` is the Node face — the
-filesystem helpers and their containment predicates. Core touches neither `node:*` nor the DOM, so a
+filesystem helpers and their containment check. Core touches neither `node:*` nor the DOM, so a
 browser test project imports it unchanged.
 
 ## Surface
 
-Seventeen exports: twelve values and five types, across two environments.
+Sixteen exports: eleven values and five types, across two environments.
 
 ```ts
 import { createRecorder, waitForDelay } from '@orkestrel/test'
@@ -93,17 +93,24 @@ Imported from `@orkestrel/test/server`.
 
 #### Helpers
 
-| API                | Kind     | Signature                                                                                                               | Summary                                                           |
-| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `readInventory`    | function | `(root: URL \| string, directories: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | File contents keyed by sorted root-relative path.                 |
-| `resolveContained` | function | `(root: string, target: string) => string \| undefined`                                                                 | The absolute target below `root`, or `undefined` when it escapes. |
-| `hasSymbolicLink`  | function | `(root: string, target: string) => boolean`                                                                             | Whether an existing segment from `root` to `target` is a link.    |
+| API                | Kind     | Signature                                                                                                               | Summary                                                              |
+| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `readInventory`    | function | `(root: URL \| string, directories: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | File contents keyed by root-relative path, inserted in sorted order. |
+| `resolveContained` | function | `(root: string, target: string) => string \| undefined`                                                                 | The absolute target below `root`, or `undefined` when it escapes.    |
 
-`resolveContained` and `hasSymbolicLink` are the containment check and the symlink walk this package
-runs on itself. `readInventory` and `createScratch` both call them, so one rule has one
-implementation and a refusal cannot drift between the two. They are exported for two reasons: a
-declaration in a centralized file is exported, and a consumer writing its own filesystem fixture
-needs exactly these two checks and would otherwise write a third copy of them.
+`resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
+both call it. It resolves a relative target against the root and returns `undefined` when the result
+is not below it. An absolute target never resolves, so `readInventory` makes an absolute requested
+directory root-relative before the check. It is exported because a consumer writing its own
+filesystem fixture needs the same check and would otherwise write another copy of it.
+
+`@orkestrel/scaffold` publishes `resolveContainedPath`, one word away, and the two are not the same
+predicate. This one is lexical only and dependency-free. That one is lexical plus physical — it also
+refuses a link that leaves the root and a dangling link whose raw target contains a `..` segment —
+and it lives in a build tool. A test helper with zero runtime dependencies does not take a runtime
+dependency on the scaffolding tool to obtain a path predicate. If that difference ever stops holding,
+delete `resolveContained` and import `resolveContainedPath` from the `@orkestrel/scaffold` every
+package already has, rather than adding a third variant.
 
 #### Factories
 
@@ -124,12 +131,12 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `ScratchInterface`
 
-| Method    | Returns               | Behavior                                                     |
-| --------- | --------------------- | ------------------------------------------------------------ |
-| `write`   | `void`                | Writes a file below the directory, creating missing parents. |
-| `read`    | `string \| undefined` | Reads a file, or `undefined` when it does not exist.         |
-| `exists`  | `boolean`             | Whether a path below the directory exists.                   |
-| `destroy` | `void`                | Removes the directory and everything in it.                  |
+| Method    | Returns               | Behavior                                                                                                                                            |
+| --------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write`   | `void`                | Writes a file below the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory. |
+| `read`    | `string \| undefined` | Reads a file, or `undefined` when it does not exist. Throws on an escaping path, and on a root that is a link or not a directory.                   |
+| `exists`  | `boolean`             | Whether a path below the directory exists. Throws on an escaping path, and on a root that is a link or not a directory.                             |
+| `destroy` | `void`                | Removes the directory this call allocated, and only that. Idempotent.                                                                               |
 
 ## Contract
 
@@ -162,35 +169,58 @@ These hold across `src/core`, `src/server`, and this guide.
    not enough on its own: `NaN`, `Infinity`, and `-Infinity` are numbers, they satisfy the
    constraint, and `JSON.stringify` turns each of them into `null`. So the helper rejects a
    non-finite number at any depth with `JSON values must contain finite numbers`, and the copy's
-   type claim holds for every value it does return. One normalization remains and is not an error:
-   `-0` serializes as `0`, so the copy is `0`.
+   type claim holds for every value it does return. The replacer alone would not close it: a
+   `JSON.rawJSON` value carries text `JSON.stringify` emits without inspecting, so
+   `JSON.rawJSON('1e400')` passes the replacer untouched and parses back as `Infinity`. The helper
+   therefore checks the parsed graph as well, and both doors report the same message. One
+   normalization remains and is not an error: `-0` serializes as `0`, so the copy is `0`.
 6. **`readInventory` refuses links.** It throws when the root or a requested directory is a symbolic
    link, or is not a directory, or resolves outside the root. It skips a symlink met while walking
-   rather than following it. Keys are root-relative, separated by `/` whatever the host separator
-   is, and sorted by that key. Case is the host's decision, not this package's: whether two names
+   rather than following it. A requested directory may be written relative to the root or as an
+   absolute path inside it; an absolute one is made root-relative first, and one that escapes is
+   refused either way. Keys are root-relative and separated by `/` whatever the host separator is,
+   and the map is built by inserting them in sorted order. Read back, non-integer keys hold that
+   order. Integer-like keys do not, because a plain object enumerates them numerically first: four
+   files named `0`, `2`, `10`, and `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`,
+   `2`, `10`, `a.txt`. Returning a `ReadonlyMap` would keep the order and break the structural match
+   with `@orkestrel/guide`'s `SourceOptions.files` that the whole helper is shaped for, so the
+   guarantee narrows instead. Case is the host's decision, not this package's: whether two names
    differing only in case are one file varies by filesystem, so the suite probes the running host
    and asserts what the probe returned instead of assuming either answer.
-7. **`createScratch` stays inside its own directory.** Every `write`, `read`, and `exists` path that
-   escapes the allocated directory throws, including one that escapes through a symlink, and a
-   failed seed removes the directory before rethrowing. `destroy()` is idempotent, and it removes
-   the directory this factory allocated rather than whatever happens to sit at that path when it
-   runs.
+7. **`createScratch` stays inside its own directory.** It allocates with `mkdtempSync`, which creates
+   the directory at mode `0700`, so only the test's own uid can place an entry inside it. Every
+   `write`, `read`, and `exists` path that lexically escapes the allocated directory throws, and a
+   failed seed removes the directory before rethrowing. It does not walk the path's segments for
+   symbolic links: that is sandbox behavior, and this is not a sandbox. `destroy()` is idempotent,
+   and it removes only the directory this call allocated. It compares the entry at the allocated
+   path against the allocation's device, inode, and birth time, so a replacement directory left
+   there is not removed, and an allocation moved elsewhere is not removed at all.
 8. **Zero runtime dependencies, and no foreign type in a signature.** `dependencies` is empty and
    stays empty. No exported signature names an `@orkestrel/*` type, so no consumer can be handed a
    two-copies type failure by installing this package.
 
 ### Threat model
 
-This package operates on directories the test itself created. It is not a sandbox against hostile
-filesystem content, and rules 6 and 7 should be read that way.
+The two filesystem helpers make different promises, because they work on different directories.
+Read rule 7 against the first paragraph below and rule 6 against the second.
 
-The symlink refusals stop accidental escape — a stray link left in a checkout, a directory that
-turns out to point somewhere else — and they catch that case reliably. They do not stop hard links.
-A hard link created inside the scratch directory is an ordinary directory entry: `lstat` reports a
+`createScratch` allocates its own directory with `mkdtempSync` at mode `0700`, so only the test's
+own uid can place an entry inside it. Its containment check is lexical: it refuses a relative path
+that escapes the allocated directory, which is the accident that actually happens — a test writing
+`../foo`. It does not walk the path's segments for symbolic links. Per-segment walking is sandbox
+behavior, this is not a sandbox, and a link inside that directory is one the test put there.
+
+`readInventory` walks a directory the caller supplies, usually a real checkout the test did not
+create, so it does refuse links. It keeps three separate refusals with three outcomes: it throws on
+a symlinked root, throws on a symlinked requested directory, and skips a symlink met while walking.
+They are three decisions rather than one rule, which is why they are three inline checks and not a
+shared predicate.
+
+Neither helper stops hard links. A hard link is an ordinary directory entry: `lstat` reports a
 regular file, so `readInventory` reads the outside inode and `createScratch` writes through it.
 Detecting that would need inode bookkeeping on every entry, and it would buy nothing, because
-anyone able to create a hard link inside the scratch directory already writes wherever the test
-process writes. So no hard-link detection is added, and the boundary is documented instead.
+anyone able to create a hard link where the test process writes already writes there. So no
+hard-link detection is added, and the boundary is documented instead.
 
 ## Limits
 
@@ -369,11 +399,11 @@ scratch.destroy() // no-op — destroy is idempotent
 
 ### Refuse an escaping path in your own fixture
 
-`readInventory` and `createScratch` refuse an escape with these two predicates. Reach for the same
-pair when a fixture of your own walks a directory the test created.
+`readInventory` and `createScratch` refuse an escape with this predicate. Reach for it when a
+fixture of your own resolves a caller-supplied path below a root.
 
 ```ts
-import { createScratch, hasSymbolicLink, resolveContained } from '@orkestrel/test/server'
+import { createScratch, resolveContained } from '@orkestrel/test/server'
 
 const scratch = createScratch({ files: { 'src/index.ts': 'export {}\n' } })
 const root = scratch.path
@@ -382,9 +412,12 @@ resolveContained(root, 'src/index.ts') // `${root}/src/index.ts`
 resolveContained(root, '../escape.ts') // undefined — lexically outside
 resolveContained(root, '/etc/passwd') // undefined — an absolute target never resolves
 
-// Lexical containment is not enough: a contained path can still leave through a link.
-hasSymbolicLink(root, `${root}/src/index.ts`) // false — every segment is a real directory or file
-hasSymbolicLink(root, `${root}/link/x.ts`) // true, once `link` is a symlink — refuse before reading
+// An absolute target inside the root is refused too. Make it root-relative first, the way
+// `readInventory` does with an absolute requested directory.
+resolveContained(root, `${root}/src/index.ts`) // undefined
+resolveContained(root, 'src/index.ts') // `${root}/src/index.ts`
+
+scratch.destroy()
 ```
 
 ### Practices
@@ -409,15 +442,16 @@ hasSymbolicLink(root, `${root}/link/x.ts`) // true, once `link` is a symlink —
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRecorder` call
   order and typed tuples, and the `clear()` truncation ruling against a captured reference.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — `resolveContained` on
-  lexical and physical escapes, `hasSymbolicLink` on linked, regular, and missing segments, and
-  `readInventory` key sorting, extension filtering, exact-path exclusion, empty input with root
-  validation, a root-level `__proto__` file, symlinked root and requested directory refusal,
+  contained targets and on relative and absolute escapes, and `readInventory` key sorting, extension
+  filtering, exact-path exclusion, relative and absolute contained directories, empty input with
+  root validation, a root-level `__proto__` file, symlinked root and requested directory refusal,
   descendant-link skipping, escaping-directory refusal, and host case behavior probed at runtime
   rather than assumed.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — `createScratch`
-  allocation below the temporary directory, nested seeding, containment refusals including through a
-  symlink, cleanup after a failed seed, idempotent `destroy()`, and a replacement directory left
-  alone at the allocated path.
+  allocation below the temporary directory, nested seeding, the prefix guard, lexical containment
+  refusals, a symbolic-link segment left unwalked, cleanup after a failed seed, refusal after
+  destruction, a symbolic-link root and a file root, idempotent `destroy()`, and both a replacement
+  directory and a moved allocation left alone.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ source bijection, the
   barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.
