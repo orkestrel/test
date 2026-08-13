@@ -167,6 +167,38 @@ describe('roundTripJSON', () => {
 		expect(() => roundTripJSON(invalid)).toThrow('JSON values must contain finite numbers')
 	})
 
+	it('refuses undefined, a function, and a symbol at depth under an unknown member', () => {
+		const message = 'JSON values must not contain undefined, functions, or symbols'
+		const absent: Record<string, unknown> = { nested: { deep: [undefined] } }
+		const called: Record<string, unknown> = { nested: { deep: [() => 'value'] } }
+		const keyed: Record<string, unknown> = { nested: { deep: [Symbol('control')] } }
+		const omitted: Record<string, unknown> = { nested: { deep: undefined } }
+
+		expect(() => roundTripJSON(absent)).toThrow(message)
+		expect(() => roundTripJSON(called)).toThrow(message)
+		expect(() => roundTripJSON(keyed)).toThrow(message)
+		// An object member holding `undefined` is the case plain `JSON.stringify` drops silently.
+		expect(() => roundTripJSON(omitted)).toThrow(message)
+
+		// The control: the same shape carrying JSON values round-trips.
+		expect(roundTripJSON({ nested: { deep: ['value'] } })).toStrictEqual({
+			nested: { deep: ['value'] },
+		})
+	})
+
+	it('copies a Date under an unknown member as its serialized string', () => {
+		// `toJSON` runs before the replacer sees the value, so a Date arrives as a string and is
+		// copied rather than refused. That is the ruling, not an oversight.
+		const value: Record<string, unknown> = { at: new Date(0), nested: { at: new Date(86_400_000) } }
+		const copy: Record<string, unknown> = roundTripJSON(value)
+
+		expect(copy).toStrictEqual({
+			at: '1970-01-01T00:00:00.000Z',
+			nested: { at: '1970-01-02T00:00:00.000Z' },
+		})
+		expect(copy['at']).not.toBeInstanceOf(Date)
+	})
+
 	it('returns an equal value with fresh object and array references', () => {
 		const value = { enabled: false, nested: ['value', 0, null] }
 		const copy = roundTripJSON(value)

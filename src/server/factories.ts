@@ -1,4 +1,4 @@
-import type { ScratchInterface, ScratchOptions } from './types.js'
+import type { ScratchIdentity, ScratchInterface, ScratchOptions } from './types.js'
 import {
 	lstatSync,
 	mkdirSync,
@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
-import { resolveContained } from './helpers.js'
+import { matchesIdentity, resolveContained } from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -37,7 +37,12 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	}
 
 	const path = mkdtempSync(`${parent}${sep}${prefix}`)
-	const allocation = statSync(path)
+	const allocated = statSync(path)
+	const allocation: ScratchIdentity = {
+		birth: allocated.birthtimeMs,
+		device: allocated.dev,
+		inode: allocated.ino,
+	}
 	const outside = 'Path outside scratch directory'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
@@ -117,13 +122,13 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		},
 		destroy() {
 			const status = lstatSync(path, { throwIfNoEntry: false })
-			if (
-				status === undefined ||
-				status.dev !== allocation.dev ||
-				status.ino !== allocation.ino ||
-				status.birthtimeMs !== allocation.birthtimeMs
-			)
-				return
+			if (status === undefined) return
+			const identity: ScratchIdentity = {
+				birth: status.birthtimeMs,
+				device: status.dev,
+				inode: status.ino,
+			}
+			if (!matchesIdentity(identity, allocation)) return
 			rmSync(path, { force: true, recursive: true })
 		},
 	}

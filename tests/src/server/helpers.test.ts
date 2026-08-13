@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { readInventory, resolveContained } from '@src/server'
+import { isExcluded, matchesIdentity, readInventory, resolveContained } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('resolveContained', () => {
@@ -16,6 +16,44 @@ describe('resolveContained', () => {
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}
+	})
+})
+
+describe('matchesIdentity', () => {
+	// Plain triples rather than a real allocation: every replacement state a filesystem test can
+	// reach on one host keeps the same device, so only a pure call can drive that field.
+	it('accepts a triple matching in every field', () => {
+		expect(
+			matchesIdentity({ birth: 3, device: 1, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+		).toBe(true)
+	})
+
+	it('refuses a triple whose device differs', () => {
+		expect(
+			matchesIdentity({ birth: 3, device: 9, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+		).toBe(false)
+	})
+
+	it('refuses a triple whose index node differs', () => {
+		expect(
+			matchesIdentity({ birth: 3, device: 1, inode: 9 }, { birth: 3, device: 1, inode: 2 }),
+		).toBe(false)
+	})
+
+	it('refuses a triple whose creation time differs', () => {
+		expect(
+			matchesIdentity({ birth: 9, device: 1, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+		).toBe(false)
+	})
+})
+
+describe('isExcluded', () => {
+	it('matches the key itself, an ancestor, and the root, and rejects a sibling', () => {
+		expect(isExcluded('src/index.ts', ['src/index.ts'])).toBe(true)
+		expect(isExcluded('src/index.ts', ['src'])).toBe(true)
+		expect(isExcluded('src/index.ts', [''])).toBe(true)
+		expect(isExcluded('src-other/index.ts', ['src'])).toBe(false)
+		expect(isExcluded('src/index.ts', [])).toBe(false)
 	})
 })
 
@@ -179,6 +217,44 @@ describe('readInventory', () => {
 			expect(readInventory(root, ['excluded-other'], { exclude: ['excluded'] })).toStrictEqual({
 				'excluded-other/file.ts': 'sibling',
 			})
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it('reads every exclusion spelling as one rule at both doors', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-exclusion-spelling-'))
+		try {
+			mkdirSync(join(root, 'src'))
+			mkdirSync(join(root, 'src-other'))
+			writeFileSync(join(root, 'src', 'file.ts'), 'source')
+			writeFileSync(join(root, 'src-other', 'file.ts'), 'sibling')
+
+			// The control: with no exclusion the whole population is read, so an empty result below
+			// reports the rule rather than an empty fixture.
+			expect(readInventory(root, ['.'])).toStrictEqual({
+				'src-other/file.ts': 'sibling',
+				'src/file.ts': 'source',
+			})
+
+			// A directory rule keeps its sibling, and its three spellings normalize to one rule at
+			// the walked door and the named one alike.
+			const kept = { 'src-other/file.ts': 'sibling' }
+			expect(readInventory(root, ['.'], { exclude: ['src'] })).toStrictEqual(kept)
+			expect(readInventory(root, ['.'], { exclude: ['src/'] })).toStrictEqual(kept)
+			expect(readInventory(root, ['.'], { exclude: ['./src'] })).toStrictEqual(kept)
+			expect(readInventory(root, ['src/file.ts'], { exclude: ['src'] })).toStrictEqual({})
+			expect(readInventory(root, ['src/file.ts'], { exclude: ['src/'] })).toStrictEqual({})
+			expect(readInventory(root, ['src/file.ts'], { exclude: ['./src'] })).toStrictEqual({})
+
+			// The two root spellings are the rule that drops everything, and they agree at both
+			// doors, which is where they disagreed.
+			expect(readInventory(root, ['.'], { exclude: [''] })).toStrictEqual({})
+			expect(readInventory(root, ['.'], { exclude: ['.'] })).toStrictEqual({})
+			expect(readInventory(root, ['src/file.ts'], { exclude: [''] })).toStrictEqual({})
+			expect(readInventory(root, ['src/file.ts'], { exclude: ['.'] })).toStrictEqual({})
+			expect(readInventory(root, ['src'], { exclude: [''] })).toStrictEqual({})
+			expect(readInventory(root, ['src'], { exclude: ['.'] })).toStrictEqual({})
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}

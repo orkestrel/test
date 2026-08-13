@@ -69,6 +69,16 @@ export interface ScratchInterface {
 	destroy(): void
 }
 
+/** The fields that together identify one allocated directory on its host. */
+export interface ScratchIdentity {
+	/** The identifier of the device holding the directory. */
+	readonly device: number
+	/** The number of the directory's index node on that device. */
+	readonly inode: number
+	/** The directory's creation time in milliseconds. */
+	readonly birth: number
+}
+
 /** Options for allocating a scratch directory. */
 export interface ScratchOptions {
 	/**

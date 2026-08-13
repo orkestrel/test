@@ -12,7 +12,7 @@ import {
 	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
@@ -270,9 +270,8 @@ describe('createScratch', () => {
 			try {
 				// Entries are created in descending order, and the population mixes case with
 				// digit-leading names so the expectation pins `.sort()`'s code-unit order rather
-				// than a locale-aware or numeric order. It cannot discriminate a dropped sort:
-				// directory order is a host property, and closing that gap needs a filesystem whose
-				// native enumeration order differs from sorted, which this one's does not.
+				// than a locale-aware or numeric order. The test below it is what discriminates a
+				// dropped sort.
 				scratch.write('zeta.txt', 'zeta')
 				scratch.write('nested/deep.txt', 'deep')
 				scratch.write('mid.txt', 'mid')
@@ -292,6 +291,31 @@ describe('createScratch', () => {
 					'nested',
 					'zeta.txt',
 				])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('sorts a population the host enumerates in the opposite order', () => {
+			const scratch = createScratch()
+			try {
+				// The names are written from raw bytes because no JS string expresses a byte the
+				// host refuses to decode. `0x80` is an invalid UTF-8 lead byte, so the name reaches
+				// JS as U+FFFD, which sorts after `é` (U+00E9); on disk `0x80` sorts before `é`'s
+				// leading `0xc3`, so the host enumerates the two in the reverse of sorted order.
+				const base = Buffer.from(`${scratch.path}${sep}`)
+				writeFileSync(Buffer.concat([base, Buffer.from([0x80, 0x61])]), 'invalid')
+				writeFileSync(Buffer.concat([base, Buffer.from([0xc3, 0xa9])]), 'accented')
+
+				// Escapes rather than the characters themselves: the exact code points are the
+				// subject here, and rewriting the line must not fold one into a look-alike.
+				const native = readdirSync(scratch.path)
+				expect(native).toStrictEqual(['\uFFFDa', '\u00E9'])
+				expect(scratch.names()).toStrictEqual(['\u00E9', '\uFFFDa'])
+
+				// The control. The two assertions above pin a dropped `.sort()` only while this
+				// population still discriminates, so this fails the moment it stops.
+				expect(scratch.names()).not.toStrictEqual(native)
 			} finally {
 				scratch.destroy()
 			}
@@ -495,6 +519,53 @@ describe('createScratch', () => {
 					`Path outside scratch directory: ../${basename(destination.path)}`,
 				)
 				expect(() => scratch.names('..')).toThrow('Path outside scratch directory: ..')
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
+
+		it('reports a final-segment link rather than its destination', () => {
+			// The traversal test above drives `has` through an intermediate link. `has` uses
+			// `lstatSync`, so a link as the final segment reports on the link itself, which is the
+			// case that behaves differently.
+			const destination = createScratch({ prefix: 'orkestrel-test-link-final-' })
+			const scratch = createScratch()
+			try {
+				destination.write('planted.txt', 'planted')
+				scratch.link('gate', destination.path)
+
+				expect(scratch.has('gate')).toBe(true)
+				expect(lstatSync(join(scratch.path, 'gate')).isSymbolicLink()).toBe(true)
+
+				destination.destroy()
+
+				// The destination is gone and the link is not, so `has` still reports it while a
+				// read through it follows the link and finds nothing.
+				expect(existsSync(destination.path)).toBe(false)
+				expect(scratch.has('gate')).toBe(true)
+				expect(scratch.read('gate')).toBeUndefined()
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
+
+		it('refuses a final segment already occupied by a link', () => {
+			const destination = createScratch({ prefix: 'orkestrel-test-link-occupied-' })
+			const scratch = createScratch()
+			try {
+				scratch.link('gate', destination.path)
+
+				// `link` acts on the final segment, so an occupied one is the host's `EEXIST` rather
+				// than a link created inside the destination.
+				expect(() => scratch.link('gate', destination.path)).toThrow('EEXIST')
+				expect(destination.names()).toStrictEqual([])
+				expect(scratch.names('gate')).toStrictEqual([])
+
+				// The contrast: the same link as an intermediate segment is traversed.
+				scratch.link('gate/inner', destination.path)
+				expect(destination.names()).toStrictEqual(['inner'])
 			} finally {
 				scratch.destroy()
 				destination.destroy()

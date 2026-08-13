@@ -1,4 +1,4 @@
-import type { InventoryOptions } from './types.js'
+import type { InventoryOptions, ScratchIdentity } from './types.js'
 import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,24 @@ export function resolveContained(root: string, target: string): string | undefin
 		return undefined
 	}
 	return candidate
+}
+
+/**
+ * Reports whether two directory identities name the same allocation.
+ *
+ * @param current - The identity read from the path now.
+ * @param allocation - The identity recorded when the directory was allocated.
+ * @returns Whether the device, the index node, and the creation time all match.
+ * @remarks All three fields are compared because none of them alone identifies an allocation. A
+ * device is shared by every directory on one filesystem, an index node is reused once its directory
+ * is removed, and a creation time repeats within the host's timestamp resolution.
+ */
+export function matchesIdentity(current: ScratchIdentity, allocation: ScratchIdentity): boolean {
+	return (
+		current.device === allocation.device &&
+		current.inode === allocation.inode &&
+		current.birth === allocation.birth
+	)
 }
 
 /**
