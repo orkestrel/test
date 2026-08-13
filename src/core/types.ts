@@ -32,7 +32,11 @@ export type JSONValue =
  * constraint rejects every `interface`, because TypeScript grants an implicit index signature to a
  * type alias and never to an interface, and interfaces are what this project's public types are. A
  * value whose type survives the projection satisfies the intersection unchanged; one that carries a
- * method, a `Date`, or a `Map` meets `never` at that member and is rejected there.
+ * method, a `Date`, or a `Map` meets `never` at that member and is rejected there. A member typed
+ * `undefined` is rejected the same way, because serialization drops it from an object and rewrites
+ * it to `null` in an array, so the returned type would claim a member the copy does not carry. An
+ * optional member survives, since its declared type still narrows to what JSON keeps. `unknown`
+ * passes through, so `Record<string, unknown>` is accepted and its values are checked at runtime.
  * @example
  * ```ts
  * interface Snapshot {
@@ -44,12 +48,14 @@ export type JSONValue =
  * type Safe = JSONSafe<Snapshot>
  * ```
  */
-export type JSONSafe<T> = T extends string | number | boolean | null | undefined
+export type JSONSafe<T> = unknown extends T
 	? T
-	: T extends ReadonlyArray<infer E>
-		? ReadonlyArray<JSONSafe<E>>
-		: T extends (...args: never[]) => unknown
-			? never
-			: T extends object
-				? { readonly [K in keyof T]: JSONSafe<T[K]> }
-				: never
+	: T extends string | number | boolean | null
+		? T
+		: T extends ReadonlyArray<infer E>
+			? ReadonlyArray<JSONSafe<E>>
+			: T extends (...args: never[]) => unknown
+				? never
+				: T extends object
+					? { readonly [K in keyof T]: JSONSafe<T[K]> }
+					: never

@@ -20,7 +20,7 @@ import { resolveContained } from './helpers.js'
  * @param options - Optional parent directory, name prefix, and initial files.
  * @returns The scratch directory and its file operations.
  * @throws When the parent is missing, a symbolic link, or not a directory; when the prefix contains
- * a path separator or `..`; or when allocation or seeding fails.
+ * `/` or `\`; or when allocation or seeding fails.
  * @remarks The parent defaults to the host temporary directory. The prefix defaults to
  * `orkestrel-test-`. Seed keys use root-relative paths.
  */
@@ -32,7 +32,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	if (!parentStatus.isDirectory()) throw new Error('Scratch parent is not a directory')
 
 	const prefix = options?.prefix ?? 'orkestrel-test-'
-	if (prefix.includes('/') || prefix.includes('\\') || prefix.includes('..')) {
+	if (prefix.includes('/') || prefix.includes('\\')) {
 		throw new Error('Scratch prefix must be a name fragment')
 	}
 

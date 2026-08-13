@@ -24,12 +24,13 @@ export function resolveContained(root: string, target: string): string | undefin
  *
  * @param root - The root directory as a path or file URL.
  * @param targets - The files to read directly and directories to visit below the root.
- * @param options - Optional file extension and exact-path exclusions.
+ * @param options - Optional file extension and path exclusions.
  * @returns File contents keyed by sorted root-relative paths.
  * @throws When the root or a named target is a symbolic link, is not a supported entry, or resolves
  * outside the root.
  * @remarks A named file is included regardless of the extension filter. An absent extension filter
- * includes every walked file. Exclusions match full root-relative keys.
+ * includes every walked file. An exclusion matches whole root-relative key segments and covers every
+ * key below it, and it applies to a named target and a walked entry alike.
  */
 export function readInventory(
 	root: URL | string,
@@ -44,7 +45,7 @@ export function readInventory(
 	const base = realpathSync.native(supplied)
 	if (targets.length === 0) return Object.fromEntries([])
 
-	const excluded = new Set(options?.exclude)
+	const exclusions = options?.exclude ?? []
 	const pending: string[] = []
 	const queued = new Set<string>()
 	const contents = new Map<string, string>()
@@ -68,7 +69,7 @@ export function readInventory(
 		}
 
 		const key = relative(base, resolved).split(sep).join('/')
-		if (excluded.has(key)) continue
+		if (exclusions.some((rule) => key === rule || key.startsWith(`${rule}/`))) continue
 		if (status.isFile()) {
 			contents.set(key, readFileSync(physical, 'utf8'))
 			continue
@@ -88,7 +89,7 @@ export function readInventory(
 			if (status.isSymbolicLink()) continue
 
 			const key = relative(base, path).split(sep).join('/')
-			if (excluded.has(key)) continue
+			if (exclusions.some((rule) => key === rule || key.startsWith(`${rule}/`))) continue
 
 			if (status.isDirectory()) {
 				const physical = realpathSync.native(path)

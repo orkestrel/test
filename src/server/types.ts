@@ -78,7 +78,9 @@ export interface ScratchOptions {
 	readonly parent?: string
 	/**
 	 * The name fragment that starts the generated directory name. Allocation throws when this value
-	 * contains a path separator or `..`.
+	 * contains `/` or `\`. Both are refused on every host, so the rule does not vary by host. A
+	 * fragment carrying no separator is one path segment and cannot steer the allocation, so
+	 * `release-0..2-` allocates.
 	 */
 	readonly prefix?: string
 	/**
@@ -92,6 +94,9 @@ export interface ScratchOptions {
 export interface InventoryOptions {
 	/** The file extensions to include, each written with its leading dot. */
 	readonly extensions?: readonly string[]
-	/** The root-relative path keys to exclude. A directory key also excludes its descendants. */
+	/**
+	 * The root-relative path keys to exclude. A key excludes itself and every key below it, matched
+	 * on whole segments, so `excluded` drops `excluded/file.ts` and keeps `excluded-other/file.ts`.
+	 */
 	readonly exclude?: readonly string[]
 }
