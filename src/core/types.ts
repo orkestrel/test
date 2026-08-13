@@ -14,35 +14,6 @@ export interface RecorderInterface<TArgs extends readonly unknown[]> {
 	clear(): void
 }
 
-/** Maps each event name to the argument tuple its listeners receive. */
-export type RecorderEventMap = Record<string, readonly unknown[]>
-
-/**
- * The subscribe half of an event source, declared structurally so no emitter package is imported.
- *
- * @typeParam TMap - The event map the source publishes.
- * @typeParam TName - The event names being subscribed to.
- */
-export interface SubscriberInterface<TMap extends RecorderEventMap, TName extends keyof TMap> {
-	/**
-	 * Subscribes a listener to one event.
-	 *
-	 * @param event - The event name to listen for.
-	 * @param handler - The listener receiving that event's arguments.
-	 */
-	on(event: TName, handler: (...args: TMap[TName]) => void): void
-}
-
-/**
- * One recorder per subscribed event, keyed by event name.
- *
- * @typeParam TMap - The event map the recorders cover.
- * @typeParam TName - The event names that have a recorder.
- */
-export type RecorderMap<TMap extends RecorderEventMap, TName extends keyof TMap> = Readonly<
-	{ [K in TName]: RecorderInterface<TMap[K]> }
->
-
 /** A time source a test drives by hand instead of waiting for the host clock. */
 export interface ClockInterface {
 	/** Reads the current time in milliseconds. */
