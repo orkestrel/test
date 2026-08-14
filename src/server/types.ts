@@ -66,10 +66,9 @@ export interface ScratchInterface {
 	 *
 	 * @param target - A relative or absolute path contained by the scratch directory. A missing target
 	 * is a no-op. A final symbolic link is removed without following it, so its destination survives.
-	 * @throws When the target escapes the scratch directory, when it names the scratch directory itself
-	 * — `destroy` ends the allocation, and only it checks the allocation's identity first — when the
-	 * scratch root is missing, a symbolic link, or a file, or when the host refuses to remove the
-	 * target.
+	 * @throws When the target escapes the scratch directory, when it names the allocation itself
+	 * lexically or through an intermediate symbolic link, when the scratch root is missing, a symbolic
+	 * link, or a file, or when the host refuses to remove the target.
 	 */
 	remove(target: string): void
 	/**

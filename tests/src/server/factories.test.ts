@@ -269,6 +269,10 @@ describe('createScratch', () => {
 			const scratch = createScratch()
 			scratch.destroy()
 
+			expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+			expect(() => scratch.remove('../outside')).toThrow(
+				'Path outside scratch directory: ../outside',
+			)
 			expect(() => scratch.remove('file.txt')).toThrow('Scratch directory does not exist')
 			expect(existsSync(scratch.path)).toBe(false)
 		})
@@ -654,6 +658,31 @@ describe('createScratch', () => {
 			}
 		})
 
+		it('refuses an ancestor link back to the allocation and leaves every file intact', () => {
+			const scratch = createScratch({
+				files: {
+					'alpha.txt': 'alpha',
+					'marker.txt': 'marker',
+					'tree/deep/file.txt': 'deep',
+					'zeta.txt': 'zeta',
+				},
+			})
+			try {
+				scratch.link('up', '..')
+				const target = `up/${basename(scratch.path)}`
+
+				expect(() => scratch.remove(target)).toThrow(
+					`Scratch directory is not a removable target: ${target}`,
+				)
+				expect(scratch.read('alpha.txt')).toBe('alpha')
+				expect(scratch.read('marker.txt')).toBe('marker')
+				expect(scratch.read('tree/deep/file.txt')).toBe('deep')
+				expect(scratch.read('zeta.txt')).toBe('zeta')
+			} finally {
+				scratch.destroy()
+			}
+		})
+
 		it('removes a final symbolic link without removing its destination', () => {
 			const destination = createScratch({
 				files: { 'kept.txt': 'kept' },
@@ -671,6 +700,24 @@ describe('createScratch', () => {
 			} finally {
 				scratch.destroy()
 				destination.destroy()
+			}
+		})
+
+		it('removes a sibling directory reached through the same ancestor link', () => {
+			const scratch = createScratch()
+			const sibling = createScratch({
+				files: { 'removed.txt': 'removed' },
+				prefix: 'orkestrel-test-remove-sibling-',
+			})
+			try {
+				scratch.link('up', '..')
+
+				scratch.remove(`up/${basename(sibling.path)}`)
+
+				expect(existsSync(sibling.path)).toBe(false)
+			} finally {
+				scratch.destroy()
+				sibling.destroy()
 			}
 		})
 
@@ -720,7 +767,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('control: destroy on an identically swapped directory also removes nothing', () => {
+		it('destroy on an identically swapped directory also removes nothing', () => {
 			const scratch = createScratch()
 			const swapped = scratch.path
 			rmSync(swapped, { force: true, recursive: true })

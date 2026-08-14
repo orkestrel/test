@@ -44,6 +44,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		inode: allocated.ino,
 	}
 	const outside = 'Path outside scratch directory'
+	const unremovable = 'Scratch directory is not a removable target'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
 			const candidate = resolveContained(path, target)
@@ -123,10 +124,20 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		remove(target) {
 			const candidate = resolveContained(path, target)
 			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
-			if (candidate === path)
-				throw new Error(`Scratch directory is not a removable target: ${target}`)
+			if (candidate === path) throw new Error(`${unremovable}: ${target}`)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
+			const status = lstatSync(candidate, { throwIfNoEntry: false })
+			if (status !== undefined) {
+				const identity: ScratchIdentity = {
+					birth: status.birthtimeMs,
+					device: status.dev,
+					inode: status.ino,
+				}
+				if (matchesIdentity(identity, allocation)) {
+					throw new Error(`${unremovable}: ${target}`)
+				}
+			}
 			rmSync(candidate, { force: true, recursive: true })
 		},
 		destroy() {

@@ -163,16 +163,16 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `ScratchInterface`
 
-| Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| --------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write`   | `void`                | Writes a file at a path lexically contained by the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `read`    | `string \| undefined` | Reads a file, or `undefined` when no file can be read, including through a link whose target is missing and after the allocation is gone. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. Reading follows links, so a link the host cannot resolve, such as a cycle, surfaces the host's own error.                                                                                                                                                                                            |
-| `has`     | `boolean`             | Whether the entry at a contained path is present, without following its final link, so a link whose target is missing still reports `true`. `false` once the allocated directory itself is gone. Throws on an escaping path, and on a root that is a link or not a directory.                                                                                                                                                                                                                                                                                                                 |
-| `names`   | `readonly string[]`   | The entry names directly inside a lexically contained directory, sorted, without their parent paths — the allocated directory itself when the target is omitted. Throws on an escaping path, on a target that is missing or is not a directory, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                                                    |
-| `ensure`  | `string`              | Creates a directory at a lexically contained path and every missing parent, and returns that lexical path. It is the one member that produces an empty directory, because `write` always creates a file. Idempotent on a directory that already exists. Throws when the target exists and is not a directory, on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                 |
-| `link`    | `void`                | Creates a symbolic link at a contained path, creating its missing parents. The source is link text rather than a checked path, so it may point outside the directory. Throws on an escaping path, on a root that is missing, a link, or not a directory, and when the host refuses the link — `EEXIST` when something already occupies the path.                                                                                                                                                                                                                                              |
-| `remove`  | `void`                | Removes the entry at a lexically contained path: a file, an empty directory, or a directory and its whole subtree. A missing target is a no-op rather than an error, so a caller removing something it created conditionally does not guard first. It acts at the final segment rather than through it, so removing a link removes the link and leaves its destination standing. Throws on an escaping path, on a target naming the allocated directory itself — `destroy` ends an allocation, and only it checks identity first — and on a root that is missing, a link, or not a directory. |
-| `destroy` | `void`                | Removes the directory this call allocated, and only that: it removes the entry at the allocated path while `matchesIdentity` holds against the allocation, and removes nothing when it does not. Idempotent.                                                                                                                                                                                                                                                                                                                                                                                  |
+| Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `write`   | `void`                | Writes a file at a path lexically contained by the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `read`    | `string \| undefined` | Reads a file, or `undefined` when no file can be read, including through a link whose target is missing and after the allocation is gone. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. Reading follows links, so a link the host cannot resolve, such as a cycle, surfaces the host's own error.                                                                                                                                                                       |
+| `has`     | `boolean`             | Whether the entry at a contained path is present, without following its final link, so a link whose target is missing still reports `true`. `false` once the allocated directory itself is gone. Throws on an escaping path, and on a root that is a link or not a directory.                                                                                                                                                                                                                                                                                            |
+| `names`   | `readonly string[]`   | The entry names directly inside a lexically contained directory, sorted, without their parent paths — the allocated directory itself when the target is omitted. Throws on an escaping path, on a target that is missing or is not a directory, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                               |
+| `ensure`  | `string`              | Creates a directory at a lexically contained path and every missing parent, and returns that lexical path. It is the one member that produces an empty directory, because `write` always creates a file. Idempotent on a directory that already exists. Throws when the target exists and is not a directory, on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                            |
+| `link`    | `void`                | Creates a symbolic link at a contained path, creating its missing parents. The source is link text rather than a checked path, so it may point outside the directory. Throws on an escaping path, on a root that is missing, a link, or not a directory, and when the host refuses the link — `EEXIST` when something already occupies the path.                                                                                                                                                                                                                         |
+| `remove`  | `void`                | Removes the entry at a lexically contained path: a file, an empty directory, or a directory and its whole subtree. A missing target is a no-op rather than an error, so a caller removing something it created conditionally does not guard first. It acts at the final segment rather than through it, so removing a link removes the link and leaves its destination standing. Throws on an escaping path, on a target naming the allocation itself — lexically, or through an intermediate symbolic link — and on a root that is missing, a link, or not a directory. |
+| `destroy` | `void`                | Removes the directory this call allocated, and only that: it removes the entry at the allocated path while `matchesIdentity` holds against the allocation, and removes nothing when it does not. Idempotent.                                                                                                                                                                                                                                                                                                                                                             |
 
 An empty target names the allocation root. `ensure('')` returns the root path, `has('')` reports
 `true`, and `names('')` lists the root. `write('', …)` surfaces the host's `EISDIR` and `link('', …)`
@@ -183,9 +183,11 @@ answer there, so this package adds no refusal of its own.
 root all throw `Scratch directory is not a removable target: <target>`. Every other member reads the
 root as harmless or as a question about the allocation, and only `remove` would read it as an
 instruction to delete one — which is what an empty computed path produces. Ending the allocation is
-`destroy()`'s job, and `destroy()` is the only member that checks the allocation's identity before
-removing anything. Without this refusal `remove('')` would delete a directory that had replaced the
-allocation at that path, which `destroy()` declines to do.
+`destroy()`'s job. What the refusal buys is that the degenerate argument is loud: the empty computed
+path is this member's most destructive input, and it throws rather than acting. It buys no more than
+that. A directory that has replaced the allocation at the same path is not protected by it —
+`remove('x')` still removes `<replacement>/x`, exactly as `write`, `ensure`, and `link` still act
+inside one.
 
 ### Traversal
 
@@ -195,6 +197,13 @@ link inside the allocation and acts at the destination. `write`, `read`, `has`, 
 remove outside the allocation. That is the contract rather than a hole in it: containment here is
 lexical, `link` is the member that creates such a link, and the [threat model](#threat-model) names
 who else creates one.
+
+`remove` carries the one physical exception, and it is narrow. It reads the final entry it reaches
+with `lstat` and refuses when that entry carries the allocation's identity, so a target that arrives
+back at the allocation through an intermediate link throws instead of emptying it. A sibling reached
+through that same link is still removed. The exception stops at the allocation itself and is
+deliberately not narrowed further, because narrowing it further would be the per-segment walk this
+package declines to do.
 
 The **final** segment is where `has`, `link`, and `remove` differ from the rest. `has` reads it with
 `lstat` rather than following it, so `has('gate')` reports the link itself and stays `true` after
@@ -297,18 +306,30 @@ These hold across `src/core`, `src/server`, and this guide.
    bits. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, `link`, and
    `remove` — throws when that target lexically escapes the allocated directory, and a failed seed
    removes the directory before rethrowing. `remove` adds one refusal the others do not need: a
-   target naming the allocated directory itself, because `destroy()` ends an allocation and is the
-   only member that checks identity before removing. `link` checks its target and not its source, so a
-   contained link may point anywhere. It does not walk the path's segments for symbolic links: that
-   is sandbox behavior and this is not a sandbox. So a lexically contained path can act outside the
-   allocation; [Traversal](#traversal) states what each member does with a link it meets, and the
-   [threat model](#threat-model) says who creates one.
+   target naming the allocation itself, lexically or through an intermediate symbolic link. The
+   lexical half compares paths. The physical half reads only the final entry with `lstat` and
+   compares it with `matchesIdentity`; it walks no path segments and follows no final link. That is
+   the comparison `destroy()` makes, so it carries the same birth-time limit stated for `destroy()`
+   below. `link` checks its target and not its source, so a contained link may point anywhere.
+   `createScratch` does not walk the path's segments for symbolic links: that is sandbox behavior
+   and this is not a sandbox. So a lexically contained path can still act outside the allocation,
+   and only one that lands back on the allocation itself is refused; [Traversal](#traversal) states
+   what each member does with a link it meets, and the [threat model](#threat-model) says who
+   creates one.
 
    `names` sorts, and the suite discriminates a dropped `.sort()`. Two filenames written from raw
    bytes give `readdirSync` the reverse of sorted order: `0x80` is an invalid UTF-8 lead byte, so
    that name reaches JavaScript as `U+FFFD` and sorts after `é`, while on disk `0x80` sorts before
    `é`'s leading `0xc3`. The suite asserts the host's order, the sorted order, and that the two
    differ, so it fails rather than going quiet if that population ever stops discriminating.
+
+   That population carries a limit, and it is Node's rather than this package's. A name the host
+   refuses to decode reaches JavaScript as `U+FFFD`, and that string re-encodes to the three bytes
+   `EF BF BD`, which are not the bytes on disk. So the string `names()` hands back never addresses
+   the entry it came from: `has` on it reports `false`, and `remove(names()[i])` removes nothing and
+   throws nothing, because a missing target is a no-op. The silence is the cost — a caller looping
+   over `names()` to clear a directory leaves such a file behind and reads success. Reach that file
+   with a `Buffer` path through `node:fs` directly.
 
    `destroy()` is idempotent, and identity is what makes it safe rather than location: it removes
    the entry at the allocated path only while `matchesIdentity` holds against the allocation. A
@@ -696,14 +717,18 @@ Each entry names the rules its file proves. The test names carry the cases.
   `remove` each refused at a symbolic-link root and at a file root; `destroy()` is idempotent, leaves
   a replacement directory standing, and leaves a moved allocation alone. Then one group per subject.
   `destruction` takes `write`, `read`, `has`, `names`, `ensure`, `link`, and `remove` after
-  `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root.
+  `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root, and
+  `remove` proving its root and escape refusals answer before the destroyed-allocation one.
   `names` takes its sorted output, including the population that discriminates a dropped `.sort()`.
   `ensure` takes an empty directory, every missing parent, and a repeated call. `link` takes
   traversal through a planted link, the final segment `has` reports rather than follows, and the
-  `EEXIST` an occupied final segment throws. `remove` takes a file beside a kept sibling, an empty
-  directory, a populated subtree, a missing target, a final link whose destination is read back
-  afterwards, and an escaping target with the file outside left intact. `parent` and `prefix` take
-  their own refusals.
+  `EEXIST` an occupied final segment throws. `remove` takes eleven cases: a file beside a kept
+  sibling, an empty directory, a populated subtree, a missing target, an ancestor link back to the
+  allocation with every seeded file read back afterwards, a final link whose destination is read back
+  afterwards, a sibling directory reached through that same ancestor link, an escaping target with
+  the file outside left intact, the root refused in all three spellings, a foreign directory swapped
+  onto the allocated path that `remove('')` refuses, and that same swap under `destroy()`, which
+  removes nothing either. `parent` and `prefix` take their own refusals.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — rule 1: the `## Surface` ↔ source bijection,
   the barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.
