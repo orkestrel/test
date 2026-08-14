@@ -123,6 +123,8 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		remove(target) {
 			const candidate = resolveContained(path, target)
 			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			if (candidate === path)
+				throw new Error(`Scratch directory is not a removable target: ${target}`)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			rmSync(candidate, { force: true, recursive: true })

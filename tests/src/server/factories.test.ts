@@ -688,6 +688,52 @@ describe('createScratch', () => {
 				rmSync(outside, { force: true })
 			}
 		})
+
+		it('refuses the root three ways and leaves the allocation intact', () => {
+			const scratch = createScratch({ files: { 'kept.txt': 'kept' } })
+			try {
+				expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+				expect(() => scratch.remove('.')).toThrow('Scratch directory is not a removable target: .')
+				expect(() => scratch.remove(scratch.path)).toThrow(
+					`Scratch directory is not a removable target: ${scratch.path}`,
+				)
+
+				expect(scratch.has('.')).toBe(true)
+				expect(scratch.read('kept.txt')).toBe('kept')
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('refuses a foreign directory swapped onto the allocated path, unlike destroy', () => {
+			const scratch = createScratch()
+			const swapped = scratch.path
+			rmSync(swapped, { force: true, recursive: true })
+			mkdirSync(swapped)
+			writeFileSync(join(swapped, 'foreign.txt'), 'foreign')
+			try {
+				expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+				expect(existsSync(swapped)).toBe(true)
+				expect(readFileSync(join(swapped, 'foreign.txt'), 'utf8')).toBe('foreign')
+			} finally {
+				rmSync(swapped, { force: true, recursive: true })
+			}
+		})
+
+		it('control: destroy on an identically swapped directory also removes nothing', () => {
+			const scratch = createScratch()
+			const swapped = scratch.path
+			rmSync(swapped, { force: true, recursive: true })
+			mkdirSync(swapped)
+			writeFileSync(join(swapped, 'foreign.txt'), 'foreign')
+			try {
+				expect(() => scratch.destroy()).not.toThrow()
+				expect(existsSync(swapped)).toBe(true)
+				expect(readFileSync(join(swapped, 'foreign.txt'), 'utf8')).toBe('foreign')
+			} finally {
+				rmSync(swapped, { force: true, recursive: true })
+			}
+		})
 	})
 
 	describe('parent', () => {
