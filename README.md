@@ -50,6 +50,7 @@ recorder.clear() // truncates in place, so a `calls` reference captured earlier 
 captureError(() => loader.read('missing.txt')) // the thrown value, or undefined
 requireValue(scratch.read('input.txt')) // 'hello' — narrows `string | undefined` without `!`
 
+scratch.remove('input.txt') // one contained entry, subtree and all; a missing target is a no-op
 scratch.destroy() // idempotent, and it removes only the directory it allocated
 ```
 
