@@ -1,10 +1,9 @@
 # Test
 
 > The test helpers the fleet kept rewriting, published once: a call recorder, a delay, a temporary
-> directory, and a source-file walker. Each one ships because at least 3 of the 41 published packages
-> had already hand-rolled it in their own `tests/setup*.ts`, and the widest shipped group,
-> `captureError`, had 13. [Limits](#limits) carries the membership rule and the count behind each
-> row. This package holds one implementation of each and ships as a `devDependency`. Nothing here
+> directory, and a source-file walker. A helper ships here only when enough packages had already
+> written their own; [Limits](#limits) states that rule and what it excluded. This package holds one
+> implementation of each and ships as a `devDependency`. Nothing here
 > runs in production code. Source: [`src/core`](../src/core) and [`src/server`](../src/server).
 >
 > It has **zero runtime dependencies**, and no exported type here names an `@orkestrel/*` type. A
@@ -212,9 +211,8 @@ These hold across `src/core`, `src/server`, and this guide.
    [`tests/guides.test.ts`](../tests/guides.test.ts) proves all of it, and builds its own file
    inventory with this package's `readInventory` and `resolveRoot`.
 2. **`clear()` truncates.** It empties the backing array rather than replacing it, so a `calls`
-   reference captured before the call reads as empty after it. Thirty of the fleet's thirty-two
-   local recorders already did this, and none of the 129 `clear()` call sites captures `calls`
-   first, which is what makes adoption a no-op.
+   reference captured before the call reads as empty after it. Capture `calls` after the last
+   `clear()` you care about, or read `count` instead.
 3. **`captureError` converts a synchronous throw into a value.** It returns the thrown value
    exactly, including `null` and `undefined`, and it never throws for a thunk that completed. Two
    limits come with that. A thunk that throws `undefined` is indistinguishable from one that

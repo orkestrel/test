@@ -3,11 +3,10 @@
 The test helpers the `@orkestrel` fleet kept rewriting, published once. A call recorder that is a
 real callback rather than a spy. A real host delay. A throw-to-value converter and a presence
 narrower, so `!` and `as` stay banned in tests. Two async collectors and a JSON copier. A scratch
-directory the test owns and destroys, and a symlink-refusing source-file walker. Each one ships
-because at least 3 of the 41 published packages had already hand-rolled it, and the widest shipped
-group, `captureError`, had 13; the guide's [Limits](guides/test.md#limits) section carries the
-membership rule and the count behind each row. Add it as a devDependency; nothing here runs in
-production code. Part of the `@orkestrel` line.
+directory the test owns and destroys, and a symlink-refusing source-file walker. A helper ships here
+only when enough packages had already written their own; the guide's
+[Limits](guides/test.md#limits) section states that rule and what it excluded. Add it as a
+devDependency; nothing here runs in production code. Part of the `@orkestrel` line.
 
 It has **zero runtime dependencies**, and no exported signature names an `@orkestrel/*` type. Both
 rules exist for one reason: a test helper hands its types straight into the consumer's assertions,
