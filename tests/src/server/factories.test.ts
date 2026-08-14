@@ -150,6 +150,7 @@ describe('createScratch', () => {
 			expect(() => scratch.names()).toThrow(message)
 			expect(() => scratch.ensure('made')).toThrow(message)
 			expect(() => scratch.link('linked', 'source')).toThrow(message)
+			expect(() => scratch.remove('file.txt')).toThrow(message)
 
 			expect(readdirSync(moved)).toStrictEqual([])
 		} finally {
@@ -170,6 +171,7 @@ describe('createScratch', () => {
 			expect(() => scratch.names()).toThrow(message)
 			expect(() => scratch.ensure('made')).toThrow(message)
 			expect(() => scratch.link('linked', 'source')).toThrow(message)
+			expect(() => scratch.remove('file.txt')).toThrow(message)
 
 			expect(readFileSync(scratch.path, 'utf8')).toBe('file')
 		} finally {
@@ -261,6 +263,14 @@ describe('createScratch', () => {
 			expect(() => scratch.link('linked', 'source')).toThrow('Scratch directory does not exist')
 			expect(existsSync(scratch.path)).toBe(false)
 			expect(existsSync(join(scratch.path, 'linked'))).toBe(false)
+		})
+
+		it('refuses remove after destruction and does not recreate the allocation', () => {
+			const scratch = createScratch()
+			scratch.destroy()
+
+			expect(() => scratch.remove('file.txt')).toThrow('Scratch directory does not exist')
+			expect(existsSync(scratch.path)).toBe(false)
 		})
 	})
 
@@ -587,6 +597,95 @@ describe('createScratch', () => {
 			} finally {
 				scratch.destroy()
 				source.destroy()
+			}
+		})
+	})
+
+	describe('remove', () => {
+		it('removes a file and leaves its siblings', () => {
+			const scratch = createScratch({
+				files: { 'kept.txt': 'kept', 'removed.txt': 'removed' },
+			})
+			try {
+				scratch.remove('removed.txt')
+
+				expect(scratch.has('removed.txt')).toBe(false)
+				expect(scratch.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes an empty directory', () => {
+			const scratch = createScratch()
+			try {
+				scratch.ensure('empty')
+
+				scratch.remove('empty')
+
+				expect(scratch.has('empty')).toBe(false)
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes a directory and all of its descendants', () => {
+			const scratch = createScratch({
+				files: { 'tree/branch/leaf.txt': 'leaf', 'tree/root.txt': 'root' },
+			})
+			try {
+				scratch.remove('tree')
+
+				expect(scratch.has('tree')).toBe(false)
+				expect(scratch.has('tree/branch/leaf.txt')).toBe(false)
+				expect(scratch.names()).toStrictEqual([])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('does nothing when the target does not exist', () => {
+			const scratch = createScratch({ files: { 'kept.txt': 'kept' } })
+			try {
+				expect(() => scratch.remove('missing')).not.toThrow()
+				expect(scratch.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes a final symbolic link without removing its destination', () => {
+			const destination = createScratch({
+				files: { 'kept.txt': 'kept' },
+				prefix: 'orkestrel-test-remove-destination-',
+			})
+			const scratch = createScratch()
+			try {
+				scratch.link('gate', destination.path)
+
+				scratch.remove('gate')
+
+				expect(scratch.has('gate')).toBe(false)
+				expect(destination.read('kept.txt')).toBe('kept')
+				expect(destination.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
+
+		it('refuses an escaping target', () => {
+			const scratch = createScratch()
+			const outside = join(dirname(scratch.path), `${basename(scratch.path)}-outside`)
+			writeFileSync(outside, 'outside')
+			try {
+				expect(() => scratch.remove(`../${basename(outside)}`)).toThrow(
+					`Path outside scratch directory: ../${basename(outside)}`,
+				)
+				expect(readFileSync(outside, 'utf8')).toBe('outside')
+			} finally {
+				scratch.destroy()
+				rmSync(outside, { force: true })
 			}
 		})
 	})

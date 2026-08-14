@@ -120,6 +120,13 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			mkdirSync(dirname(candidate), { recursive: true })
 			symlinkSync(source, candidate)
 		},
+		remove(target) {
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+
+			rmSync(candidate, { force: true, recursive: true })
+		},
 		destroy() {
 			const status = lstatSync(path, { throwIfNoEntry: false })
 			if (status === undefined) return

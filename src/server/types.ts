@@ -62,6 +62,15 @@ export interface ScratchInterface {
 	 */
 	link(target: string, source: string): void
 	/**
+	 * Removes a file, an empty directory, or a directory and its descendants.
+	 *
+	 * @param target - A relative or absolute path contained by the scratch directory. A missing target
+	 * is a no-op. A final symbolic link is removed without following it, so its destination survives.
+	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
+	 * link, or a file, or the host refuses to remove the target.
+	 */
+	remove(target: string): void
+	/**
 	 * Removes the allocated directory and everything in it when its identity still matches.
 	 *
 	 * @throws When the host refuses to inspect or remove the matching allocation.
