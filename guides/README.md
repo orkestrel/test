@@ -4,16 +4,17 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## By concept
 
-| Concept | Spec                 | Source                                                   | Tests                                                                            |
-| ------- | -------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Test    | [`test.md`](test.md) | [`src/core`](../src/core), [`src/server`](../src/server) | [`tests/src/core`](../tests/src/core), [`tests/src/server`](../tests/src/server) |
+| Concept | Spec                 | Source                                                                                    | Tests                                                                                                                         |
+| ------- | -------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Test    | [`test.md`](test.md) | [`src/core`](../src/core), [`src/browser`](../src/browser), [`src/server`](../src/server) | [`tests/src/core`](../tests/src/core), [`tests/src/browser`](../tests/src/browser), [`tests/src/server`](../tests/src/server) |
 
 ## By directory
 
-| Directory    | Guide                |
-| ------------ | -------------------- |
-| `src/core`   | [`test.md`](test.md) |
-| `src/server` | [`test.md`](test.md) |
+| Directory     | Guide                |
+| ------------- | -------------------- |
+| `src/core`    | [`test.md`](test.md) |
+| `src/browser` | [`test.md`](test.md) |
+| `src/server`  | [`test.md`](test.md) |
 
 ## Dependency reference
 

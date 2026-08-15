@@ -1,10 +1,13 @@
 # Test
 
 > The test helpers the fleet kept rewriting, published once: a call recorder, a delay, a temporary
-> directory, and a source-file walker. A helper ships here only when enough packages had already
-> written their own; [Limits](#limits) states that rule and what it excluded. This package holds one
-> implementation of each and ships as a `devDependency`. Nothing here
-> runs in production code. Source: [`src/core`](../src/core) and [`src/server`](../src/server).
+> directory, a source-file walker, and the browser journey layer that drives a real interface by
+> role and accessible name. A helper ships here only when enough packages had already
+> written their own; [Limits](#limits) states that rule, what it excluded, and the one door the
+> journey layer came through instead. This package holds one implementation of each and ships as a
+> `devDependency`. Nothing here
+> runs in production code. Source: [`src/core`](../src/core), [`src/browser`](../src/browser), and
+> [`src/server`](../src/server).
 >
 > It has **zero runtime dependencies**, and no exported type here names an `@orkestrel/*` type. A
 > dependency on `@orkestrel/emitter` would install a second copy of it beside the one a consumer
@@ -19,12 +22,16 @@ npm install --save-dev @orkestrel/test
 ```
 
 `@orkestrel/test` is the host-independent core. `@orkestrel/test/server` is the Node face — the
-filesystem helpers and the pure leaves they are built from. Core touches neither `node:*` nor the
-DOM, so a browser test project imports it unchanged.
+filesystem helpers and the pure leaves they are built from. `@orkestrel/test/browser` is the
+journey layer, which drives a real browser through the installed Vitest provider. Core touches
+neither `node:*` nor the DOM, so a browser test project imports it unchanged.
+
+The browser face ships ES only. It is built on `vitest/browser`, which is an ES-only module, so no
+CommonJS consumer can reach it and no `.d.cts` is emitted for it.
 
 ## Surface
 
-Twenty exports: thirteen values and seven types, across two environments.
+Forty-six exports: thirty-six values and ten types, across three environments.
 
 ```ts
 import { createRecorder, waitForDelay } from '@orkestrel/test'
@@ -78,6 +85,100 @@ under [Methods](#methods).
 | API              | Kind     | Signature                                                          | Summary                                                 |
 | ---------------- | -------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
 | `createRecorder` | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order. |
+
+### Browser
+
+Imported from `@orkestrel/test/browser`. Every acting verb here resolves its own target from a role
+and an accessible name and drives it through the installed Vitest provider, and none of them takes
+an element, a component instance, or a selector for the thing it acts on. That is what keeps a
+journey a description of what a person does rather than of what the markup happens to be. Four
+readers do take a node — `render`, `readRows`, `style`, and `contrast` — and each reads a node the
+caller already has rather than acting on a target it was handed.
+
+#### Types
+
+| Type                 | Kind      | Shape                                                                                                                                               |
+| -------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CaptureVariant`     | interface | `{ name, width, height, apply? }` — one theme-and-viewport pair, and the document change it needs first.                                            |
+| `PortfolioOptions`   | interface | `{ states, variants, variant, directory, enabled? }` — the registry, the matrix, this run's variant, where it writes, and whether it writes at all. |
+| `PortfolioInterface` | interface | `{ variant, states, paths, files }` plus `place` — one run's registry and what it placed.                                                           |
+
+#### Constants
+
+| API                | Kind  | Signature           | Summary                                                                  |
+| ------------------ | ----- | ------------------- | ------------------------------------------------------------------------ |
+| `ACCESSIBLE_ROLES` | const | `readonly string[]` | The sixteen interactive roles a bare accessible name is searched across. |
+
+#### Helpers
+
+| API                     | Kind     | Signature                                                                               | Summary                                                                                         |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`         | One visible, focus-reachable control, scrolled into view once before reachability is measured.  |
+| `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                       | The same resolver without the viewport requirement; the acting verbs use it.                    |
+| `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                               | Whether a measured rectangle lies wholly outside the viewport.                                  |
+| `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`     | Trusted activation of one resolved control.                                                     |
+| `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                         | Trusted activation inside one named region, matching the control's name loosely.                |
+| `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                       | Trusted activation of a native `<summary>`, which carries no role locators accept.              |
+| `typeAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Focus, select all, delete, then real keystrokes, with the provider's key syntax escaped.        |
+| `fillAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Replaces a value in one operation, for text too long to type.                                   |
+| `pressKeys`             | function | `(keys: string) => Promise<void>`                                                       | A provider keyboard sequence sent to whatever holds focus.                                      |
+| `traverseAccessible`    | function | `(name: string) => Promise<HTMLElement>`                                                | Forward Tab alone, until focus lands on the re-resolved target.                                 |
+| `readPerception`        | function | `(name: string) => string`                                                              | The normalized `innerText` of exactly one visible named region, dialog, table, panel, or alert. |
+| `readPage`              | function | `() => string`                                                                          | The normalized `innerText` of the whole page.                                                   |
+| `readFocus`             | function | `() => string \| undefined`                                                             | The focused element's rendered text, or `undefined` when it renders none.                       |
+| `readValue`             | function | `(role: string, name: string) => string`                                                | The value a resolved input, textarea, or select renders.                                        |
+| `waitForFrame`          | function | `() => Promise<void>`                                                                   | One `requestAnimationFrame`, to settle pending paint work.                                      |
+| `render`                | function | `(markup: string) => HTMLDivElement`                                                    | Trusted fixture markup in a container attached to the document.                                 |
+| `contrast`              | function | `(element: Element) => number`                                                          | The WCAG 2.x ratio, compositing every translucent layer onto the first opaque one.              |
+| `readCascade`           | function | `() => ReadonlySet<string>`                                                             | Every class token the stylesheets loaded into this document define.                             |
+| `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                             | One line per matched element, built from its text nodes rather than from `textContent`.         |
+| `style`                 | function | `(element: Element, property: string) => string`                                        | One resolved CSS property, read from the real browser.                                          |
+| `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]` | The registry times the variants, as `<state>--<variant>.png` names.                             |
+
+#### Factories
+
+| API               | Kind     | Signature                                           | Summary                                                      |
+| ----------------- | -------- | --------------------------------------------------- | ------------------------------------------------------------ |
+| `createPortfolio` | function | `(options: PortfolioOptions) => PortfolioInterface` | The capture registry one run places its screenshots through. |
+
+`resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
+passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its
+`tabIndex` is at least zero; it matches neither `:disabled` nor `[aria-disabled="true"]`; and it has
+no `[inert]` ancestor. A wholly off-viewport match is scrolled into view once and measured again, so
+a control a person can scroll to is reachable and one that stays outside is not. The bare-name form
+searches `ACCESSIBLE_ROLES`; the two-argument form searches exactly the role it is given, which is
+how a name a tab shares with its own panel is disambiguated.
+
+`resolveRendered` applies the same conditions and skips the viewport requirement. It is what every
+acting verb resolves through, so a click does not fail on a target the act itself scrolls into view.
+It is exported because a journey that needs a target before it is on screen needs the same rule
+rather than a second reading of it.
+
+`clickAccessibleWithin` matches the region's name exactly and the control's name loosely. That
+combination is what a person does with a repeated short verb such as `Add`, or with a line whose
+rendered status completes its accessible name: the region supplies the context, and the name only
+has to be recognisable inside it.
+
+`traverseAccessible` charges a step only when focus actually lands on an element, ends when focus
+revisits one — that is a complete cycle of the tab order — and re-resolves the target by name on
+every step, because a framework may replace the node between resolution and focus arrival. Its hard
+cap is three times the page's tabbable count plus ten, so a page whose focus never settles fails
+instead of hanging.
+
+`contrast` resolves a transparent or translucent background through the element's ancestors: every
+painted layer from the element up to the first opaque one composites top-over-bottom onto that
+opaque base, so a 3% surface tint reads as a tint over what shows through it rather than as a
+full-strength paint. A translucent foreground then resolves against that effective background before
+luminance is measured. It refuses a stack where nothing from the element upwards paints, rather than
+assuming a white canvas.
+
+`createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
+naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
+resizes nothing, writes nothing, and records nothing, so a journey calls it unconditionally. An
+enabled `place` applies the variant, resizes the viewport only when it is not already that size,
+writes `<directory>/<state>--<variant>.png` through the provider, and records the path the provider
+reports writing. `states` and `paths` hand out snapshots, so a list read before a placement stays
+what it was.
 
 ### Server
 
@@ -161,6 +262,12 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 | ------- | ------- | ---------------------------------------------------------------------------- |
 | `clear` | `void`  | Truncates the recorded calls in place; the recorder stays usable afterwards. |
 
+#### `PortfolioInterface`
+
+| Method  | Returns                        | Behavior                                                                                                                                                                                                               |
+| ------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `place` | `Promise<string \| undefined>` | Places one registered state: applies the variant, resizes the viewport when it differs, writes the screenshot, records it, and returns the written path. `undefined` and no record at all when the run is not enabled. |
+
 #### `ScratchInterface`
 
 | Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -198,9 +305,49 @@ final link throws the host's `ENOENT` and creates nothing at the destination.
 returns `<allocation>/gate/made` while the directory is made wherever `gate` points, and
 `ensure('gate')` returns `<allocation>/gate` and leaves the directory it points at alone.
 
+## Voices
+
+Every message `src/browser` throws. Keep them distinct: a journey asserts the one it means, and
+absent, present-but-gated, and ambiguous are three different findings about an interface.
+
+| Voice                                                                                 | Thrown by               |
+| ------------------------------------------------------------------------------------- | ----------------------- |
+| `No interactive element has the accessible name "<name>"`                             | `resolveRendered`       |
+| `Interactive target "<name>" is not visible and focus-reachable`                      | `resolveRendered`       |
+| `Interactive target "<name>" is ambiguous across <n> elements`                        | `resolveRendered`       |
+| `Interactive target "<name>" could not be resolved`                                   | `resolveRendered`       |
+| `Interactive target "<name>" is unreachable after scrolling`                          | `resolveAccessible`     |
+| `Interactive target "<name>" is not reachable inside "<region>"`                      | `clickAccessibleWithin` |
+| `Interactive target "<name>" is ambiguous across <n> elements inside "<region>"`      | `clickAccessibleWithin` |
+| `Interactive target "<name>" could not be resolved inside "<region>"`                 | `clickAccessibleWithin` |
+| `Native disclosure "<name>" is not visible and focus-reachable`                       | `clickDisclosure`       |
+| `Native disclosure "<name>" is ambiguous across <n> elements`                         | `clickDisclosure`       |
+| `Native disclosure "<name>" could not be resolved`                                    | `clickDisclosure`       |
+| `Interactive target "<name>" is not reachable through forward Tab traversal: <trail>` | `traverseAccessible`    |
+| `Named region "<name>" is not visible`                                                | `readPerception`        |
+| `Named region "<name>" is ambiguous across <n> elements`                              | `readPerception`        |
+| `Named region "<name>" could not be resolved`                                         | `readPerception`        |
+| `Interactive target "<name>" does not carry a value`                                  | `readValue`             |
+| `Computed foreground color is unavailable`                                            | `contrast`              |
+| `Computed background color is unavailable`                                            | `contrast`              |
+| `Computed background channel is unavailable`                                          | `contrast`              |
+| `Capture variant "<name>" is not registered`                                          | `createPortfolio`       |
+| `Capture state "<state>" is not registered`                                           | `place`                 |
+| `Capture state "<state>" is already placed`                                           | `place`                 |
+| `Capture file "<file>" is already written`                                            | `place`                 |
+
+Five of them are narrowing rather than findings, and no input reaches them. `could not be resolved`
+appears three times and `Computed background channel is unavailable` once because a length check
+does not narrow an index read under `noUncheckedIndexedAccess`, so each is the branch that gives the
+value its type. `Capture file "<file>" is already written` is the same shape one level up: a file
+name is `<state>--<variant>.png` with one variant per run, so it is a function of the state alone
+and the already-placed refusal fires first. It stays because it is the invariant the registry
+actually rests on, and it would become reachable the moment a filename stopped being derived from
+the state alone.
+
 ## Contract
 
-These hold across `src/core`, `src/server`, and this guide.
+These hold across `src/core`, `src/browser`, `src/server`, and this guide.
 
 1. **Doc ↔ source bijection.** Every `## Surface` row is a real export, and every export is a row —
    exhaustive in both directions, name and kind together. The same suite anchors three further
@@ -321,6 +468,16 @@ These hold across `src/core`, `src/server`, and this guide.
 9. **Zero runtime dependencies, and no foreign type in a signature.** `dependencies` is empty and
    stays empty. No exported signature names an `@orkestrel/*` type, so no consumer can be handed a
    two-copies type failure by installing this package.
+10. **The journey layer resolves its own targets, and imports almost nothing.** No helper in
+    `src/browser` accepts an element, a component instance, or a selector for the target it acts on:
+    each finds its own from a role and an accessible name, which is what stops a journey drifting
+    into a description of the markup. `render`, `readRows`, `style`, and `contrast` do take a node,
+    and they are readers of a node the caller already has rather than verbs that act on a target.
+    The whole environment imports `vitest/browser` and DOM globals and nothing else — no `src/core`
+    import, no framework, no `node:*`, and no `import.meta.env`, so whether a run writes captures is
+    the consumer's decision through `PortfolioOptions.enabled` rather than an environment variable
+    this package reads. `vitest` is a peer dependency, so the provider the layer drives is the one
+    the consumer already installed, and rule 9's empty `dependencies` is untouched.
 
 ### Threat model
 
@@ -365,6 +522,16 @@ hard-link detection is added, and the boundary is documented instead.
 
 This package ships what the fleet repeats, not everything the fleet has.
 
+`src/browser` came through a different door, and it is the only one. The threshold below discovers a
+candidate by counting copies that already exist, which is the right instrument for a helper each
+package wrote for itself. The journey layer is not that: it is the contract
+`orkestrel-human-journey` requires every browser workspace to implement, and a workspace that writes
+its own copy of it writes a slightly different resolver, a slightly different set of failure voices,
+and a journey that reads as if it proved something it did not. Publishing it once is what keeps
+those implementations identical, so it ships at one member rather than three. Nothing else enters
+this way: a helper that merely happens to touch the DOM is measured by the threshold like everything
+else, and two of them are refused below.
+
 The membership rule is a threshold a candidate must clear to be **considered**. It is never a
 guarantee of shipping. A candidate is considered when it has **three or more members that are not
 all inside one dependency cluster, or five or more members regardless** — where a cluster is a set
@@ -388,7 +555,7 @@ named reason. Each is revisited when its count or its second reason changes.
 | ------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types                                     | 13       | Clears | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at 219 call sites — 18 of which read a property off a call argument and would hard-error with `as` and `!` banned. `createRecorder`, the kernel all 13 local copies are built from, ships instead.                                                                                                                                                                                                                                                                                                                  |
 | An ephemeral-port HTTP fixture server — `middleware`, `router`, `server`                                                             | 3        | Clears | Two of the three are one cluster and `middleware` is independent, so the count stands. It is excluded because it needs a port guard `@orkestrel/server` already publishes, and depending on that package drags a six-package runtime closure into all 41 repositories to avoid a two-line predicate. Import `isAddressInfo` from `@orkestrel/server` directly.                                                                                                                                                                                                                                                                                                                  |
-| Every browser helper — a DOM element builder, and the three helpers `database` and `indexeddb` share under five names                | 2 each   | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. A published browser environment would also cost a build target, a scoped tsconfig, a barrel, and a Playwright test project. There is no `src/browser` here.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| A DOM element builder, and the three helpers `database` and `indexeddb` share under five names                                       | 2 each   | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. `src/browser` now exists, so the build target, scoped tsconfig, barrel, and Playwright project no longer count against them. The count still does, and neither is part of the journey layer that opened the environment.                                                                                                                                                                                                                                                                                                                                                                  |
 | A hand-driven timer — `terminal`, `toolbox`                                                                                          | 2        | Fails  | Two members, and `toolbox` runtime-depends on `terminal`, so they are one cluster twice over. Its shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | A hand-driven clock — `mcp`, `middleware`                                                                                            | 2        | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.                                                                                                                                                                                                                                                                                                                        |
 | Numeric corpora, hostile-key tables, deep-freeze, raw invocation, revoked proxies, throwing getters, cyclic and deep record builders | 2–3 each | Fails  | Every group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                                                                                                                                                                                                                                                                                                                                               |
@@ -627,13 +794,85 @@ resolveContained(root, '/etc/passwd') // undefined — absolute and outside
 scratch.destroy()
 ```
 
+### Drive an interface the way a person does
+
+Every verb finds its own target, so a journey names what a person names. Nothing here takes an
+element, and nothing dispatches a constructed event.
+
+```ts
+import {
+	clickAccessible,
+	clickAccessibleWithin,
+	readPerception,
+	readValue,
+	traverseAccessible,
+	typeAccessible,
+} from '@orkestrel/test/browser'
+
+await typeAccessible('Runs', '3')
+readValue('textbox', 'Runs') // '3' — the value the control renders, not the state behind it
+
+// Role first when a bare name answers for more than one element. A tab and its own panel collide
+// by construction, because the panel is labelled by the tab.
+await clickAccessible('tab', 'Drafts')
+
+// Region first when a short verb repeats, or when a rendered status completes the name.
+await clickAccessibleWithin('Ledger', 'button', 'Monthly income')
+
+// Focus arrives the way the interface offers it. Nothing calls element.focus().
+await traverseAccessible('Evaluate')
+
+readPerception('Run') // one visible named region, whitespace collapsed, hidden-but-read text kept
+```
+
+### Place a capture portfolio
+
+The registry is declared once, the run renders one variant, and the same expansion answers both
+"what should exist" and "what did".
+
+```ts
+import { createPortfolio, expandCaptures } from '@orkestrel/test/browser'
+
+const states = ['start-empty', 'answer-ideal']
+const variants = [
+	{ name: 'light-1440', width: 1440, height: 1000 },
+	{
+		name: 'dark-390',
+		width: 390,
+		height: 844,
+		apply: () => document.documentElement.setAttribute('data-theme', 'dark'),
+	},
+]
+
+const portfolio = createPortfolio({
+	states,
+	variants,
+	variant: 'dark-390',
+	directory: '../../../tmp/capture/states',
+	// The gate is yours. This package reads no environment variable of its own.
+	enabled: import.meta.env.VITE_CAPTURE === '1',
+})
+
+expandCaptures(states, variants).length // 4 — the registry times the variants
+portfolio.files // the same four names, so a proof compares one expansion against the disk
+
+// Placed from inside the journey that reached the state, right after the assertion that proves it.
+await portfolio.place('start-empty')
+// A run with the gate unset returns undefined here, resizes nothing, and records nothing.
+
+portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
+```
+
 ### Practices
 
 - **Adopt one family at a time.** Replace a package's local recorder, then its delay, then its
   temporary directory. Nothing here re-exports another package's symbol, so each swap is
   independent.
 - **Import by environment.** Reach for `@orkestrel/test` first; drop to `@orkestrel/test/server`
-  only for the filesystem helpers.
+  only for the filesystem helpers, and to `@orkestrel/test/browser` only inside a browser test
+  project.
+- **Let the journey layer be the only door.** A journey that works around a missing helper by
+  reaching for a selector is a layer defect. Add the capability here instead.
 - **Keep the helper out of the assertion.** `captureError` converts a throw into a value and
   `requireValue` converts absence into a throw; the test still does the asserting.
 - **Let `readInventory` refuse.** A symlinked root or an escaping target is an error, not a
@@ -655,6 +894,24 @@ Each entry names the rules its file proves. The test names carry the cases.
   exceeding the host's argument limit.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rule 2. It records
   typed tuples in call order, and truncates a `calls` array the test captured before the `clear()`.
+- [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts) — rule 10 across the
+  layer, in real Chromium against constructed markup. The resolver takes a bare name, a role that
+  disambiguates a tab from its own panel, a name no element carries, a name carried only by a role
+  outside `ACCESSIBLE_ROLES`, and the disabled, hidden, and inert matches that are present but
+  gated; `resolveAccessible` takes a target scrolled into view and one fixed outside the viewport
+  that stays there. Each acting verb takes its happy path and every voice it owns, including both
+  region-scoped refusals and both native-disclosure ones. `traverseAccessible` takes a Tab-reachable
+  target and, as the control, one whose own focus handler blurs it, so focus never lands and the cap
+  fails instead of hanging. `contrast` takes a translucent surface composited onto the opaque layer
+  beneath it, a fully opaque stack over two different ancestors as the control from outside that
+  population, and a stack where nothing paints. `expandCaptures` takes the exact expected file list
+  rather than a count, and both empty inputs.
+- [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts) — the portfolio's
+  four refusals and its one write. Creation refuses an unregistered variant name; a run that is not
+  enabled applies nothing, writes nothing, and records nothing; an enabled run applies the variant,
+  resizes the viewport, writes a real file through the provider, records it, and hands out snapshots
+  rather than its own lists; and it refuses an unregistered state and a second placement of one
+  state.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rule 6, and each pure
   leaf against its own inputs. `resolveContained` takes contained relative and absolute targets and
   both spellings of an escape. `matchesIdentity` takes a triple matching in every field and one

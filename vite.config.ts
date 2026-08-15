@@ -1,10 +1,14 @@
 import type { UserConfig } from 'vite'
+import { playwright } from '@vitest/browser-playwright'
 import { defineConfig, mergeConfig } from 'vitest/config'
 import tsconfig from './tsconfig.json' with { type: 'json' }
 import { environmentBoundary, outputBoundary } from './configs/helpers.js'
+import { resolveBrowser, resolvePinnedBrowser } from './configs/browsers.js'
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { basename, join, parse, relative, resolve as resolvePath, sep } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
+
+const browserOptions = resolveBrowser(resolvePinnedBrowser(), process.platform, process.env)
 
 export function resolveWorkspacePath(relativePath: string): string {
 	return fileURLToPath(new URL(relativePath, import.meta.url))
@@ -58,6 +62,41 @@ export const srcCore = (options?: UserConfig): UserConfig =>
 				setupFiles: ['./tests/setup.ts'],
 				environment: 'node',
 				browser: { enabled: false },
+			},
+		},
+		options ?? {},
+	)
+
+export const srcBrowser = (options?: UserConfig): UserConfig =>
+	mergeConfig(
+		{
+			resolve,
+			publicDir: false,
+			plugins: [outputBoundary('dist/src/browser'), environmentBoundary('src/browser')],
+			build: {
+				emptyOutDir: true,
+				sourcemap: true,
+				minify: false,
+				lib: {
+					entry: resolveWorkspacePath('src/browser/index.ts'),
+					formats: ['es'],
+					fileName: () => 'index.js',
+				},
+				outDir: 'dist/src/browser',
+				rolldownOptions: {
+					external: (id: string) => id === 'vitest/browser' || id.startsWith('@orkestrel/'),
+				},
+			},
+			test: {
+				name: { label: 'src:browser', color: 'blue' },
+				include: ['tests/src/browser/**/*.test.ts'],
+				setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts'],
+				browser: {
+					enabled: true,
+					provider: playwright(browserOptions),
+					instances: [{ browser: 'chromium', headless: true }],
+				},
+				fileParallelism: false,
 			},
 		},
 		options ?? {},
@@ -177,6 +216,7 @@ export default defineConfig({
 	test: {
 		projects: [
 			srcCore,
+			srcBrowser,
 			srcServer,
 			policy,
 			config,
