@@ -236,8 +236,8 @@ describe('fillAccessible', () => {
 		)
 		const recorder = createRecorder<[event: Event]>()
 		requireValue(container.querySelector('textarea')).addEventListener('input', recorder.handler)
-		await fillAccessible('Notes', '{"reasoning":"logical"}')
-		expect(readValue('textbox', 'Notes')).toBe('{"reasoning":"logical"}')
+		await fillAccessible('Notes', '{"status":"ready"}')
+		expect(readValue('textbox', 'Notes')).toBe('{"status":"ready"}')
 		expect(recorder.count).toBeGreaterThan(0)
 	})
 })
@@ -266,7 +266,18 @@ describe('traverseAccessible', () => {
 		const ghost = requireValue(container.querySelector('button'))
 		ghost.addEventListener('focus', () => ghost.blur())
 		await expect(traverseAccessible('Ghost')).rejects.toThrowError(
-			'Interactive target "Ghost" is not reachable through forward Tab traversal',
+			/^Interactive target "Ghost" is not reachable through forward Tab traversal: $/u,
+		)
+	})
+
+	it('carries the trail of what focus did reach when the target rejects focus', async () => {
+		const container = buildFixture(
+			'<button type="button">Anchor</button><button type="button">Ghost</button>',
+		)
+		const ghost = requireValue(container.querySelectorAll('button')[1])
+		ghost.addEventListener('focus', () => ghost.blur())
+		await expect(traverseAccessible('Ghost')).rejects.toThrowError(
+			/^Interactive target "Ghost" is not reachable through forward Tab traversal: .+$/u,
 		)
 	})
 })
@@ -316,6 +327,17 @@ describe('readFocus', () => {
 		expect(document.activeElement).toBeInstanceOf(SVGElement)
 		expect(readFocus()).toBeUndefined()
 	})
+
+	it('reads the whole page when nothing holds focus', async () => {
+		buildFixture('<button type="button">Evaluate</button><p>Answer ready</p>')
+		await clickAccessible('Evaluate')
+		const active = document.activeElement
+		if (active instanceof HTMLElement) active.blur()
+		expect(document.activeElement).toBe(document.body)
+		const perceived = requireValue(readFocus())
+		expect(perceived).toContain('Evaluate')
+		expect(perceived).toContain('Answer ready')
+	})
 })
 
 describe('readValue', () => {
@@ -356,6 +378,11 @@ describe('render', () => {
 })
 
 describe('contrast', () => {
+	it('refuses a detached element whose foreground has no computed channels', () => {
+		const detached = document.createElement('p')
+		expect(() => contrast(detached)).toThrowError('Computed foreground color is unavailable')
+	})
+
 	it('measures a fully opaque stack from the element that paints, ignoring its ancestors', () => {
 		const container = buildFixture(
 			'<div style="background: #fff"><p style="background: #000; color: #fff">Ready</p></div>' +

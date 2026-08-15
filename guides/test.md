@@ -91,9 +91,9 @@ under [Methods](#methods).
 Imported from `@orkestrel/test/browser`. Every acting verb here resolves its own target from a role
 and an accessible name and drives it through the installed Vitest provider, and none of them takes
 an element, a component instance, or a selector for the thing it acts on. That is what keeps a
-journey a description of what a person does rather than of what the markup happens to be. Four
-readers do take a node — `render`, `readRows`, `style`, and `contrast` — and each reads a node the
-caller already has rather than acting on a target it was handed.
+journey a description of what a person does rather than of what the markup happens to be. `render`
+takes markup and creates a node. Three readers take a node — `readRows`, `style`, and `contrast` —
+and each reads a node the caller already has rather than acting on a target it was handed.
 
 #### Types
 
@@ -111,29 +111,29 @@ caller already has rather than acting on a target it was handed.
 
 #### Helpers
 
-| API                     | Kind     | Signature                                                                               | Summary                                                                                         |
-| ----------------------- | -------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`         | One visible, focus-reachable control, scrolled into view once before reachability is measured.  |
-| `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                       | The same resolver without the viewport requirement; the acting verbs use it.                    |
-| `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                               | Whether a measured rectangle lies wholly outside the viewport.                                  |
-| `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`     | Trusted activation of one resolved control.                                                     |
-| `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                         | Trusted activation inside one named region, matching the control's name loosely.                |
-| `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                       | Trusted activation of a native `<summary>`, which carries no role locators accept.              |
-| `typeAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Focus, select all, delete, then real keystrokes, with the provider's key syntax escaped.        |
-| `fillAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Replaces a value in one operation, for text too long to type.                                   |
-| `pressKeys`             | function | `(keys: string) => Promise<void>`                                                       | A provider keyboard sequence sent to whatever holds focus.                                      |
-| `traverseAccessible`    | function | `(name: string) => Promise<HTMLElement>`                                                | Forward Tab alone, until focus lands on the re-resolved target.                                 |
-| `readPerception`        | function | `(name: string) => string`                                                              | The normalized `innerText` of exactly one visible named region, dialog, table, panel, or alert. |
-| `readPage`              | function | `() => string`                                                                          | The normalized `innerText` of the whole page.                                                   |
-| `readFocus`             | function | `() => string \| undefined`                                                             | The focused element's rendered text, or `undefined` when it renders none.                       |
-| `readValue`             | function | `(role: string, name: string) => string`                                                | The value a resolved input, textarea, or select renders.                                        |
-| `waitForFrame`          | function | `() => Promise<void>`                                                                   | One `requestAnimationFrame`, to settle pending paint work.                                      |
-| `render`                | function | `(markup: string) => HTMLDivElement`                                                    | Trusted fixture markup in a container attached to the document.                                 |
-| `contrast`              | function | `(element: Element) => number`                                                          | The WCAG 2.x ratio, compositing every translucent layer onto the first opaque one.              |
-| `readCascade`           | function | `() => ReadonlySet<string>`                                                             | Every class token the stylesheets loaded into this document define.                             |
-| `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                             | One line per matched element, built from its text nodes rather than from `textContent`.         |
-| `style`                 | function | `(element: Element, property: string) => string`                                        | One resolved CSS property, read from the real browser.                                          |
-| `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]` | The registry times the variants, as `<state>--<variant>.png` names.                             |
+| API                     | Kind     | Signature                                                                               | Summary                                                                                                  |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`         | One visible, focus-reachable control, scrolled into view once before reachability is measured.           |
+| `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                       | The same resolver without the viewport requirement; the acting verbs use it.                             |
+| `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                               | Whether a measured rectangle lies wholly outside the viewport.                                           |
+| `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`     | Trusted activation of one resolved control.                                                              |
+| `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                         | Trusted activation inside one named region, matching the control's name loosely.                         |
+| `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                       | Trusted activation of a native `<summary>`, which carries no role locators accept.                       |
+| `typeAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Focus, select all, delete, then real keystrokes, with the provider's key syntax escaped.                 |
+| `fillAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Replaces a value in one operation, for text too long to type.                                            |
+| `pressKeys`             | function | `(keys: string) => Promise<void>`                                                       | A provider keyboard sequence sent to whatever holds focus.                                               |
+| `traverseAccessible`    | function | `(name: string) => Promise<HTMLElement>`                                                | Forward Tab alone, until focus lands on the re-resolved target.                                          |
+| `readPerception`        | function | `(name: string) => string`                                                              | The normalized `innerText` of exactly one visible named region, dialog, table, panel, or alert.          |
+| `readPage`              | function | `() => string`                                                                          | The normalized `innerText` of the whole page.                                                            |
+| `readFocus`             | function | `() => string \| undefined`                                                             | The focused HTML element's rendered text (`''` included); `undefined` for a non-HTML focus; the whole page's text when nothing holds focus. |
+| `readValue`             | function | `(role: string, name: string) => string`                                                | The value a resolved input, textarea, or select renders.                                                 |
+| `waitForFrame`          | function | `() => Promise<void>`                                                                   | One `requestAnimationFrame`, to settle pending paint work.                                               |
+| `render`                | function | `(markup: string) => HTMLDivElement`                                                    | Trusted fixture markup in a container attached to the document.                                          |
+| `contrast`              | function | `(element: Element) => number`                                                          | The WCAG 2.x ratio, compositing every translucent layer onto the first opaque one.                       |
+| `readCascade`           | function | `() => ReadonlySet<string>`                                                             | Every class token the stylesheets loaded into this document define.                                      |
+| `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                             | One line per matched element, built from its text nodes rather than from `textContent`.                  |
+| `style`                 | function | `(element: Element, property: string) => string`                                        | One resolved CSS property, read from the real browser.                                                   |
+| `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]` | The registry times the variants, as `<state>--<variant>.png` names.                                      |
 
 #### Factories
 
@@ -162,15 +162,16 @@ has to be recognisable inside it.
 `traverseAccessible` charges a step only when focus actually lands on an element, ends when focus
 revisits one — that is a complete cycle of the tab order — and re-resolves the target by name on
 every step, because a framework may replace the node between resolution and focus arrival. Its hard
-cap is three times the page's tabbable count plus ten, so a page whose focus never settles fails
-instead of hanging.
+cap is three times the page's candidate count plus ten, including disabled controls and elements
+with `tabindex="-1"`, so a page whose focus never settles fails instead of hanging.
 
 `contrast` resolves a transparent or translucent background through the element's ancestors: every
 painted layer from the element up to the first opaque one composites top-over-bottom onto that
 opaque base, so a 3% surface tint reads as a tint over what shows through it rather than as a
 full-strength paint. A translucent foreground then resolves against that effective background before
 luminance is measured. It refuses a stack where nothing from the element upwards paints, rather than
-assuming a white canvas.
+assuming a white canvas, and it refuses a detached element, whose computed foreground color does not
+exist.
 
 `createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
 naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
@@ -179,6 +180,11 @@ enabled `place` applies the variant, resizes the viewport only when it is not al
 writes `<directory>/<state>--<variant>.png` through the provider, and records the path the provider
 reports writing. `states` and `paths` hand out snapshots, so a list read before a placement stays
 what it was.
+
+The filename law is injective within one run: one variant is selected, and every filename is
+`<state>--<variant>.png`. A duplicate filename therefore implies a duplicate placement, which
+`place` already refuses. Any future naming change that breaks this injectivity must reintroduce a
+collision refusal before writing.
 
 ### Server
 
@@ -334,16 +340,11 @@ absent, present-but-gated, and ambiguous are three different findings about an i
 | `Capture variant "<name>" is not registered`                                          | `createPortfolio`       |
 | `Capture state "<state>" is not registered`                                           | `place`                 |
 | `Capture state "<state>" is already placed`                                           | `place`                 |
-| `Capture file "<file>" is already written`                                            | `place`                 |
 
 Five of them are narrowing rather than findings, and no input reaches them. `could not be resolved`
-appears three times and `Computed background channel is unavailable` once because a length check
-does not narrow an index read under `noUncheckedIndexedAccess`, so each is the branch that gives the
-value its type. `Capture file "<file>" is already written` is the same shape one level up: a file
-name is `<state>--<variant>.png` with one variant per run, so it is a function of the state alone
-and the already-placed refusal fires first. It stays because it is the invariant the registry
-actually rests on, and it would become reachable the moment a filename stopped being derived from
-the state alone.
+appears four times and `Computed background channel is unavailable` once. In each case, a preceding
+length check does not narrow the later lookup under `noUncheckedIndexedAccess`, so the branch gives
+the value its type.
 
 ## Contract
 
@@ -471,8 +472,9 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
 10. **The journey layer resolves its own targets, and imports almost nothing.** No helper in
     `src/browser` accepts an element, a component instance, or a selector for the target it acts on:
     each finds its own from a role and an accessible name, which is what stops a journey drifting
-    into a description of the markup. `render`, `readRows`, `style`, and `contrast` do take a node,
-    and they are readers of a node the caller already has rather than verbs that act on a target.
+    into a description of the markup. `render` takes markup and creates a node. `readRows`, `style`,
+    and `contrast` take a node, and they are readers of a node the caller already has rather than
+    verbs that act on a target.
     The whole environment imports `vitest/browser` and DOM globals and nothing else — no `src/core`
     import, no framework, no `node:*`, and no `import.meta.env`, so whether a run writes captures is
     the consumer's decision through `PortfolioOptions.enabled` rather than an environment variable
@@ -849,8 +851,8 @@ const portfolio = createPortfolio({
 	variants,
 	variant: 'dark-390',
 	directory: '../../../tmp/capture/states',
-	// The gate is yours. This package reads no environment variable of its own.
-	enabled: import.meta.env.VITE_CAPTURE === '1',
+	// This example is an enabled capture run. A real suite can supply its own gate here.
+	enabled: true,
 })
 
 expandCaptures(states, variants).length // 4 — the registry times the variants
@@ -858,7 +860,7 @@ portfolio.files // the same four names, so a proof compares one expansion agains
 
 // Placed from inside the journey that reached the state, right after the assertion that proves it.
 await portfolio.place('start-empty')
-// A run with the gate unset returns undefined here, resizes nothing, and records nothing.
+// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
 
 portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
 ```
@@ -901,13 +903,16 @@ Each entry names the rules its file proves. The test names carry the cases.
   gated; `resolveAccessible` takes a target scrolled into view and one fixed outside the viewport
   that stays there. Each acting verb takes its happy path and every voice it owns, including both
   region-scoped refusals and both native-disclosure ones. `traverseAccessible` takes a Tab-reachable
-  target and, as the control, one whose own focus handler blurs it, so focus never lands and the cap
-  fails instead of hanging. `contrast` takes a translucent surface composited onto the opaque layer
-  beneath it, a fully opaque stack over two different ancestors as the control from outside that
-  population, and a stack where nothing paints. `expandCaptures` takes the exact expected file list
-  rather than a count, and both empty inputs.
+  target; as the cap control, a lone target whose own focus handler blurs it, so focus never lands
+  and the cap fails with an empty trail; and, as the cycle control, the same self-blurring target
+  behind a reachable decoy, so the traversal completes one cycle and reports the decoy in its trail.
+  `contrast` takes a translucent surface composited onto the opaque layer beneath it, a fully opaque
+  stack over two different ancestors as the control from outside that population, a stack where
+  nothing paints, and a detached element whose computed foreground does not exist. `expandCaptures`
+  takes the exact expected file list rather than a count, and both empty inputs.
 - [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts) — the portfolio's
-  four refusals and its one write. Creation refuses an unregistered variant name; a run that is not
+  three refusals, its disabled gate, and its one write. Creation refuses an unregistered variant
+  name; a run that is not
   enabled applies nothing, writes nothing, and records nothing; an enabled run applies the variant,
   resizes the viewport, writes a real file through the provider, records it, and hands out snapshots
   rather than its own lists; and it refuses an unregistered state and a second placement of one

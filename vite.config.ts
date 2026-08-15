@@ -96,6 +96,7 @@ export const srcBrowser = (options?: UserConfig): UserConfig =>
 					provider: playwright(browserOptions),
 					instances: [{ browser: 'chromium', headless: true }],
 				},
+				// Concurrent files interfere through the shared page.viewport.
 				fileParallelism: false,
 			},
 		},

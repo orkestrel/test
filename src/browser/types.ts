@@ -49,8 +49,7 @@ export interface PortfolioInterface {
 	 *
 	 * @param state - The state name from the registry.
 	 * @returns The written path, or `undefined` when the portfolio is not enabled.
-	 * @throws When the state is not registered, has already been placed, or resolves to a filename
-	 * this portfolio already wrote.
+	 * @throws When the state is not registered or has already been placed.
 	 */
 	place(state: string): Promise<string | undefined>
 }

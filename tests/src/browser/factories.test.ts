@@ -1,8 +1,8 @@
 import type { CaptureVariant } from '@src/browser'
-import { createPortfolio, expandCaptures } from '@src/browser'
+import { createPortfolio } from '@src/browser'
 import { createRecorder } from '@src/core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { page } from 'vitest/browser'
+import { commands, page, server } from 'vitest/browser'
 
 const STATES: readonly string[] = ['start-empty', 'answer-ideal']
 
@@ -47,7 +47,12 @@ describe('createPortfolio', () => {
 			directory: DIRECTORY,
 		})
 		expect(portfolio.variant).toBe('dark-390')
-		expect(portfolio.files).toStrictEqual(expandCaptures(STATES, VARIANTS))
+		expect(portfolio.files).toStrictEqual([
+			'start-empty--light-1440.png',
+			'start-empty--dark-390.png',
+			'answer-ideal--light-1440.png',
+			'answer-ideal--dark-390.png',
+		])
 	})
 
 	it('places nothing at all when the run is not enabled', async () => {
@@ -89,12 +94,14 @@ describe('createPortfolio', () => {
 		})
 		const before = portfolio.states
 		const written = await portfolio.place('start-empty')
+		const expected = `${server.config.root}/tmp/capture/portfolio/start-empty--dark-390.png`
 		expect(applied.count).toBe(1)
 		expect(window.innerWidth).toBe(390)
 		expect(window.innerHeight).toBe(844)
-		expect(written).toMatch(/start-empty--dark-390\.png$/u)
+		expect(written).toBe(expected)
+		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 		expect(portfolio.states).toStrictEqual(['start-empty'])
-		expect(portfolio.paths).toStrictEqual([written])
+		expect(portfolio.paths).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
 	})
@@ -112,6 +119,8 @@ describe('createPortfolio', () => {
 			'Capture state "answer-ideal" is already placed',
 		)
 		expect(portfolio.states).toStrictEqual(['answer-ideal'])
-		expect(portfolio.paths.length).toBe(1)
+		expect(portfolio.paths).toStrictEqual([
+			`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`,
+		])
 	})
 })

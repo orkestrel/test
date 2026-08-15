@@ -13,9 +13,8 @@ import { expandCaptures } from './helpers.js'
  * @remarks
  * A disabled portfolio is the ordinary run. `place` then resizes nothing, writes nothing, and
  * records nothing, so a journey calls it unconditionally and a suite with the flag unset pays for
- * none of it. An enabled run refuses three things, and those refusals are what keep the registry
- * and the disk in agreement: an unregistered state name, a second placement of one state, and a
- * filename this portfolio already wrote.
+ * none of it. The portfolio refuses an unregistered variant at creation. An enabled run refuses an
+ * unregistered state name and a second placement of one state.
  *
  * @example
  * ```ts
@@ -56,11 +55,6 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 				throw new Error(`Capture state "${state}" is already placed`)
 			}
 			const file = `${state}--${options.variant}.png`
-			// The written-filename guard reads the placements rather than a second record of its own,
-			// so the two can never disagree about what this run put on disk.
-			if (expandCaptures(placed, [selected]).includes(file)) {
-				throw new Error(`Capture file "${file}" is already written`)
-			}
 			selected.apply?.()
 			if (window.innerWidth !== selected.width || window.innerHeight !== selected.height) {
 				await page.viewport(selected.width, selected.height)

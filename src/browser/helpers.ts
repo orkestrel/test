@@ -285,7 +285,7 @@ export async function typeAccessible(name: string, text: string): Promise<void> 
  *
  * @example
  * ```ts
- * await fillAccessible('Sheet JSON', '{"reasoning":"logical"}')
+ * await fillAccessible('Payload', '{"status":"ready"}')
  * ```
  */
 export async function fillAccessible(name: string, text: string): Promise<void> {
@@ -416,7 +416,9 @@ export function readPage(): string {
 /**
  * Reads the rendered text of the element that currently holds focus.
  *
- * @returns The focused element's trimmed rendered text, or `undefined` when no element holds focus.
+ * @returns The focused HTML element's trimmed rendered text, including an empty string, or
+ * `undefined` when focus rests on a non-HTML element. When nothing holds focus, the browser
+ * reports the document body as active, so the whole page's rendered text returns.
  *
  * @example
  * ```ts
@@ -507,7 +509,8 @@ export function render(markup: string): HTMLDivElement {
  *
  * Every element from the target upwards must be reachable, and at least one of them must paint:
  * the measurement throws rather than assuming a white canvas when nothing in the chain declares a
- * background color.
+ * background color. The element itself must expose a computed foreground color — a detached
+ * element exposes none, and the measurement throws rather than guessing one.
  *
  * @example
  * ```ts
