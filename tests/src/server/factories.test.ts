@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http'
 import {
 	existsSync,
 	lstatSync,
@@ -11,9 +12,11 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
+import { Agent, createServer as createHTTPServer, get } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createScratch } from '@src/server'
+import { createLoopback, createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('createScratch', () => {
@@ -924,5 +927,88 @@ describe('createScratch', () => {
 				parent.destroy()
 			}
 		})
+	})
+})
+
+describe('createLoopback', () => {
+	it('serves a real fetch from its ephemeral origin', async () => {
+		const server = createHTTPServer((_request, response) => {
+			response.end('loopback response')
+		})
+		const loopback = await createLoopback(server)
+		try {
+			expect(loopback.url).toBe(`http://127.0.0.1:${loopback.port}`)
+			expect(loopback.url.endsWith('/')).toBe(false)
+
+			const response = await fetch(loopback.url)
+			expect(response.status).toBe(200)
+			expect(await response.text()).toBe('loopback response')
+		} finally {
+			await loopback.destroy()
+		}
+	})
+
+	it('closes a live keep-alive connection and releases its port', async () => {
+		const server = createHTTPServer((_request, response) => {
+			response.writeHead(200)
+			response.write('open')
+		})
+		const loopback = await createLoopback(server)
+		const agent = new Agent({ keepAlive: true })
+		const replacement = createNetServer()
+		const connection = await new Promise<IncomingMessage>((resolveConnection, rejectConnection) => {
+			const request = get(loopback.url, { agent }, resolveConnection)
+			request.once('error', rejectConnection)
+		})
+		connection.on('error', () => {})
+		try {
+			await loopback.destroy()
+			expect(server.listening).toBe(false)
+
+			await new Promise<void>((resolveListening, rejectListening) => {
+				replacement.once('error', rejectListening)
+				replacement.listen(loopback.port, '127.0.0.1', resolveListening)
+			})
+			expect(replacement.listening).toBe(true)
+		} finally {
+			connection.destroy()
+			agent.destroy()
+			await loopback.destroy()
+			if (replacement.listening) {
+				await new Promise<void>((resolveClose, rejectClose) => {
+					replacement.close((error) => {
+						if (error === undefined) resolveClose()
+						else rejectClose(error)
+					})
+				})
+			}
+		}
+	})
+
+	it('destroys twice without error', async () => {
+		const loopback = await createLoopback(createHTTPServer())
+
+		await expect(loopback.destroy()).resolves.toBeUndefined()
+		await expect(loopback.destroy()).resolves.toBeUndefined()
+	})
+
+	it('binds ten parallel instances to distinct ephemeral ports', async () => {
+		const servers = Array.from({ length: 10 }, () => createHTTPServer())
+		const loopbacks = await Promise.all(servers.map((server) => createLoopback(server)))
+		try {
+			expect(new Set(loopbacks.map((loopback) => loopback.port)).size).toBe(10)
+		} finally {
+			await Promise.all(loopbacks.map((loopback) => loopback.destroy()))
+		}
+	})
+
+	it('binds and destroys a plain net server', async () => {
+		const server = createNetServer()
+		const loopback = await createLoopback(server)
+
+		expect(server.listening).toBe(true)
+		expect(loopback.port).toBeGreaterThan(0)
+		await expect(loopback.destroy()).resolves.toBeUndefined()
+		expect(server.listening).toBe(false)
 	})
 })
