@@ -110,6 +110,20 @@ export interface ScratchOptions {
 	readonly files?: Readonly<Record<string, string>>
 }
 
+/** A server a test owns, listening on an ephemeral loopback port until the test releases it. */
+export interface LoopbackInterface {
+	/** The origin the server answers on, without a trailing slash. */
+	readonly url: string
+	/** The ephemeral port the host assigned. */
+	readonly port: number
+	/**
+	 * Drops every live connection, stops listening, and releases the port.
+	 *
+	 * @remarks Idempotent.
+	 */
+	destroy(): Promise<void>
+}
+
 /** Options for reading a source inventory. */
 export interface InventoryOptions {
 	/** The file extensions to include, each written with its leading dot. */
