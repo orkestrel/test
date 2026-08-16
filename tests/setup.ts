@@ -32,3 +32,20 @@ export function createStreamSource<T>(values: readonly T[]): ReadableStream<T> {
 		},
 	})
 }
+
+/**
+ * Checks whether a value is a plain record that JSON can serialize.
+ *
+ * @param value - The value to check.
+ * @returns Whether `value` is a serializable record with the default object prototype.
+ */
+export function isSerializableRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	if (typeof value !== 'object' || value === null) return false
+
+	try {
+		if (Object.getPrototypeOf(value) !== Object.prototype) return false
+		return JSON.stringify(value) !== undefined
+	} catch {
+		return false
+	}
+}

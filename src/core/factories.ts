@@ -4,17 +4,32 @@ import type { RecorderInterface } from './types.js'
  * Creates values that make common object readers throw or violate their assumptions.
  *
  * @returns A frozen array whose six values are fresh on every call.
- * @remarks Membership may grow in a release. The stable consumer contract is that a total guard
- * refuses every member without throwing. Test the whole returned set in a loop, and include the
- * loop index in each failure so a newly added member identifies itself.
+ * @remarks Every member makes a naive reader throw. A total guard survives every member without
+ * throwing. Whether it accepts or refuses one is that guard's own contract. Membership may grow in
+ * a release, so test the whole returned set in a loop and include the index in each failure.
  * @example
  * ```ts
- * for (const [index, value] of createHostileValues().entries()) {
+ * import { expect } from 'vitest'
+ * import { createHostileValues } from '@orkestrel/test'
+ *
+ * function isWireRecord(value: unknown): value is Readonly<Record<string, string>> {
+ * 	if (typeof value !== 'object' || value === null) return false
  * 	try {
- * 		if (isRecord(value)) throw new Error(`Guard accepted hostile value ${index}`)
- * 	} catch (error) {
- * 		throw new Error(`Guard failed at hostile value ${index}`, { cause: error })
+ * 		if (Object.getPrototypeOf(value) !== Object.prototype) return false
+ * 		Reflect.get(value, 'value')
+ * 		if (Reflect.ownKeys(value).length === 0) return false
+ * 		return Object.values(value).every((member) => typeof member === 'string')
+ * 	} catch {
+ * 		return false
  * 	}
+ * }
+ *
+ * for (const [index, value] of createHostileValues().entries()) {
+ * 	let accepted: boolean | undefined
+ * 	expect(() => {
+ * 		accepted = isWireRecord(value)
+ * 	}, `hostile value ${index}`).not.toThrow()
+ * 	expect(accepted, `hostile value ${index}`).toBe(false)
  * }
  * ```
  */

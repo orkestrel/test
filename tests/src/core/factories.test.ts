@@ -1,21 +1,12 @@
 import { createHostileValues, createRecorder } from '@src/core'
 import { describe, expect, it } from 'vitest'
-
-function isSerializableRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-	if (typeof value !== 'object' || value === null) return false
-
-	try {
-		if (Object.getPrototypeOf(value) !== Object.prototype) return false
-		return JSON.stringify(value) !== undefined
-	} catch {
-		return false
-	}
-}
+import { isSerializableRecord } from '../../setup.js'
 
 describe('createHostileValues', () => {
 	it('provides a negative control for every hostile member', () => {
 		const values = createHostileValues()
 
+		expect(values.length).toBe(6)
 		expect(() => JSON.stringify(values[0])).toThrow(/circular|cyclic/i)
 		expect(() => Reflect.ownKeys(Object(values[1]))).toThrow(/revoked/i)
 		expect(() => Reflect.get(Object(values[2]), 'value')).toThrow('Hostile property read')
@@ -36,6 +27,8 @@ describe('createHostileValues', () => {
 	})
 
 	it('supports a totality loop with index attribution', () => {
+		expect(isSerializableRecord({ a: 1 })).toBe(true)
+
 		for (const [index, value] of createHostileValues().entries()) {
 			let accepted: boolean | undefined
 			expect(() => {

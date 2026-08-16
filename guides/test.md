@@ -361,11 +361,12 @@ These hold across `src/core`, `src/server`, and this guide.
    two-copies type failure by installing this package.
 10. **`createHostileValues` is a growing totality corpus with a negative control.** Each call
     returns a frozen array of fresh values: a self-cycle, a revoked proxy, proxies that throw from
-    `get`, `ownKeys`, and `getPrototypeOf`, and a null-prototype record. Every member has a direct
-    probe that makes a naive reader throw. That negative control keeps an inert value from entering
-    the corpus under a hostile name. Membership may grow in a release. The stable consumer promise
-    is that a total guard refuses every member without throwing, so consumers loop over the whole
-    array and attribute a failure by its index instead of naming or counting members locally.
+    `get`, `ownKeys`, and `getPrototypeOf`, and a null-prototype record. Every member makes a naive
+    reader throw. Each has a direct probe for that failure. The negative control keeps an inert value
+    from entering the corpus under a hostile name. A total guard survives every member without
+    throwing. Whether it accepts or refuses one is that guard's own contract. Membership may grow in
+    a release, so consumers loop over the whole array, assert their guard's expected answer per
+    index, and attribute each failure by that index instead of naming or counting members locally.
 
 ### Threat model
 
@@ -430,9 +431,10 @@ Count a repeated set at the level a consumer uses it. A set of adversarial value
 totality loop is one implementation for counting, whether the package builds that set beside the
 loop or spells the same assertions out one by one. Its individual values are not separate members.
 
-Everything below was measured and counted across the 41 published packages. Each row says which half
-of the rule decided it: **fails** the threshold, or **clears** it and is excluded for a second,
-named reason. Each is revisited when its count or its second reason changes.
+Every candidate below was measured and counted across the 41 published packages. The Rule column
+says whether it **fails** or **clears** the threshold. A clearing candidate's reason says whether it
+ships or names the second reason that excludes it. Each is revisited when its count or its second
+reason changes.
 
 | Candidate                                                                                                             | Members  | Rule   | Why                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------------------------------- | -------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -443,7 +445,7 @@ named reason. Each is revisited when its count or its second reason changes.
 | A hand-driven clock — `mcp`, `middleware`                                                                             | 2        | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.       |
 | Hostile guard-input sets                                                                                              | 3        | Clears | `form`, `table`, and `supervisor` each feed one adversarial set through total readers. The set ships as `createHostileValues`; its six members do not become six factories, and every member carries a naive-reader negative control.                                                                                                                          |
 | Deep nesting beyond a guard's cap                                                                                     | 2        | Fails  | `table` builds a record chain and `supervisor` builds nested arrays. Two independent members stay below the threshold, and a shared factory would need a container selector that changes the construction algorithm.                                                                                                                                           |
-| Canonical wire fixpoint assertions                                                                                    | 5        | Clears | Five implementation groups across `form` and `table` serialize, parse untrusted JSON, serialize again, and compare exact bytes. The count clears the five-member half, but the reusable shape is still an assertion over consumer codecs. It stays a documented pattern rather than an export.                                                                 |
+| Canonical wire fixpoint assertions                                                                                    | 2        | Fails  | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. Two independent members stay below the threshold. The shape would still remain consumer-local if the count cleared, because it is an assertion over consumer codecs rather than a reusable test mechanism.                                                  |
 | Numeric corpora, hostile-key tables, deep-freeze, and raw invocation                                                  | 2–3 each | Fails  | Every remaining group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                    |
 
 The rule also ruled three names `ScratchInterface` publishes, and each is checkable against the same
@@ -576,19 +578,27 @@ captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
 
 ### Prove a guard is total
 
-Run the whole corpus through the guard. Attribute both a throw and an acceptance to the loop index,
-because membership may grow in a release and consumers should inherit the added coverage without
-editing a local case list.
+Every member makes a naive reader throw. A total guard survives every member without throwing.
+Whether it accepts or refuses one is that guard's own contract. Run the whole corpus, attribute a
+throw or wrong answer to the loop index, and compare with the answer that guard's contract requires
+for that member.
+
+The fence is the body of a parameterized consumer test. `guard` is the total guard under test, and
+`expected` is its readonly list of required answers in corpus order.
 
 ```ts
+import { expect } from 'vitest'
 import { createHostileValues } from '@orkestrel/test'
 
-for (const [index, value] of createHostileValues().entries()) {
+const values = createHostileValues()
+expect(expected.length).toBe(values.length)
+
+for (const [index, value] of values.entries()) {
 	let accepted: boolean | undefined
 	expect(() => {
-		accepted = isWireRecord(value)
+		accepted = guard(value)
 	}, `hostile value ${index}`).not.toThrow()
-	expect(accepted, `hostile value ${index}`).toBe(false)
+	expect(accepted, `hostile value ${index}`).toBe(expected[index])
 }
 ```
 
@@ -601,9 +611,11 @@ can make the totality loop look stronger without exercising another hostile boun
 A wire fixpoint proves that a consumer's parser and serializer reproduce canonical bytes after the
 wire has crossed an untrusted JSON boundary. This is **not** `roundTripJSON`: that helper makes a
 typed JSON copy and returns the copied value. No wire-fixpoint export exists, because the comparison
-is the consumer's assertion over its own codecs.
+is the consumer's assertion over its own codecs. In this consumer-test fence, `schema` is the local
+fixture and `parseSchema` and `serializeSchema` are its local codecs.
 
 ```ts
+import { expect } from 'vitest'
 import { requireValue } from '@orkestrel/test'
 
 const wire = JSON.stringify(serializeSchema(schema))
@@ -758,7 +770,7 @@ Each entry names the rules its file proves. The test names carry the cases.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rules 2 and 10. It
   records typed tuples in call order, and truncates a `calls` array the test captured before the
   `clear()`. The hostile corpus proves all six naive-reader failures, frozen and fresh membership,
-  and refusal by one total guard with loop-index attribution.
+  and one total guard's benign and hostile answers with loop-index attribution.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rule 6, and each pure
   leaf against its own inputs. `resolveContained` takes contained relative and absolute targets and
   both spellings of an escape. `matchesIdentity` takes a triple matching in every field and one
