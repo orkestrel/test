@@ -35,7 +35,7 @@ export interface TeardownInterface {
 	 * `AggregateError` carrying every thrown value in run order, when several did.
 	 * @remarks Every handler runs, including after an earlier one throws or rejects. A handler
 	 * registered while the run is in progress stays registered for the next call rather than joining
-	 * this one. The list is empty afterwards, so a repeated call runs nothing that already ran.
+	 * this one. The snapshot it ran is discarded, so a repeated call runs nothing that already ran.
 	 */
 	destroy(): Promise<void>
 }

@@ -1,14 +1,18 @@
 # Test
 
-> The test helpers the fleet kept rewriting, published once. They read as two families.
+> The test helpers the fleet kept rewriting, published once. They read as two families, and one pair
+> sits outside both.
 >
 > **What a test records.** A call recorder, a captured throw, a drained async source, a JSON copy, a
 > required value, and a real delay. Each turns what the code under test did into a value you can
 > assert on.
 >
 > **What a test owns and must give back.** A temporary directory, a cleanup list, and a loopback
-> server — each carrying `destroy()` — plus the pair that reads the real tree a test checks itself
-> against. Each one takes something from the host.
+> server, each carrying `destroy()`. Each one takes something from the host.
+>
+> `resolveRoot` and `readInventory` are the pair outside both families: together they read the real
+> tree a test checks itself against. Neither records anything, and neither owns anything to give
+> back.
 >
 > A helper ships here only when enough packages had already written their own; [Limits](#limits)
 > states that rule and what it excluded. This package holds one implementation of each and ships as a
@@ -193,9 +197,9 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `LoopbackInterface`
 
-| Method    | Returns         | Behavior                                                                                                                                                              |
-| --------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `destroy` | `Promise<void>` | Drops every live connection, stops listening, and releases the port. Idempotent: the first call's promise is handed to every later one, and a closed server resolves. |
+| Method    | Returns         | Behavior                                                                                                                                                                                                                                                                                               |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `destroy` | `Promise<void>` | Drops every live connection on a server that carries `closeAllConnections`, stops listening, and releases the port; a plain `net.Server` has no such method, so it waits for its open sockets to end. Idempotent: the first call's promise is handed to every later one, and a closed server resolves. |
 
 #### `ScratchInterface`
 
@@ -417,11 +421,11 @@ These hold across `src/core`, `src/server`, and this guide.
     scheme is spelled `http` unconditionally, so a TLS server's origin is `port` plus a scheme the
     caller writes itself. `destroy()` drops every live connection before it closes, so a keep-alive
     client cannot hold the port past the test that opened it; the drop reaches the `node:http` and
-    `node:https` servers that carry `closeAllConnections`, and a plain `node:net` server has no such
-    method to call. It is idempotent — the first call's promise is returned to every later one — and
-    a server already closed underneath it resolves rather than throwing. The package never reserves
-    a port number and releases it for the caller to rebind; [Limits](#limits) states why that shape
-    is refused.
+    `node:https` servers that carry `closeAllConnections`. A plain `node:net` server has no such
+    method to call, so `destroy()` waits for its open sockets to end. It is idempotent — the first
+    call's promise is returned to every later one — and a server already closed underneath it
+    resolves rather than throwing. The package never reserves a port number and releases it for the
+    caller to rebind; [Limits](#limits) states why that shape is refused.
 
 ### Threat model
 
@@ -479,12 +483,12 @@ A member is one package carrying an implementation, under whatever name that pac
 whether it exports the helper or declares it inside a test file. Counts are of those groups, so the
 first column names the group rather than an export: **nothing in this section is importable**, and
 the only names you can install are in [Surface](#surface). The widest group that did ship is
-`captureError` at 13 — 12 packages export one and `csv` keeps a file-local declaration.
+`captureError` at 13.
 
-Everything below was measured this round across 42 of the fleet's roughly 44 trees. The two private
-repositories were not read, so every count is a floor rather than a total. Each row says which half
-of the rule decided it: **fails** the threshold, or **clears** it and is excluded for a second,
-named reason. Each is revisited when its count or its second reason changes.
+Everything below was measured this round over the fleet's 42 readable trees, of 44. The two private
+repositories were not read and can only raise a count, and a raised count reopens its row. Each row
+says which half of the rule decided it: **fails** the threshold, or **clears** it and is excluded
+for a second, named reason. Each is revisited when its count or its second reason changes.
 
 | Excluded                                                                                                                                      | Members | Rule   | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -501,18 +505,16 @@ named reason. Each is revisited when its count or its second reason changes.
 | Abort-signal instrumentation                                                                                                                  | 2       | Fails  | Two members, read the same way as `waitForAbort` above and excluded for the same reason. Both rows are revisited when either count moves.                                                                                                                                                                                                                                                                                                                           |
 
 The rule also ruled three names `ScratchInterface` publishes, and each is checkable against the same
-numbers. `ensure` has 5 members — `scaffold`, `database`, `sea`, `middleware`, `browser` — so it
-clears on count alone. `names` has 4: `middleware` at 14 sites, `scaffold` 11, `database` 5, and
-`sea` 2. Four is below five, so `names` clears the three-member half instead, on `middleware`,
-`scaffold`, and `sea` being mutually independent. `link` has 3, the same three packages, and clears
-that half the same way. `has` renames the `exists` this interface already carried, so it was never a
-candidate. `path`, `write`, `read`, and `destroy` are what an owned directory is rather than
-candidates measured against the rule, so they carry no count.
+numbers. `ensure` has 5 members, so it clears on count alone. `names` has 4, which is below five, so
+it clears the three-member half instead: three of those four are mutually independent. `link` has 3,
+mutually independent, and clears that half the same way. `has` renames the `exists` this interface
+already carried, so it was never a candidate. `path`, `write`, `read`, and `destroy` are what an
+owned directory is rather than candidates measured against the rule, so they carry no count.
 
-`remove` ships at 2 members — `scaffold` at 23 sites and `database` at 8 — and the threshold did not
-decide it. The threshold decides whether a helper is extracted from the fleet at all; `remove` is a
-member of an entity that already ships, which makes it a question of coherence instead. `write`,
-`ensure`, and `link` each create something, and nothing took one of them back short of `destroy()`.
+`remove` ships at 2 members and the threshold did not decide it. The threshold decides whether a
+helper is extracted from the fleet at all; `remove` is a member of an entity that already ships,
+which makes it a question of coherence instead. `write`, `ensure`, and `link` each create something,
+and nothing took one of them back short of `destroy()`.
 
 Three smaller candidates clear the threshold and are excluded anyway. An error-recording wrapper has
 11 members, and in 10 of them it is a five-line delegate to the recorder that already ships. A
@@ -845,13 +847,14 @@ Each entry names the rules its file proves. The test names carry the cases.
   host's own case behavior probed rather than assumed.
 - [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — rules 7, 8, and 11.
   `createLoopback` takes a real `fetch` answered from its own origin, a live keep-alive connection
-  dropped by `destroy()` with a second server then binding the released port, a repeated
-  `destroy()`, ten parallel instances landing on distinct ports, and a plain `node:net` server bound
-  and closed. For `createScratch`, the ungrouped cases take the `0700` mode, nested seeding, the
-  cleanup after a failed seed, the lexical refusals, the empty target's answers, and `has`, `write`,
-  `read`, `names`, `ensure`, `link`, and `remove` each refused at a symbolic-link root and at a file
-  root; `destroy()` is idempotent, leaves a replacement directory standing, and leaves a moved
-  allocation alone. Then one group per subject.
+  dropped by `destroy()` with a second server then binding the released port, a repeated `destroy()`
+  handed the same promise before either call settles, ten parallel instances landing on distinct
+  ports, a plain `node:net` server bound and closed, and a server already listening when it was
+  handed over, refused. For `createScratch`, the ungrouped cases take the `0700` mode, nested
+  seeding, the cleanup after a failed seed, the lexical refusals, the empty target's answers, and
+  `has`, `write`, `read`, `names`, `ensure`, `link`, and `remove` each refused at a symbolic-link
+  root and at a file root; `destroy()` is idempotent, leaves a replacement directory standing, and
+  leaves a moved allocation alone. Then one group per subject.
   `destruction` takes `write`, `read`, `has`, `names`, `ensure`, `link`, and `remove` after
   `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root, and
   `remove` proving its root and escape refusals answer before the destroyed-allocation one.

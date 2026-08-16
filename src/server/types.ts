@@ -112,14 +112,18 @@ export interface ScratchOptions {
 
 /** A server a test owns, listening on an ephemeral loopback port until the test releases it. */
 export interface LoopbackInterface {
-	/** The origin the server answers on, without a trailing slash. */
+	/**
+	 * The `http` origin for the assigned port, without a trailing slash. A TLS server answers on the
+	 * same port under `https`.
+	 */
 	readonly url: string
 	/** The ephemeral port the host assigned. */
 	readonly port: number
 	/**
-	 * Drops every live connection, stops listening, and releases the port.
+	 * Drops every live connection on a server that carries `closeAllConnections`, stops listening, and
+	 * releases the port.
 	 *
-	 * @remarks Idempotent.
+	 * @remarks Idempotent. A plain `net.Server` waits for its open sockets to end.
 	 */
 	destroy(): Promise<void>
 }

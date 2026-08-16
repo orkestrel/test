@@ -988,8 +988,14 @@ describe('createLoopback', () => {
 	it('destroys twice without error', async () => {
 		const loopback = await createLoopback(createHTTPServer())
 
-		await expect(loopback.destroy()).resolves.toBeUndefined()
-		await expect(loopback.destroy()).resolves.toBeUndefined()
+		// Identity is asserted before either promise settles: a `destroy()` that awaited the stored
+		// promise and returned a fresh one would still resolve twice and pass the two assertions below.
+		const first = loopback.destroy()
+		const second = loopback.destroy()
+		expect(first).toBe(second)
+
+		await expect(first).resolves.toBeUndefined()
+		await expect(second).resolves.toBeUndefined()
 	})
 
 	it('binds ten parallel instances to distinct ephemeral ports', async () => {
@@ -1010,5 +1016,31 @@ describe('createLoopback', () => {
 		expect(loopback.port).toBeGreaterThan(0)
 		await expect(loopback.destroy()).resolves.toBeUndefined()
 		expect(server.listening).toBe(false)
+	})
+
+	it('rejects a server that is already listening', async () => {
+		// The server is bound before it is handed over, so `listen` refuses it. The caller keeps the
+		// server it made: nothing was bound on its behalf, so nothing is released on its behalf either.
+		const server = createNetServer()
+		await new Promise<void>((resolveListening, rejectListening) => {
+			server.once('error', rejectListening)
+			server.listen(0, '127.0.0.1', resolveListening)
+		})
+		try {
+			// The code rather than the message: the code is what Node documents, and the message is
+			// prose it is free to reword.
+			const rejection: unknown = await createLoopback(server).catch((error: unknown) => error)
+
+			expect(rejection).toBeInstanceOf(Error)
+			expect(rejection).toHaveProperty('code', 'ERR_SERVER_ALREADY_LISTEN')
+			expect(server.listening).toBe(true)
+		} finally {
+			await new Promise<void>((resolveClose, rejectClose) => {
+				server.close((error) => {
+					if (error === undefined) resolveClose()
+					else rejectClose(error)
+				})
+			})
+		}
 	})
 })

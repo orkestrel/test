@@ -188,20 +188,24 @@ export async function createLoopback(server: Server): Promise<LoopbackInterface>
 	return {
 		url: `http://127.0.0.1:${port}`,
 		port,
-		async destroy() {
-			if (destruction !== undefined) return destruction
-			if ('closeAllConnections' in server && typeof server.closeAllConnections === 'function') {
-				server.closeAllConnections()
-			}
-			destruction = new Promise<void>((resolveClose, rejectClose) => {
-				server.close((error) => {
-					if (error === undefined || ('code' in error && error.code === 'ERR_SERVER_NOT_RUNNING')) {
-						resolveClose()
-					} else {
-						rejectClose(error)
+		destroy() {
+			if (destruction === undefined) {
+				destruction = new Promise<void>((resolveClose, rejectClose) => {
+					if ('closeAllConnections' in server && typeof server.closeAllConnections === 'function') {
+						server.closeAllConnections()
 					}
+					server.close((error) => {
+						if (
+							error === undefined ||
+							('code' in error && error.code === 'ERR_SERVER_NOT_RUNNING')
+						) {
+							resolveClose()
+						} else {
+							rejectClose(error)
+						}
+					})
 				})
-			})
+			}
 			return destruction
 		},
 	}
