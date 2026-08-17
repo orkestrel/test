@@ -2,9 +2,10 @@
 
 The test helpers the `@orkestrel` fleet kept rewriting, published once. A call recorder that is a
 real callback rather than a spy. A real host delay. A throw-to-value converter and a presence
-narrower, so `!` and `as` stay banned in tests. Two async collectors and a JSON copier. A scratch
-directory the test owns and destroys, and a symlink-refusing source-file walker. A helper ships here
-only when enough packages had already written their own; the guide's
+narrower, so `!` and `as` stay banned in tests. Two async collectors and a JSON copier. A frozen
+hostile-value corpus for proving guards are total. A scratch directory the test owns and destroys,
+and a symlink-refusing source-file walker. A helper ships here only when enough packages had already
+written their own; the guide's
 [Limits](guides/test.md#limits) section states that rule and what it excluded. Add it as a
 devDependency; nothing here runs in production code. Part of the `@orkestrel` line.
 

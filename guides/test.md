@@ -14,6 +14,9 @@
 > tree a test checks itself against. Neither records anything, and neither owns anything to give
 > back.
 >
+> `createHostileValues` sits outside them too, on the input side: it is what a test feeds its guards,
+> a corpus whose every member makes a naive reader throw.
+>
 > A helper ships here only when enough packages had already written their own; [Limits](#limits)
 > states that rule and what it excluded. This package holds one implementation of each and ships as a
 > `devDependency`. Nothing here runs in production code. Source: [`src/core`](../src/core) and
@@ -37,7 +40,7 @@ DOM, so a browser test project imports it unchanged.
 
 ## Surface
 
-Twenty-five exports: fifteen values and ten types, across two environments.
+Twenty-six exports: sixteen values and ten types, across two environments.
 
 ```ts
 import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
@@ -92,10 +95,11 @@ under [Methods](#methods).
 
 #### Factories
 
-| API              | Kind     | Signature                                                          | Summary                                                     |
-| ---------------- | -------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `createRecorder` | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order.     |
-| `createTeardown` | function | `() => TeardownInterface`                                          | A cleanup list that runs newest-first when it is destroyed. |
+| API                   | Kind     | Signature                                                          | Summary                                                     |
+| --------------------- | -------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `createHostileValues` | function | `() => readonly unknown[]`                                         | Six fresh hostile values for proving that a guard is total. |
+| `createRecorder`      | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order.     |
+| `createTeardown`      | function | `() => TeardownInterface`                                          | A cleanup list that runs newest-first when it is destroyed. |
 
 ### Server
 
@@ -426,6 +430,14 @@ These hold across `src/core`, `src/server`, and this guide.
     call's promise is returned to every later one — and a server already closed underneath it
     resolves rather than throwing. The package never reserves a port number and releases it for the
     caller to rebind; [Limits](#limits) states why that shape is refused.
+12. **`createHostileValues` is a growing totality corpus with a negative control.** Each call
+    returns a frozen array of fresh values: a self-cycle, a revoked proxy, proxies that throw from
+    `get`, `ownKeys`, and `getPrototypeOf`, and a null-prototype record. Every member makes a naive
+    reader throw. Each has a direct probe for that failure. The negative control keeps an inert value
+    from entering the corpus under a hostile name. A total guard survives every member without
+    throwing. Whether it accepts or refuses one is that guard's own contract. Membership may grow in
+    a release, so consumers loop over the whole array, assert their guard's expected answer per
+    index, and attribute each failure by that index instead of naming or counting members locally.
 
 ### Threat model
 
@@ -479,30 +491,39 @@ and several below are. The threshold is therefore necessary and not sufficient: 
 fails it is excluded, and a candidate that clears it either ships or appears below with the second
 reason that excluded it.
 
-A member is one package carrying an implementation, under whatever name that package spells it and
-whether it exports the helper or declares it inside a test file. Counts are of those groups, so the
-first column names the group rather than an export: **nothing in this section is importable**, and
-the only names you can install are in [Surface](#surface). The widest group that did ship is
-`captureError` at 13.
+A member is one implementation group carried by one package, under whatever name that package
+spells it and whether it exports the helper or declares it inside a test file. Repeated calls routed
+through one shared implementation stay one member. Counts are of those groups, so the first column
+names the group rather than an export: **nothing in this section is importable**, and the only names
+you can install are in [Surface](#surface). The widest group that did ship is `captureError` at 13.
 
-Everything below was measured this round over the fleet's 42 readable trees, of 44. The two private
-repositories were not read and can only raise a count, and a raised count reopens its row. Each row
-says which half of the rule decided it: **fails** the threshold, or **clears** it and is excluded
-for a second, named reason. Each is revisited when its count or its second reason changes.
+Count a repeated set at the level a consumer uses it. A set of adversarial values fed through one
+totality loop is one implementation for counting, whether the package builds that set beside the
+loop or spells the same assertions out one by one. Its individual values are not separate members.
 
-| Excluded                                                                                                                                      | Members | Rule   | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types                                              | 13      | Clears | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at 219 call sites — 18 of which read a property off a call argument and would hard-error with `as` and `!` banned. `createRecorder`, the kernel all 13 local copies are built from, ships instead.                                                                                                      |
-| Hostile-input builders — numeric corpora, hostile-key tables, deep-freeze, revoked proxies, throwing getters, cyclic and deep record builders | 6       | Clears | Six members carry one of these, so the count no longer excludes them. The populations differ per suite: what one suite calls a hostile key another writes as ordinary data, so one export covering them takes a mode argument selecting which construction to build, and the naming rules refuse a literal that selects a different action. A corpus is test policy — what a given suite decided to check — rather than a mechanism, so each suite curates its own. |
-| Raw invocation — `invokeRaw`                                                                                                                  | 3       | Clears | Native `Reflect.apply` already makes the call at a deliberately untyped boundary, and each caller pairs it with the domain guard that narrows what came back. A published version has to declare a return type for a call it cannot see the target of, so it would claim a type nothing proved.                                                                                                                                                                     |
-| Condition polling — wall-clock predicate loops                                                                                                | 3       | Clears | Three independent members, so the count carries it. It is excluded because publishing it contradicts the no-polling architecture law: a loop that re-reads a predicate against the wall clock is the busy wait that law bans, and shipping one from the fleet's own test package would sanction it everywhere. Park the wait on the event or signal that fires.                                                                                                     |
-| Every browser helper — a DOM element builder, and the three helpers `database` and `indexeddb` share under five names                         | 2 each  | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. A published browser environment would also cost a build target, a scoped tsconfig, a barrel, and a Playwright test project. There is no `src/browser` here.                                                                                                                                                                                                                   |
-| A hand-driven timer — `terminal`, `toolbox`                                                                                                   | 2       | Fails  | Two members, and `toolbox` runtime-depends on `terminal`, so they are one cluster twice over. Its shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned.                                                                                                                                                                                                                                                    |
-| A hand-driven clock — `mcp`, `middleware`                                                                                                     | 2       | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.                                                                                                            |
-| A reserve-then-release port picker                                                                                                            | 2       | Fails  | Two members. The shape is refused on its own account as well: it binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given.                                                                                                                                                      |
-| A bounded retry — `retryUntil`                                                                                                                | 2       | Fails  | Two members, and only the count excludes it. It is not timer polling — it retries a real operation a bounded number of times rather than re-reading a predicate — so the no-polling law does not reach it, and a third independent member reopens this row on the count alone.                                                                                                                                                                                      |
-| An abort-signal wait — `waitForAbort`                                                                                                         | 2       | Fails  | Two members, which is below the threshold under either half of the rule. The count excluded it before any question about its shape was reached.                                                                                                                                                                                                                                                                                                                     |
-| Abort-signal instrumentation                                                                                                                  | 2       | Fails  | Two members, read the same way as `waitForAbort` above and excluded for the same reason. Both rows are revisited when either count moves.                                                                                                                                                                                                                                                                                                                           |
+Everything below was counted this round over the fleet's 42 readable trees. The two private
+repositories were read by the parallel campaign whose evidence the hostile guard-input row cites, so
+the population is the full 44. A count that moves reopens its row. The Rule column says which half
+of the rule decided a candidate: it **fails** the threshold, or it **clears** it and the reason says
+whether it ships or names the second reason that excluded it. Each row is revisited when its count
+or its second reason changes.
+
+| Candidate                                                                                                             | Members  | Rule   | Why                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------- | -------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types                      | 13       | Clears | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at 219 call sites — 18 of which read a property off a call argument and would hard-error with `as` and `!` banned. `createRecorder`, the kernel all 13 local copies are built from, ships instead.  |
+| Hostile guard-input sets                                                                                              | 3        | Clears | `form`, `table`, and `supervisor` each feed one adversarial set through total readers. The set ships as `createHostileValues`; its six members do not become six factories, and every member carries a naive-reader negative control.                                                                                                                           |
+| Raw invocation — `invokeRaw`                                                                                          | 3        | Clears | Native `Reflect.apply` already makes the call at a deliberately untyped boundary, and each caller pairs it with the domain guard that narrows what came back. A published version has to declare a return type for a call it cannot see the target of, so it would claim a type nothing proved.                                                                 |
+| Condition polling — wall-clock predicate loops                                                                        | 3        | Clears | Three independent members, so the count carries it. It is excluded because publishing it contradicts the no-polling architecture law: a loop that re-reads a predicate against the wall clock is the busy wait that law bans, and shipping one from the fleet's own test package would sanction it everywhere. Park the wait on the event or signal that fires. |
+| Deep nesting beyond a guard's cap                                                                                     | 2        | Fails  | `table` builds a record chain and `supervisor` builds nested arrays. Two independent members stay below the threshold, and a shared factory would need a container selector that changes the construction algorithm.                                                                                                                                            |
+| Canonical wire fixpoint assertions                                                                                    | 2        | Fails  | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. Two independent members stay below the threshold. The shape would still remain consumer-local if the count cleared, because it is an assertion over consumer codecs rather than a reusable test mechanism.                                                   |
+| Numeric corpora, hostile-key tables, and deep-freeze                                                                  | 2–3 each | Fails  | Every remaining group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                     |
+| Every browser helper — a DOM element builder, and the three helpers `database` and `indexeddb` share under five names | 2 each   | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. A published browser environment would also cost a build target, a scoped tsconfig, a barrel, and a Playwright test project. There is no `src/browser` here.                                                                                                               |
+| A hand-driven timer — `terminal`, `toolbox`                                                                           | 2        | Fails  | Two members, and `toolbox` runtime-depends on `terminal`, so they are one cluster twice over. Its shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned.                                                                                                                                                |
+| A hand-driven clock — `mcp`, `middleware`                                                                             | 2        | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.        |
+| A reserve-then-release port picker                                                                                    | 2        | Fails  | Two members. The shape is refused on its own account as well: it binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given.                                                  |
+| A bounded retry — `retryUntil`                                                                                        | 2        | Fails  | Two members, and only the count excludes it. It is not timer polling — it retries a real operation a bounded number of times rather than re-reading a predicate — so the no-polling law does not reach it, and a third independent member reopens this row on the count alone.                                                                                  |
+| An abort-signal wait — `waitForAbort`                                                                                 | 2        | Fails  | Two members, which is below the threshold under either half of the rule. The count excluded it before any question about its shape was reached.                                                                                                                                                                                                                 |
+| Abort-signal instrumentation                                                                                          | 2        | Fails  | Two members, read the same way as `waitForAbort` above and excluded for the same reason. Both rows are revisited when either count moves.                                                                                                                                                                                                                       |
 
 The rule also ruled three names `ScratchInterface` publishes, and each is checkable against the same
 numbers. `ensure` has 5 members, so it clears on count alone. `names` has 4, which is below five, so
@@ -628,6 +649,54 @@ copy.tags === original.tags // false — fresh references all the way down
 roundTripJSON(-0) // 0 — JSON has no negative zero
 captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
 // Error: JSON values must contain finite numbers — at any depth, rather than a silent null
+```
+
+### Prove a guard is total
+
+Every member makes a naive reader throw. A total guard survives every member without throwing.
+Whether it accepts or refuses one is that guard's own contract. Run the whole corpus, attribute a
+throw or wrong answer to the loop index, and compare with the answer that guard's contract requires
+for that member.
+
+The fence is the body of a parameterized consumer test. `guard` is the total guard under test, and
+`expected` is its readonly list of required answers in corpus order.
+
+```ts
+import { expect } from 'vitest'
+import { createHostileValues } from '@orkestrel/test'
+
+const values = createHostileValues()
+expect(expected.length).toBe(values.length)
+
+for (const [index, value] of values.entries()) {
+	let accepted: boolean | undefined
+	expect(() => {
+		accepted = guard(value)
+	}, `hostile value ${index}`).not.toThrow()
+	expect(accepted, `hostile value ${index}`).toBe(expected[index])
+}
+```
+
+The corpus is the positive proof input. Keep a negative control for every member too: perform the
+naive read that member is meant to break and prove it throws. Without that control, an inert value
+can make the totality loop look stronger without exercising another hostile boundary.
+
+### Prove a wire fixpoint
+
+A wire fixpoint proves that a consumer's parser and serializer reproduce canonical bytes after the
+wire has crossed an untrusted JSON boundary. This is **not** `roundTripJSON`: that helper makes a
+typed JSON copy and returns the copied value. No wire-fixpoint export exists, because the comparison
+is the consumer's assertion over its own codecs. In this consumer-test fence, `schema` is the local
+fixture and `parseSchema` and `serializeSchema` are its local codecs.
+
+```ts
+import { expect } from 'vitest'
+import { requireValue } from '@orkestrel/test'
+
+const wire = JSON.stringify(serializeSchema(schema))
+const received = requireValue(parseSchema(JSON.parse(wire)))
+
+expect(JSON.stringify(serializeSchema(received))).toBe(wire)
 ```
 
 ### Read a source inventory
@@ -830,13 +899,15 @@ Each entry names the rules its file proves. The test names carry the cases.
   at an opaque `object` member and at a symbol-keyed one, the non-finite refusal at every depth and
   through `JSON.rawJSON`, the `-0` normalization, and a large array and object copied without
   exceeding the host's argument limit.
-- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rules 2 and 10.
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rules 2, 10, and 12.
   `createRecorder` records typed tuples in call order, and truncates a `calls` array the test
   captured before the `clear()`. `createTeardown` takes newest-first order across synchronous and
   asynchronous handlers, a synchronous throw and an asynchronous rejection each rethrown by identity
   with every remaining handler still run, both together aggregated in run order, a handler added
   during a run kept for the next call, the count reset before the handlers run, and a `destroy()`
-  that is called empty and called twice.
+  that is called empty and called twice. `createHostileValues` proves all six naive-reader failures,
+  frozen and fresh membership, and one total guard's benign and hostile answers with loop-index
+  attribution.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rule 6, and each pure
   leaf against its own inputs. `resolveContained` takes contained relative and absolute targets and
   both spellings of an escape. `matchesIdentity` takes a triple matching in every field and one
