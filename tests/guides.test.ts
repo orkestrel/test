@@ -92,8 +92,9 @@ describe('guides parity', () => {
 			it('imports only real exports in its examples', () => {
 				const exported = source.exports().map((symbol) => symbol.name)
 				const imported = guide
-					.patterns()
-					.flatMap((fence) => fenceImports(fence))
+					.fences()
+					.filter((fence) => fence.language === 'ts')
+					.flatMap((fence) => fenceImports(fence.code))
 					.filter((row) => row.specifier === specifier || row.specifier.startsWith(`${specifier}/`))
 					.flatMap((row) => [...row.names])
 				expect(imported.length).toBeGreaterThan(0)
