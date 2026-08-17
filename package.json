@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/test",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "The test helpers the Orkestrel fleet repeats — a call recorder, a real delay, JSON and async collectors, an owned scratch directory with a source-file walker, and a browser journey layer that drives real interfaces by role and accessible name. Zero runtime dependencies. Part of the @orkestrel line.",
 	"keywords": [],
 	"homepage": "https://github.com/orkestrel/test#readme",
@@ -78,11 +78,10 @@
 		"build:src:server": "vite build --config configs/src/vite.server.config.ts && npm run copy dist/src/server/index.d.ts dist/src/server/index.d.cts",
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
-	"dependencies": {},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
-		"@orkestrel/guide": "^0.0.10",
-		"@orkestrel/scaffold": "^0.0.30",
+		"@orkestrel/guide": "^0.0.11",
+		"@orkestrel/scaffold": "^0.0.38",
 		"@types/node": "^26.2.0",
 		"@vitest/browser-playwright": "^4.1.10",
 		"oxfmt": "^0.62.0",

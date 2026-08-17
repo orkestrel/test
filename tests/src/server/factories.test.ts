@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http'
 import {
 	existsSync,
 	lstatSync,
@@ -11,9 +12,11 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
+import { Agent, createServer as createHTTPServer, get } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createScratch } from '@src/server'
+import { createLoopback, createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 
 describe('createScratch', () => {
@@ -150,6 +153,7 @@ describe('createScratch', () => {
 			expect(() => scratch.names()).toThrow(message)
 			expect(() => scratch.ensure('made')).toThrow(message)
 			expect(() => scratch.link('linked', 'source')).toThrow(message)
+			expect(() => scratch.remove('file.txt')).toThrow(message)
 
 			expect(readdirSync(moved)).toStrictEqual([])
 		} finally {
@@ -170,6 +174,7 @@ describe('createScratch', () => {
 			expect(() => scratch.names()).toThrow(message)
 			expect(() => scratch.ensure('made')).toThrow(message)
 			expect(() => scratch.link('linked', 'source')).toThrow(message)
+			expect(() => scratch.remove('file.txt')).toThrow(message)
 
 			expect(readFileSync(scratch.path, 'utf8')).toBe('file')
 		} finally {
@@ -261,6 +266,18 @@ describe('createScratch', () => {
 			expect(() => scratch.link('linked', 'source')).toThrow('Scratch directory does not exist')
 			expect(existsSync(scratch.path)).toBe(false)
 			expect(existsSync(join(scratch.path, 'linked'))).toBe(false)
+		})
+
+		it('refuses remove after destruction and does not recreate the allocation', () => {
+			const scratch = createScratch()
+			scratch.destroy()
+
+			expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+			expect(() => scratch.remove('../outside')).toThrow(
+				'Path outside scratch directory: ../outside',
+			)
+			expect(() => scratch.remove('file.txt')).toThrow('Scratch directory does not exist')
+			expect(existsSync(scratch.path)).toBe(false)
 		})
 	})
 
@@ -591,6 +608,184 @@ describe('createScratch', () => {
 		})
 	})
 
+	describe('remove', () => {
+		it('removes a file and leaves its siblings', () => {
+			const scratch = createScratch({
+				files: { 'kept.txt': 'kept', 'removed.txt': 'removed' },
+			})
+			try {
+				scratch.remove('removed.txt')
+
+				expect(scratch.has('removed.txt')).toBe(false)
+				expect(scratch.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes an empty directory', () => {
+			const scratch = createScratch()
+			try {
+				scratch.ensure('empty')
+
+				scratch.remove('empty')
+
+				expect(scratch.has('empty')).toBe(false)
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes a directory and all of its descendants', () => {
+			const scratch = createScratch({
+				files: { 'tree/branch/leaf.txt': 'leaf', 'tree/root.txt': 'root' },
+			})
+			try {
+				scratch.remove('tree')
+
+				expect(scratch.has('tree')).toBe(false)
+				expect(scratch.has('tree/branch/leaf.txt')).toBe(false)
+				expect(scratch.names()).toStrictEqual([])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('does nothing when the target does not exist', () => {
+			const scratch = createScratch({ files: { 'kept.txt': 'kept' } })
+			try {
+				expect(() => scratch.remove('missing')).not.toThrow()
+				expect(scratch.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('refuses an ancestor link back to the allocation and leaves every file intact', () => {
+			const scratch = createScratch({
+				files: {
+					'alpha.txt': 'alpha',
+					'marker.txt': 'marker',
+					'tree/deep/file.txt': 'deep',
+					'zeta.txt': 'zeta',
+				},
+			})
+			try {
+				scratch.link('up', '..')
+				const target = `up/${basename(scratch.path)}`
+
+				expect(() => scratch.remove(target)).toThrow(
+					`Scratch directory is not a removable target: ${target}`,
+				)
+				expect(scratch.read('alpha.txt')).toBe('alpha')
+				expect(scratch.read('marker.txt')).toBe('marker')
+				expect(scratch.read('tree/deep/file.txt')).toBe('deep')
+				expect(scratch.read('zeta.txt')).toBe('zeta')
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('removes a final symbolic link without removing its destination', () => {
+			const destination = createScratch({
+				files: { 'kept.txt': 'kept' },
+				prefix: 'orkestrel-test-remove-destination-',
+			})
+			const scratch = createScratch()
+			try {
+				scratch.link('gate', destination.path)
+
+				scratch.remove('gate')
+
+				expect(scratch.has('gate')).toBe(false)
+				expect(destination.read('kept.txt')).toBe('kept')
+				expect(destination.names()).toStrictEqual(['kept.txt'])
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
+
+		it('removes a sibling directory reached through the same ancestor link', () => {
+			const scratch = createScratch()
+			const sibling = createScratch({
+				files: { 'removed.txt': 'removed' },
+				prefix: 'orkestrel-test-remove-sibling-',
+			})
+			try {
+				scratch.link('up', '..')
+
+				scratch.remove(`up/${basename(sibling.path)}`)
+
+				expect(existsSync(sibling.path)).toBe(false)
+			} finally {
+				scratch.destroy()
+				sibling.destroy()
+			}
+		})
+
+		it('refuses an escaping target', () => {
+			const scratch = createScratch()
+			const outside = join(dirname(scratch.path), `${basename(scratch.path)}-outside`)
+			writeFileSync(outside, 'outside')
+			try {
+				expect(() => scratch.remove(`../${basename(outside)}`)).toThrow(
+					`Path outside scratch directory: ../${basename(outside)}`,
+				)
+				expect(readFileSync(outside, 'utf8')).toBe('outside')
+			} finally {
+				scratch.destroy()
+				rmSync(outside, { force: true })
+			}
+		})
+
+		it('refuses the root three ways and leaves the allocation intact', () => {
+			const scratch = createScratch({ files: { 'kept.txt': 'kept' } })
+			try {
+				expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+				expect(() => scratch.remove('.')).toThrow('Scratch directory is not a removable target: .')
+				expect(() => scratch.remove(scratch.path)).toThrow(
+					`Scratch directory is not a removable target: ${scratch.path}`,
+				)
+
+				expect(scratch.has('.')).toBe(true)
+				expect(scratch.read('kept.txt')).toBe('kept')
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it('refuses a foreign directory swapped onto the allocated path, unlike destroy', () => {
+			const scratch = createScratch()
+			const swapped = scratch.path
+			rmSync(swapped, { force: true, recursive: true })
+			mkdirSync(swapped)
+			writeFileSync(join(swapped, 'foreign.txt'), 'foreign')
+			try {
+				expect(() => scratch.remove('')).toThrow('Scratch directory is not a removable target: ')
+				expect(existsSync(swapped)).toBe(true)
+				expect(readFileSync(join(swapped, 'foreign.txt'), 'utf8')).toBe('foreign')
+			} finally {
+				rmSync(swapped, { force: true, recursive: true })
+			}
+		})
+
+		it('destroy on an identically swapped directory also removes nothing', () => {
+			const scratch = createScratch()
+			const swapped = scratch.path
+			rmSync(swapped, { force: true, recursive: true })
+			mkdirSync(swapped)
+			writeFileSync(join(swapped, 'foreign.txt'), 'foreign')
+			try {
+				expect(() => scratch.destroy()).not.toThrow()
+				expect(existsSync(swapped)).toBe(true)
+				expect(readFileSync(join(swapped, 'foreign.txt'), 'utf8')).toBe('foreign')
+			} finally {
+				rmSync(swapped, { force: true, recursive: true })
+			}
+		})
+	})
+
 	describe('parent', () => {
 		it('allocates directly beneath a caller-supplied parent and destroys there', () => {
 			const parent = createScratch({ prefix: 'orkestrel-test-parent-' })
@@ -732,5 +927,120 @@ describe('createScratch', () => {
 				parent.destroy()
 			}
 		})
+	})
+})
+
+describe('createLoopback', () => {
+	it('serves a real fetch from its ephemeral origin', async () => {
+		const server = createHTTPServer((_request, response) => {
+			response.end('loopback response')
+		})
+		const loopback = await createLoopback(server)
+		try {
+			expect(loopback.url).toBe(`http://127.0.0.1:${loopback.port}`)
+			expect(loopback.url.endsWith('/')).toBe(false)
+
+			const response = await fetch(loopback.url)
+			expect(response.status).toBe(200)
+			expect(await response.text()).toBe('loopback response')
+		} finally {
+			await loopback.destroy()
+		}
+	})
+
+	it('closes a live keep-alive connection and releases its port', async () => {
+		const server = createHTTPServer((_request, response) => {
+			response.writeHead(200)
+			response.write('open')
+		})
+		const loopback = await createLoopback(server)
+		const agent = new Agent({ keepAlive: true })
+		const replacement = createNetServer()
+		const connection = await new Promise<IncomingMessage>((resolveConnection, rejectConnection) => {
+			const request = get(loopback.url, { agent }, resolveConnection)
+			request.once('error', rejectConnection)
+		})
+		connection.on('error', () => {})
+		try {
+			await loopback.destroy()
+			expect(server.listening).toBe(false)
+
+			await new Promise<void>((resolveListening, rejectListening) => {
+				replacement.once('error', rejectListening)
+				replacement.listen(loopback.port, '127.0.0.1', resolveListening)
+			})
+			expect(replacement.listening).toBe(true)
+		} finally {
+			connection.destroy()
+			agent.destroy()
+			await loopback.destroy()
+			if (replacement.listening) {
+				await new Promise<void>((resolveClose, rejectClose) => {
+					replacement.close((error) => {
+						if (error === undefined) resolveClose()
+						else rejectClose(error)
+					})
+				})
+			}
+		}
+	})
+
+	it('destroys twice without error', async () => {
+		const loopback = await createLoopback(createHTTPServer())
+
+		// Identity is asserted before either promise settles: a `destroy()` that awaited the stored
+		// promise and returned a fresh one would still resolve twice and pass the two assertions below.
+		const first = loopback.destroy()
+		const second = loopback.destroy()
+		expect(first).toBe(second)
+
+		await expect(first).resolves.toBeUndefined()
+		await expect(second).resolves.toBeUndefined()
+	})
+
+	it('binds ten parallel instances to distinct ephemeral ports', async () => {
+		const servers = Array.from({ length: 10 }, () => createHTTPServer())
+		const loopbacks = await Promise.all(servers.map((server) => createLoopback(server)))
+		try {
+			expect(new Set(loopbacks.map((loopback) => loopback.port)).size).toBe(10)
+		} finally {
+			await Promise.all(loopbacks.map((loopback) => loopback.destroy()))
+		}
+	})
+
+	it('binds and destroys a plain net server', async () => {
+		const server = createNetServer()
+		const loopback = await createLoopback(server)
+
+		expect(server.listening).toBe(true)
+		expect(loopback.port).toBeGreaterThan(0)
+		await expect(loopback.destroy()).resolves.toBeUndefined()
+		expect(server.listening).toBe(false)
+	})
+
+	it('rejects a server that is already listening', async () => {
+		// The server is bound before it is handed over, so `listen` refuses it. The caller keeps the
+		// server it made: nothing was bound on its behalf, so nothing is released on its behalf either.
+		const server = createNetServer()
+		await new Promise<void>((resolveListening, rejectListening) => {
+			server.once('error', rejectListening)
+			server.listen(0, '127.0.0.1', resolveListening)
+		})
+		try {
+			// The code rather than the message: the code is what Node documents, and the message is
+			// prose it is free to reword.
+			const rejection: unknown = await createLoopback(server).catch((error: unknown) => error)
+
+			expect(rejection).toBeInstanceOf(Error)
+			expect(rejection).toHaveProperty('code', 'ERR_SERVER_ALREADY_LISTEN')
+			expect(server.listening).toBe(true)
+		} finally {
+			await new Promise<void>((resolveClose, rejectClose) => {
+				server.close((error) => {
+					if (error === undefined) resolveClose()
+					else rejectClose(error)
+				})
+			})
+		}
 	})
 })

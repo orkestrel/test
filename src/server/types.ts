@@ -62,6 +62,16 @@ export interface ScratchInterface {
 	 */
 	link(target: string, source: string): void
 	/**
+	 * Removes a file, an empty directory, or a directory and its descendants.
+	 *
+	 * @param target - A relative or absolute path contained by the scratch directory. A missing target
+	 * is a no-op. A final symbolic link is removed without following it, so its destination survives.
+	 * @throws When the target escapes the scratch directory, when it names the allocation itself
+	 * lexically or through an intermediate symbolic link, when the scratch root is missing, a symbolic
+	 * link, or a file, or when the host refuses to remove the target.
+	 */
+	remove(target: string): void
+	/**
 	 * Removes the allocated directory and everything in it when its identity still matches.
 	 *
 	 * @throws When the host refuses to inspect or remove the matching allocation.
@@ -98,6 +108,24 @@ export interface ScratchOptions {
 	 * directory and rethrows when a key escapes or the host refuses a write.
 	 */
 	readonly files?: Readonly<Record<string, string>>
+}
+
+/** A server a test owns, listening on an ephemeral loopback port until the test releases it. */
+export interface LoopbackInterface {
+	/**
+	 * The `http` origin for the assigned port, without a trailing slash. A TLS server answers on the
+	 * same port under `https`.
+	 */
+	readonly url: string
+	/** The ephemeral port the host assigned. */
+	readonly port: number
+	/**
+	 * Drops every live connection on a server that carries `closeAllConnections`, stops listening, and
+	 * releases the port.
+	 *
+	 * @remarks Idempotent. A plain `net.Server` waits for its open sockets to end.
+	 */
+	destroy(): Promise<void>
 }
 
 /** Options for reading a source inventory. */

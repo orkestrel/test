@@ -14,6 +14,32 @@ export interface RecorderInterface<TArgs extends readonly unknown[]> {
 	clear(): void
 }
 
+/** The work one teardown entry performs when the list is destroyed. */
+export type TeardownHandler = () => void | Promise<void>
+
+/** The cleanup a test adds as it goes and runs once, newest first, when it is done. */
+export interface TeardownInterface {
+	/** How many handlers are registered. */
+	readonly count: number
+	/**
+	 * Registers a handler to run when the list is destroyed.
+	 *
+	 * @param handler - The work to perform.
+	 */
+	add(handler: TeardownHandler): void
+	/**
+	 * Runs every registered handler in reverse registration order, awaiting each in turn, and empties
+	 * the list.
+	 *
+	 * @throws The value the failed handler threw, by identity, when exactly one handler failed. An
+	 * `AggregateError` carrying every thrown value in run order, when several did.
+	 * @remarks Every handler runs, including after an earlier one throws or rejects. A handler
+	 * registered while the run is in progress stays registered for the next call rather than joining
+	 * this one. The snapshot it ran is discarded, so a repeated call runs nothing that already ran.
+	 */
+	destroy(): Promise<void>
+}
+
 /** Any value JSON can represent, so a round trip through JSON preserves the type. */
 export type JSONValue =
 	| string

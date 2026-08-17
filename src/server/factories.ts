@@ -1,4 +1,11 @@
-import type { ScratchIdentity, ScratchInterface, ScratchOptions } from './types.js'
+import type { Server } from 'node:net'
+import type {
+	LoopbackInterface,
+	ScratchIdentity,
+	ScratchInterface,
+	ScratchOptions,
+} from './types.js'
+import { once } from 'node:events'
 import {
 	lstatSync,
 	mkdirSync,
@@ -44,6 +51,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		inode: allocated.ino,
 	}
 	const outside = 'Path outside scratch directory'
+	const unremovable = 'Scratch directory is not a removable target'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
 			const candidate = resolveContained(path, target)
@@ -120,6 +128,25 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			mkdirSync(dirname(candidate), { recursive: true })
 			symlinkSync(source, candidate)
 		},
+		remove(target) {
+			const candidate = resolveContained(path, target)
+			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			if (candidate === path) throw new Error(`${unremovable}: ${target}`)
+			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+
+			const status = lstatSync(candidate, { throwIfNoEntry: false })
+			if (status !== undefined) {
+				const identity: ScratchIdentity = {
+					birth: status.birthtimeMs,
+					device: status.dev,
+					inode: status.ino,
+				}
+				if (matchesIdentity(identity, allocation)) {
+					throw new Error(`${unremovable}: ${target}`)
+				}
+			}
+			rmSync(candidate, { force: true, recursive: true })
+		},
 		destroy() {
 			const status = lstatSync(path, { throwIfNoEntry: false })
 			if (status === undefined) return
@@ -133,4 +160,53 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		},
 	}
 	return scratch
+}
+
+/**
+ * Starts a server on an ephemeral IPv4 loopback port.
+ *
+ * @param server - The unstarted server to bind.
+ * @returns The bound origin, assigned port, and asynchronous teardown.
+ * @throws When the server cannot bind or reports an address without a numeric port.
+ */
+export async function createLoopback(server: Server): Promise<LoopbackInterface> {
+	server.listen(0, '127.0.0.1')
+	await once(server, 'listening')
+
+	const address = server.address()
+	if (
+		typeof address !== 'object' ||
+		address === null ||
+		!('port' in address) ||
+		typeof address.port !== 'number'
+	) {
+		throw new Error(`Loopback address must have a numeric port; found ${String(address)}`)
+	}
+
+	const port = address.port
+	let destruction: Promise<void> | undefined
+	return {
+		url: `http://127.0.0.1:${port}`,
+		port,
+		destroy() {
+			if (destruction === undefined) {
+				destruction = new Promise<void>((resolveClose, rejectClose) => {
+					if ('closeAllConnections' in server && typeof server.closeAllConnections === 'function') {
+						server.closeAllConnections()
+					}
+					server.close((error) => {
+						if (
+							error === undefined ||
+							('code' in error && error.code === 'ERR_SERVER_NOT_RUNNING')
+						) {
+							resolveClose()
+						} else {
+							rejectClose(error)
+						}
+					})
+				})
+			}
+			return destruction
+		},
+	}
 }

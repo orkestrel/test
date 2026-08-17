@@ -1,12 +1,29 @@
 # Test
 
-> The test helpers the fleet kept rewriting, published once: a call recorder, a delay, a temporary
-> directory, a source-file walker, and the browser journey layer that drives a real interface by
-> role and accessible name. A helper ships here only when enough packages had already
-> written their own; [Limits](#limits) states that rule, what it excluded, and the one door the
-> journey layer came through instead. This package holds one implementation of each and ships as a
-> `devDependency`. Nothing here
-> runs in production code. Source: [`src/core`](../src/core), [`src/browser`](../src/browser), and
+> The test helpers the fleet kept rewriting, published once. They read as two families, one pair
+> outside both, and a browser journey layer beside them.
+>
+> **What a test records.** A call recorder, a captured throw, a drained async source, a JSON copy, a
+> required value, and a real delay. Each turns what the code under test did into a value you can
+> assert on.
+>
+> **What a test owns and must give back.** A temporary directory, a cleanup list, and a loopback
+> server, each carrying `destroy()`. Each one takes something from the host.
+>
+> `resolveRoot` and `readInventory` are the pair outside both families: together they read the real
+> tree a test checks itself against. Neither records anything, and neither owns anything to give
+> back.
+>
+> `createHostileValues` sits outside them too, on the input side: it is what a test feeds its guards,
+> a corpus whose every member makes a naive reader throw.
+>
+> The journey layer drives a real interface by role and accessible name through the installed
+> Vitest provider, and generates the capture portfolio from the same journeys.
+>
+> A helper ships here only when enough packages had already written their own; [Limits](#limits)
+> states that rule, what it excluded, and the one door the journey layer came through instead. This
+> package holds one implementation of each and ships as a `devDependency`. Nothing here runs in
+> production code. Source: [`src/core`](../src/core), [`src/browser`](../src/browser), and
 > [`src/server`](../src/server).
 >
 > It has **zero runtime dependencies**, and no exported type here names an `@orkestrel/*` type. A
@@ -31,16 +48,18 @@ CommonJS consumer can reach it and no `.d.cts` is emitted for it.
 
 ## Surface
 
-Forty-six exports: thirty-six values and ten types, across three environments.
+Fifty-two exports: thirty-nine values and thirteen types, across three environments.
 
 ```ts
-import { createRecorder, waitForDelay } from '@orkestrel/test'
+import { createRecorder, createTeardown, waitForDelay } from '@orkestrel/test'
 import { createScratch } from '@orkestrel/test/server'
 
-// A temporary directory the test owns, seeded with the input under test.
+// What a test owns: one cleanup list, and a temporary directory seeded with the input under test.
+const teardown = createTeardown()
 const scratch = createScratch({ files: { 'input.txt': 'hello' } })
+teardown.add(() => scratch.destroy())
 
-// A real callback rather than a spy: hand `handler` to the code under test.
+// What a test records: a real callback rather than a spy — hand `handler` to the code under test.
 const recorder = createRecorder<[path: string]>()
 loader.on('read', recorder.handler)
 
@@ -50,7 +69,7 @@ await waitForDelay(10) // let a real host timer elapse
 recorder.count // how many reads arrived
 recorder.calls // the arguments of each, oldest first
 
-scratch.destroy()
+await teardown.destroy() // gives every owned resource back, newest first
 ```
 
 ### Core
@@ -62,6 +81,8 @@ Imported from `@orkestrel/test`.
 | Type                | Kind      | Shape                                                                                                                                                                                                                                                                                    |
 | ------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RecorderInterface` | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                                                                                                           |
+| `TeardownInterface` | interface | `{ count }` plus `add` / `destroy` — the cleanup one test registers as it goes.                                                                                                                                                                                                          |
+| `TeardownHandler`   | type      | `() => void \| Promise<void>` — the work one registered entry performs.                                                                                                                                                                                                                  |
 | `JSONValue`         | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`.                                                                                                                                                                                  |
 | `JSONSafe`          | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops or reshapes outside its declared type mapped to `never`: `undefined`, an opaque `object` member, and a symbol-keyed member. `unknown` still passes through, so `Record<string, unknown>` is accepted. |
 
@@ -82,9 +103,11 @@ under [Methods](#methods).
 
 #### Factories
 
-| API              | Kind     | Signature                                                          | Summary                                                 |
-| ---------------- | -------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
-| `createRecorder` | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order. |
+| API                   | Kind     | Signature                                                          | Summary                                                     |
+| --------------------- | -------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `createHostileValues` | function | `() => readonly unknown[]`                                         | Six fresh hostile values for proving that a guard is total. |
+| `createRecorder`      | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order.     |
+| `createTeardown`      | function | `() => TeardownInterface`                                          | A cleanup list that runs newest-first when it is destroyed. |
 
 ### Browser
 
@@ -192,12 +215,13 @@ Imported from `@orkestrel/test/server`.
 
 #### Types
 
-| Type               | Kind      | Shape                                                                                                     |
-| ------------------ | --------- | --------------------------------------------------------------------------------------------------------- |
-| `ScratchInterface` | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `destroy` — one owned directory. |
-| `ScratchIdentity`  | interface | `{ device, inode, birth }` — the three fields that together name one allocation on its host.              |
-| `ScratchOptions`   | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`.                         |
-| `InventoryOptions` | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                        |
+| Type                | Kind      | Shape                                                                                                                |
+| ------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `ScratchInterface`  | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` — one owned directory. |
+| `ScratchIdentity`   | interface | `{ device, inode, birth }` — the three fields that together name one allocation on its host.                         |
+| `ScratchOptions`    | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`.                                    |
+| `LoopbackInterface` | interface | `{ url, port }` plus `destroy` — one server on an owned ephemeral loopback port.                                     |
+| `InventoryOptions`  | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                                   |
 
 #### Helpers
 
@@ -240,9 +264,10 @@ manages its own directory can make the same check rather than trusting a path.
 
 #### Factories
 
-| API             | Kind     | Signature                                        | Summary                                                            |
-| --------------- | -------- | ------------------------------------------------ | ------------------------------------------------------------------ |
-| `createScratch` | function | `(options?: ScratchOptions) => ScratchInterface` | Allocates a directory below `parent` the caller owns and destroys. |
+| API              | Kind     | Signature                                        | Summary                                                              |
+| ---------------- | -------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| `createScratch`  | function | `(options?: ScratchOptions) => ScratchInterface` | Allocates a directory below `parent` the caller owns and destroys.   |
+| `createLoopback` | function | `(server: Server) => Promise<LoopbackInterface>` | Binds a caller-supplied server to `127.0.0.1` on a host-picked port. |
 
 A refused `ScratchOptions` key leaves nothing behind, by two different mechanisms. `parent` and
 `prefix` are checked before `mkdtempSync` runs, so a refused value allocates nothing. `files` is
@@ -257,6 +282,13 @@ else is refused: a fragment carrying no separator is one path segment, so `relea
 `files` seeds files on allocation, keyed by path below the scratch directory; allocation removes the
 directory it just made and rethrows when a key escapes or the host refuses a write.
 
+`createLoopback` takes a `node:net` `Server` — `node:http`'s and `node:https`'s both extend it — and
+never constructs one. It listens on port `0` at `127.0.0.1`, waits for the `listening` event, and
+reads the assigned port off `address()`, throwing
+`Loopback address must have a numeric port; found <address>` when that address carries none. Rule 11
+states what `destroy()` drops, what `url` does and does not spell, and why this package never
+reserves a port number.
+
 ## Methods
 
 The call-signature members of each behavioral interface. Their `readonly` data members stay in the
@@ -268,6 +300,19 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 | ------- | ------- | ---------------------------------------------------------------------------- |
 | `clear` | `void`  | Truncates the recorded calls in place; the recorder stays usable afterwards. |
 
+#### `TeardownInterface`
+
+| Method    | Returns         | Behavior                                                                                                                                                                                                                                 |
+| --------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add`     | `void`          | Registers one handler. Registration order is what `destroy()` reverses, so the newest registration is undone first.                                                                                                                      |
+| `destroy` | `Promise<void>` | Runs every registered handler newest-first, awaiting each before the next, and empties the list. Every handler runs even after an earlier one fails; one failure rethrows by identity and several throw an `AggregateError`. Idempotent. |
+
+#### `LoopbackInterface`
+
+| Method    | Returns         | Behavior                                                                                                                                                                                                                                                                                               |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `destroy` | `Promise<void>` | Drops every live connection on a server that carries `closeAllConnections`, stops listening, and releases the port; a plain `net.Server` has no such method, so it waits for its open sockets to end. Idempotent: the first call's promise is handed to every later one, and a closed server resolves. |
+
 #### `PortfolioInterface`
 
 | Method  | Returns                        | Behavior                                                                                                                                                                                                               |
@@ -276,36 +321,57 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 
 #### `ScratchInterface`
 
-| Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                                                           |
-| --------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write`   | `void`                | Writes a file at a path lexically contained by the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                     |
-| `read`    | `string \| undefined` | Reads a file, or `undefined` when no file can be read, including through a link whose target is missing and after the allocation is gone. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. Reading follows links, so a link the host cannot resolve, such as a cycle, surfaces the host's own error. |
-| `has`     | `boolean`             | Whether the entry at a contained path is present, without following its final link, so a link whose target is missing still reports `true`. `false` once the allocated directory itself is gone. Throws on an escaping path, and on a root that is a link or not a directory.                                                                                                                      |
-| `names`   | `readonly string[]`   | The entry names directly inside a lexically contained directory, sorted, without their parent paths — the allocated directory itself when the target is omitted. Throws on an escaping path, on a target that is missing or is not a directory, and on a root that is missing, a link, or not a directory.                                                                                         |
-| `ensure`  | `string`              | Creates a directory at a lexically contained path and every missing parent, and returns that lexical path. It is the one member that produces an empty directory, because `write` always creates a file. Idempotent on a directory that already exists. Throws when the target exists and is not a directory, on an escaping path, and on a root that is missing, a link, or not a directory.      |
-| `link`    | `void`                | Creates a symbolic link at a contained path, creating its missing parents. The source is link text rather than a checked path, so it may point outside the directory. Throws on an escaping path, on a root that is missing, a link, or not a directory, and when the host refuses the link — `EEXIST` when something already occupies the path.                                                   |
-| `destroy` | `void`                | Removes the directory this call allocated, and only that: it removes the entry at the allocated path while `matchesIdentity` holds against the allocation, and removes nothing when it does not. Idempotent.                                                                                                                                                                                       |
+| Method    | Returns               | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `write`   | `void`                | Writes a file at a path lexically contained by the directory, creating missing parents. Throws on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `read`    | `string \| undefined` | Reads a file, or `undefined` when no file can be read, including through a link whose target is missing and after the allocation is gone. Throws `Scratch path is a directory: <target>` on a directory, and throws on an escaping path and on a root that is a link or not a directory. Reading follows links, so a link the host cannot resolve, such as a cycle, surfaces the host's own error.                                                                                                                                                                       |
+| `has`     | `boolean`             | Whether the entry at a contained path is present, without following its final link, so a link whose target is missing still reports `true`. `false` once the allocated directory itself is gone. Throws on an escaping path, and on a root that is a link or not a directory.                                                                                                                                                                                                                                                                                            |
+| `names`   | `readonly string[]`   | The entry names directly inside a lexically contained directory, sorted, without their parent paths — the allocated directory itself when the target is omitted. Throws on an escaping path, on a target that is missing or is not a directory, and on a root that is missing, a link, or not a directory.                                                                                                                                                                                                                                                               |
+| `ensure`  | `string`              | Creates a directory at a lexically contained path and every missing parent, and returns that lexical path. It is the one member that produces an empty directory, because `write` always creates a file. Idempotent on a directory that already exists. Throws when the target exists and is not a directory, on an escaping path, and on a root that is missing, a link, or not a directory.                                                                                                                                                                            |
+| `link`    | `void`                | Creates a symbolic link at a contained path, creating its missing parents. The source is link text rather than a checked path, so it may point outside the directory. Throws on an escaping path, on a root that is missing, a link, or not a directory, and when the host refuses the link — `EEXIST` when something already occupies the path.                                                                                                                                                                                                                         |
+| `remove`  | `void`                | Removes the entry at a lexically contained path: a file, an empty directory, or a directory and its whole subtree. A missing target is a no-op rather than an error, so a caller removing something it created conditionally does not guard first. It acts at the final segment rather than through it, so removing a link removes the link and leaves its destination standing. Throws on an escaping path, on a target naming the allocation itself — lexically, or through an intermediate symbolic link — and on a root that is missing, a link, or not a directory. |
+| `destroy` | `void`                | Removes the directory this call allocated, and only that: it removes the entry at the allocated path while `matchesIdentity` holds against the allocation, and removes nothing when it does not. Idempotent.                                                                                                                                                                                                                                                                                                                                                             |
 
 An empty target names the allocation root. `ensure('')` returns the root path, `has('')` reports
 `true`, and `names('')` lists the root. `write('', …)` surfaces the host's `EISDIR` and `link('', …)`
 its `EEXIST`, because the root is a directory that already exists. The host code is the accurate
 answer there, so this package adds no refusal of its own.
 
+`remove` is the exception, and it refuses: `remove('')`, `remove('.')`, and `remove` of the absolute
+root all throw `Scratch directory is not a removable target: <target>`. Every other member reads the
+root as harmless or as a question about the allocation, and only `remove` would read it as an
+instruction to delete one — which is what an empty computed path produces. Ending the allocation is
+`destroy()`'s job. What the refusal buys is that the degenerate argument is loud: the empty computed
+path is this member's most destructive input, and it throws rather than acting. It buys no more than
+that. A directory that has replaced the allocation at the same path is not protected by it —
+`remove('x')` still removes `<replacement>/x`, exactly as `write`, `ensure`, and `link` still act
+inside one.
+
 ### Traversal
 
 Every member that takes a target resolves that target's **intermediate** segments through a symbolic
 link inside the allocation and acts at the destination. `write`, `read`, `has`, `names`, `ensure`,
-and `link` all do this, so a lexically contained path can read, list, create, and write outside the
-allocation. That is the contract rather than a hole in it: containment here is lexical, `link` is
-the member that creates such a link, and the [threat model](#threat-model) names who else creates
-one.
+`link`, and `remove` all do this, so a lexically contained path can read, list, create, write, and
+remove outside the allocation. That is the contract rather than a hole in it: containment here is
+lexical, `link` is the member that creates such a link, and the [threat model](#threat-model) names
+who else creates one.
 
-The **final** segment is where two members differ. `has` reads it with `lstat` rather than following
-it, so `has('gate')` reports the link itself and stays `true` after whatever `gate` pointed at is
-removed. `link` acts at the final segment rather than through it, so a second `link('gate', …)`
-surfaces the host's `EEXIST` instead of creating a link inside the destination. `write`, `read`,
-`names`, and `ensure` act at what a final-segment link points at, so `ensure` against a dangling
-final link throws the host's `ENOENT` and creates nothing at the destination.
+`remove` carries the one physical exception, and it is narrow. It reads the final entry it reaches
+with `lstat` and refuses when that entry carries the allocation's identity, so a target that arrives
+back at the allocation through an intermediate link throws instead of emptying it. A sibling reached
+through that same link is still removed. The exception stops at the allocation itself and is
+deliberately not narrowed further, because narrowing it further would be the per-segment walk this
+package declines to do.
+
+The **final** segment is where `has`, `link`, and `remove` differ from the rest. `has` reads it with
+`lstat` rather than following it, so `has('gate')` reports the link itself and stays `true` after
+whatever `gate` pointed at is removed. `link` acts at the final segment rather than through it, so a
+second `link('gate', …)` surfaces the host's `EEXIST` instead of creating a link inside the
+destination. `remove` acts there too, so `remove('gate')` unlinks `gate` and leaves the directory it
+pointed at standing; following the link would instead remove a whole tree outside the allocation
+through one contained path. `write`, `read`, `names`, and `ensure` act at what a final-segment link
+points at, so `ensure` against a dangling final link throws the host's `ENOENT` and creates nothing
+at the destination.
 
 `ensure` returns the lexical path it was given rather than the destination, so `ensure('gate/made')`
 returns `<allocation>/gate/made` while the directory is made wherever `gate` points, and
@@ -430,19 +496,33 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
 7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
    `mkdtempSync` below `parent`, which creates the directory at POSIX mode `0700`. The suite asserts
    that mode unguarded, so it is proven on POSIX and unproven on a host that emulates permission
-   bits. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, and `link` —
-   throws when that target lexically escapes the allocated directory, and a failed seed removes the
-   directory before rethrowing. `link` checks its target and not its source, so a contained link may
-   point anywhere. It does not walk the path's segments for symbolic links: that is sandbox behavior
-   and this is not a sandbox. So a lexically contained path can act outside the allocation;
-   [Traversal](#traversal) states what each member does with a link it meets, and the
-   [threat model](#threat-model) says who creates one.
+   bits. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, `link`, and
+   `remove` — throws when that target lexically escapes the allocated directory, and a failed seed
+   removes the directory before rethrowing. `remove` adds one refusal the others do not need: a
+   target naming the allocation itself, lexically or through an intermediate symbolic link. The
+   lexical half compares paths. The physical half reads only the final entry with `lstat` and
+   compares it with `matchesIdentity`; it walks no path segments and follows no final link. That is
+   the comparison `destroy()` makes, so it carries the same birth-time limit stated for `destroy()`
+   below. `link` checks its target and not its source, so a contained link may point anywhere.
+   `createScratch` does not walk the path's segments for symbolic links: that is sandbox behavior
+   and this is not a sandbox. So a lexically contained path can still act outside the allocation,
+   and only one that lands back on the allocation itself is refused; [Traversal](#traversal) states
+   what each member does with a link it meets, and the [threat model](#threat-model) says who
+   creates one.
 
    `names` sorts, and the suite discriminates a dropped `.sort()`. Two filenames written from raw
    bytes give `readdirSync` the reverse of sorted order: `0x80` is an invalid UTF-8 lead byte, so
    that name reaches JavaScript as `U+FFFD` and sorts after `é`, while on disk `0x80` sorts before
    `é`'s leading `0xc3`. The suite asserts the host's order, the sorted order, and that the two
    differ, so it fails rather than going quiet if that population ever stops discriminating.
+
+   That population carries a limit, and it is Node's rather than this package's. A name the host
+   refuses to decode reaches JavaScript as `U+FFFD`, and that string re-encodes to the three bytes
+   `EF BF BD`, which are not the bytes on disk. So the string `names()` hands back never addresses
+   the entry it came from: `has` on it reports `false`, and `remove(names()[i])` removes nothing and
+   throws nothing, because a missing target is a no-op. The silence is the cost — a caller looping
+   over `names()` to clear a directory leaves such a file behind and reads success. Reach that file
+   with a `Buffer` path through `node:fs` directly.
 
    `destroy()` is idempotent, and identity is what makes it safe rather than location: it removes
    the entry at the allocated path only while `matchesIdentity` holds against the allocation. A
@@ -458,18 +538,56 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
    so that refusal is indistinguishable from success and the allocation leaks silently.
 
 8. **A destroyed allocation answers presence and refuses action.** `read` returns `undefined` and
-   `has` returns `false`; `write`, `names`, `ensure`, and `link` throw
+   `has` returns `false`; `write`, `names`, `ensure`, `link`, and `remove` throw
    `Scratch directory does not exist`. The split follows the return type: a member whose return type
    carries absence answers with it, and a member whose return type does not, refuses. `names` asks a
    question and changes nothing, and it refuses anyway, because `readonly string[]` has no value
    meaning gone. `write`, `ensure`, and `link` are why the refusal is written out rather than left to
    the host: each calls `mkdirSync` with `recursive`, which recreates every missing parent, so
    without the check any of the three would rebuild the allocation root and leave a destroyed
-   fixture looking alive.
+   fixture looking alive. `remove` is written out for the opposite reason: `rmSync` with `force`
+   does not throw on a path that is not there, so without the check it would report success against
+   a fixture that is gone.
 9. **Zero runtime dependencies, and no foreign type in a signature.** `dependencies` is empty and
    stays empty. No exported signature names an `@orkestrel/*` type, so no consumer can be handed a
    two-copies type failure by installing this package.
-10. **The journey layer resolves its own targets, and imports almost nothing.** No helper in
+10. **`createTeardown` runs newest-first, and every handler runs.** `destroy()` takes the registered
+    handlers in reverse registration order and awaits each one before starting the next, so a
+    handler that undoes what a later registration depends on runs after it. A handler that throws or
+    rejects does not stop the run: every remaining handler still runs, and the failures are raised
+    at the end. Exactly one failure is rethrown by identity, so a test can assert on the value it
+    threw. Several are wrapped in an `AggregateError` whose `errors` are in run order — newest
+    first — rather than in registration order. `destroy()` empties the list before it starts, so a
+    handler registered while the run is in progress stays registered for the next call rather than
+    joining this one, and `count` read from inside a running handler counts only those late
+    registrations. A repeated `destroy()` runs nothing that already ran, which is what makes it
+    idempotent. The list registers no Vitest hook itself: the consumer writes
+    `afterEach(() => teardown.destroy())` once, in its own setup. That one line is the price of the
+    zero-dependency contract, because registering the hook here would take a runtime dependency on
+    the test runner and rule 9 forbids one.
+11. **`createLoopback` binds a server the caller made.** The caller constructs its own unstarted
+    server and keeps every protocol handler on it; this package supplies the bind and the release
+    and nothing else. It listens on port `0` at `127.0.0.1`, so the host assigns the port and the
+    address is always IPv4 loopback — never `::1`, which a host resolving `localhost` can hand back
+    instead, and never a fixed port a parallel worker may already hold. `port` is that assigned
+    number, read off `address()`. `url` is `http://127.0.0.1:<port>` with no trailing slash, and the
+    scheme is spelled `http` unconditionally, so a TLS server's origin is `port` plus a scheme the
+    caller writes itself. `destroy()` drops every live connection before it closes, so a keep-alive
+    client cannot hold the port past the test that opened it; the drop reaches the `node:http` and
+    `node:https` servers that carry `closeAllConnections`. A plain `node:net` server has no such
+    method to call, so `destroy()` waits for its open sockets to end. It is idempotent — the first
+    call's promise is returned to every later one — and a server already closed underneath it
+    resolves rather than throwing. The package never reserves a port number and releases it for the
+    caller to rebind; [Limits](#limits) states why that shape is refused.
+12. **`createHostileValues` is a growing totality corpus with a negative control.** Each call
+    returns a frozen array of fresh values: a self-cycle, a revoked proxy, proxies that throw from
+    `get`, `ownKeys`, and `getPrototypeOf`, and a null-prototype record. Every member makes a naive
+    reader throw. Each has a direct probe for that failure. The negative control keeps an inert value
+    from entering the corpus under a hostile name. A total guard survives every member without
+    throwing. Whether it accepts or refuses one is that guard's own contract. Membership may grow in
+    a release, so consumers loop over the whole array, assert their guard's expected answer per
+    index, and attribute each failure by that index instead of naming or counting members locally.
+13. **The journey layer resolves its own targets, and imports almost nothing.** No helper in
     `src/browser` accepts an element, a component instance, or a selector for the target it acts on:
     each finds its own from a role and an accessible name, which is what stops a journey drifting
     into a description of the markup. `render` takes markup and creates a node. `readRows`, `style`,
@@ -543,46 +661,62 @@ and several below are. The threshold is therefore necessary and not sufficient: 
 fails it is excluded, and a candidate that clears it either ships or appears below with the second
 reason that excluded it.
 
-A member is one package carrying an implementation, under whatever name that package spells it and
-whether it exports the helper or declares it inside a test file. Counts are of those groups, so the
-first column names the group rather than an export: **nothing in this section is importable**, and
-the only names you can install are in [Surface](#surface). The widest group that did ship is
-`captureError` at 13 — 12 packages export one and `csv` keeps a file-local declaration.
+A member is one implementation group carried by one package, under whatever name that package
+spells it and whether it exports the helper or declares it inside a test file. Repeated calls routed
+through one shared implementation stay one member. Counts are of those groups, so the first column
+names the group rather than an export: **nothing in this section is importable**, and the only names
+you can install are in [Surface](#surface). The widest group that did ship is `captureError` at 13.
 
-Everything below was measured and counted across the 41 published packages. Each row says which half
-of the rule decided it: **fails** the threshold, or **clears** it and is excluded for a second,
-named reason. Each is revisited when its count or its second reason changes.
+Count a repeated set at the level a consumer uses it. A set of adversarial values fed through one
+totality loop is one implementation for counting, whether the package builds that set beside the
+loop or spells the same assertions out one by one. Its individual values are not separate members.
 
-| Excluded                                                                                                                             | Members  | Rule   | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types                                     | 13       | Clears | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at 219 call sites — 18 of which read a property off a call argument and would hard-error with `as` and `!` banned. `createRecorder`, the kernel all 13 local copies are built from, ships instead.                                                                                                                                                                                                                                                                                                                  |
-| An ephemeral-port HTTP fixture server — `middleware`, `router`, `server`                                                             | 3        | Clears | Two of the three are one cluster and `middleware` is independent, so the count stands. It is excluded because it needs a port guard `@orkestrel/server` already publishes, and depending on that package drags a six-package runtime closure into all 41 repositories to avoid a two-line predicate. Import `isAddressInfo` from `@orkestrel/server` directly.                                                                                                                                                                                                                                                                                                                  |
-| A DOM element builder, and the three helpers `database` and `indexeddb` share under five names                                       | 2 each   | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. `src/browser` now exists, so the build target, scoped tsconfig, barrel, and Playwright project no longer count against them. The count still does, and neither is part of the journey layer that opened the environment.                                                                                                                                                                                                                                                                                                                                                                  |
-| A hand-driven timer — `terminal`, `toolbox`                                                                                          | 2        | Fails  | Two members, and `toolbox` runtime-depends on `terminal`, so they are one cluster twice over. Its shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| A hand-driven clock — `mcp`, `middleware`                                                                                            | 2        | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.                                                                                                                                                                                                                                                                                                                        |
-| Numeric corpora, hostile-key tables, deep-freeze, raw invocation, revoked proxies, throwing getters, cyclic and deep record builders | 2–3 each | Fails  | Every group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                                                                                                                                                                                                                                                                                                                                               |
-| Removing one contained entry from a scratch directory without destroying it — `scaffold`, `database`                                 | 2        | Fails  | Two members, `scaffold` at 23 sites and `database` at 8, and the two are independent, so the count is two groups — below three and below five. `sqlite` is not a third member: its one removal deletes a lone `.db` file with no enclosing directory, so that file is the whole fixture and removing it is `destroy` rather than this. `scaffold` has already promoted it to a `remove(relative)` method on the same interface as its `destroy()`, so the row is well-formed and fails on count alone. The cost is real: a migrating `scaffold` or `database` test reaches for `node:fs` beside the scratch, and mixing the two is the failure mode this package exists to end. |
+Everything below was counted this round over the fleet's 42 readable trees. The two private
+repositories were read by the parallel campaign whose evidence the hostile guard-input row cites, so
+the population is the full 44. A count that moves reopens its row. The Rule column says which half
+of the rule decided a candidate: it **fails** the threshold, or it **clears** it and the reason says
+whether it ships or names the second reason that excluded it. Each row is revisited when its count
+or its second reason changes.
 
-The last row is a candidate for `ScratchInterface` rather than a member of it: `remove` has 2
-members and is not published. The same rule ruled three names that are published, and each is
-checkable against the same numbers. `ensure` has 5 members — `scaffold`, `database`, `sea`,
-`middleware`, `browser` — so it clears on count alone. `names` has 4: `middleware` at 14 sites,
-`scaffold` 11, `database` 5, `sea` 2. Four is below five, so `names` clears the three-member half
-instead, on `middleware`, `scaffold`, and `sea` being mutually independent. `link` has 3, the same
-three packages, and clears that half the same way. `has` renames the `exists` this interface already
-carried, so it was never a candidate. `path`, `write`, `read`, and `destroy` are what an owned
-directory is rather than candidates measured against the rule, so they carry no count.
+| Candidate                                                                                                             | Members  | Rule   | Why                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------- | -------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types                      | 13       | Clears | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at 219 call sites — 18 of which read a property off a call argument and would hard-error with `as` and `!` banned. `createRecorder`, the kernel all 13 local copies are built from, ships instead.  |
+| Hostile guard-input sets                                                                                              | 3        | Clears | `form`, `table`, and `supervisor` each feed one adversarial set through total readers. The set ships as `createHostileValues`; its six members do not become six factories, and every member carries a naive-reader negative control.                                                                                                                           |
+| Raw invocation — `invokeRaw`                                                                                          | 3        | Clears | Native `Reflect.apply` already makes the call at a deliberately untyped boundary, and each caller pairs it with the domain guard that narrows what came back. A published version has to declare a return type for a call it cannot see the target of, so it would claim a type nothing proved.                                                                 |
+| Condition polling — wall-clock predicate loops                                                                        | 3        | Clears | Three independent members, so the count carries it. It is excluded because publishing it contradicts the no-polling architecture law: a loop that re-reads a predicate against the wall clock is the busy wait that law bans, and shipping one from the fleet's own test package would sanction it everywhere. Park the wait on the event or signal that fires. |
+| Deep nesting beyond a guard's cap                                                                                     | 2        | Fails  | `table` builds a record chain and `supervisor` builds nested arrays. Two independent members stay below the threshold, and a shared factory would need a container selector that changes the construction algorithm.                                                                                                                                            |
+| Canonical wire fixpoint assertions                                                                                    | 2        | Fails  | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. Two independent members stay below the threshold. The shape would still remain consumer-local if the count cleared, because it is an assertion over consumer codecs rather than a reusable test mechanism.                                                   |
+| Numeric corpora, hostile-key tables, and deep-freeze                                                                  | 2–3 each | Fails  | Every remaining group sits inside the guard-and-evaluator cluster, so no group reaches three independent members. A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a reusable mechanism, and covering the variants would need a mode argument.                                                     |
+| Every browser helper — a DOM element builder, and the three helpers `database` and `indexeddb` share under five names | 2 each   | Fails  | Each candidate has two members, and the `database` / `indexeddb` pair is one cluster. `src/browser` now exists, so the build target, scoped tsconfig, barrel, and Playwright project no longer count against them. The count still does, and neither is part of the journey layer that opened the environment.                                                  |
+| A hand-driven timer — `terminal`, `toolbox`                                                                           | 2        | Fails  | Two members, and `toolbox` runtime-depends on `terminal`, so they are one cluster twice over. Its shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned.                                                                                                                                                |
+| A hand-driven clock — `mcp`, `middleware`                                                                             | 2        | Fails  | Two members. Two is below the threshold under either half of the rule, and the two packages are independent, so no reading of it admits them. This shipped in the first draft as `createClock` and `ClockInterface` on taste alone, and is struck: a rule taste can override is not a rule. Both packages keep their local clocks until a third appears.        |
+| A reserve-then-release port picker                                                                                    | 2        | Fails  | Two members. The shape is refused on its own account as well: it binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given.                                                  |
+| A bounded retry — `retryUntil`                                                                                        | 2        | Fails  | Two members, and only the count excludes it. It is not timer polling — it retries a real operation a bounded number of times rather than re-reading a predicate — so the no-polling law does not reach it, and a third independent member reopens this row on the count alone.                                                                                  |
+| An abort-signal wait — `waitForAbort`                                                                                 | 2        | Fails  | Two members, which is below the threshold under either half of the rule. The count excluded it before any question about its shape was reached.                                                                                                                                                                                                                 |
+| Abort-signal instrumentation                                                                                          | 2        | Fails  | Two members, read the same way as `waitForAbort` above and excluded for the same reason. Both rows are revisited when either count moves.                                                                                                                                                                                                                       |
+
+The rule also ruled three names `ScratchInterface` publishes, and each is checkable against the same
+numbers. `ensure` has 5 members, so it clears on count alone. `names` has 4, which is below five, so
+it clears the three-member half instead: three of those four are mutually independent. `link` has 3,
+mutually independent, and clears that half the same way. `has` renames the `exists` this interface
+already carried, so it was never a candidate. `path`, `write`, `read`, and `destroy` are what an
+owned directory is rather than candidates measured against the rule, so they carry no count.
+
+`remove` ships at 2 members and the threshold did not decide it. The threshold decides whether a
+helper is extracted from the fleet at all; `remove` is a member of an entity that already ships,
+which makes it a question of coherence instead. `write`, `ensure`, and `link` each create something,
+and nothing took one of them back short of `destroy()`.
 
 Three smaller candidates clear the threshold and are excluded anyway. An error-recording wrapper has
 11 members, and in 10 of them it is a five-line delegate to the recorder that already ships. A
-promise gate has 8 members across two names, and native `Promise.withResolvers` supersedes all of
-them. A shared random seed has 4 members and is a bare literal.
+deferred gate has 8 declarations across two names, and native `Promise.withResolvers` supersedes
+every one of them. A shared random seed has 4 members and is a bare literal.
 
 The rest fail the threshold on count: element and text requiring (2 each, and redundant under
 `noUncheckedIndexedAccess`), unique naming (2, hidden module state), socket flushing (2, an
-unjustified constant), condition polling (2, and polling is banned architecture), the throwing
-variant of `captureError` (1), pattern requiring (1), and settlement waiting (1). Every
-product-specific peer, protocol fixture, and domain builder stays in the package that owns it.
+unjustified constant), the throwing variant of `captureError` (1), pattern requiring (1), and
+settlement waiting (1). Every product-specific peer, protocol fixture, and domain builder stays in
+the package that owns it.
 
 ## Patterns
 
@@ -687,6 +821,54 @@ captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
 // Error: JSON values must contain finite numbers — at any depth, rather than a silent null
 ```
 
+### Prove a guard is total
+
+Every member makes a naive reader throw. A total guard survives every member without throwing.
+Whether it accepts or refuses one is that guard's own contract. Run the whole corpus, attribute a
+throw or wrong answer to the loop index, and compare with the answer that guard's contract requires
+for that member.
+
+The fence is the body of a parameterized consumer test. `guard` is the total guard under test, and
+`expected` is its readonly list of required answers in corpus order.
+
+```ts
+import { expect } from 'vitest'
+import { createHostileValues } from '@orkestrel/test'
+
+const values = createHostileValues()
+expect(expected.length).toBe(values.length)
+
+for (const [index, value] of values.entries()) {
+	let accepted: boolean | undefined
+	expect(() => {
+		accepted = guard(value)
+	}, `hostile value ${index}`).not.toThrow()
+	expect(accepted, `hostile value ${index}`).toBe(expected[index])
+}
+```
+
+The corpus is the positive proof input. Keep a negative control for every member too: perform the
+naive read that member is meant to break and prove it throws. Without that control, an inert value
+can make the totality loop look stronger without exercising another hostile boundary.
+
+### Prove a wire fixpoint
+
+A wire fixpoint proves that a consumer's parser and serializer reproduce canonical bytes after the
+wire has crossed an untrusted JSON boundary. This is **not** `roundTripJSON`: that helper makes a
+typed JSON copy and returns the copied value. No wire-fixpoint export exists, because the comparison
+is the consumer's assertion over its own codecs. In this consumer-test fence, `schema` is the local
+fixture and `parseSchema` and `serializeSchema` are its local codecs.
+
+```ts
+import { expect } from 'vitest'
+import { requireValue } from '@orkestrel/test'
+
+const wire = JSON.stringify(serializeSchema(schema))
+const received = requireValue(parseSchema(JSON.parse(wire)))
+
+expect(JSON.stringify(serializeSchema(received))).toBe(wire)
+```
+
 ### Read a source inventory
 
 The pairing `resolveRoot` and `readInventory` is what a guides-parity suite needs: the workspace
@@ -770,10 +952,73 @@ scratch.link('dangling', 'missing.ts')
 scratch.has('dangling') // true — the link is there
 scratch.read('dangling') // undefined — what it points at is not
 
+// `remove` takes one contained entry and acts at the final segment, so a link goes and whatever it
+// pointed at stays. A missing target is a no-op.
+scratch.remove('dangling')
+scratch.has('dangling') // false
+scratch.remove('missing.ts') // no throw — there was nothing there
+scratch.remove('src') // the directory and everything under it
+scratch.names() // ['alias.ts', 'empty', 'gate']
+
 scratch.destroy()
 scratch.destroy() // no-op — destroy is idempotent
 outside.has('made') // true — destroy unlinks `gate` and leaves what it pointed at
 outside.destroy()
+```
+
+### Give everything back in one hook
+
+Register the cleanup where you take the resource, then let one hook run all of it. The list reverses
+registration order, so each handler runs while what it depends on is still standing.
+
+```ts
+import { afterEach, it } from 'vitest'
+import { createTeardown } from '@orkestrel/test'
+
+const teardown = createTeardown()
+
+// This package registers no hook of its own, so the consumer writes this line once.
+afterEach(() => teardown.destroy())
+
+it('runs its cleanup newest-first', async () => {
+	const order: string[] = []
+	teardown.add(() => {
+		order.push('opened first')
+	})
+	teardown.add(async () => {
+		await Promise.resolve()
+		order.push('opened second')
+	})
+	teardown.count // 2
+
+	await teardown.destroy()
+	order // ['opened second', 'opened first'] — reversed, and each awaited before the next
+	teardown.count // 0 — the list is empty, so the hook above then runs nothing
+})
+```
+
+### Answer a real request on a loopback port
+
+```ts
+import { createServer } from 'node:http'
+import { createLoopback } from '@orkestrel/test/server'
+
+// The server is yours, so every route, header, and status stays yours.
+const server = createServer((_request, response) => {
+	response.end('ok')
+})
+
+const loopback = await createLoopback(server)
+
+loopback.url === `http://127.0.0.1:${loopback.port}` // true — IPv4 loopback, no trailing slash
+loopback.port > 0 // true — the host picked it; this package neither picks nor reserves a number
+
+const response = await fetch(loopback.url)
+await response.text() // 'ok'
+
+await loopback.destroy() // drops any live connection, then closes
+await loopback.destroy() // undefined — destroy is idempotent
+server.listening // false
 ```
 
 ### Refuse an escaping path in your own fixture
@@ -867,9 +1112,11 @@ portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is 
 
 ### Practices
 
-- **Adopt one family at a time.** Replace a package's local recorder, then its delay, then its
+- **Adopt one helper at a time.** Replace a package's local recorder, then its delay, then its
   temporary directory. Nothing here re-exports another package's symbol, so each swap is
   independent.
+- **Take the cleanup list before the resources.** `createTeardown` is what makes the rest of the
+  owned family safe to reach for, because one hook then releases everything the test took.
 - **Import by environment.** Reach for `@orkestrel/test` first; drop to `@orkestrel/test/server`
   only for the filesystem helpers, and to `@orkestrel/test/browser` only inside a browser test
   project.
@@ -894,9 +1141,16 @@ Each entry names the rules its file proves. The test names carry the cases.
   at an opaque `object` member and at a symbol-keyed one, the non-finite refusal at every depth and
   through `JSON.rawJSON`, the `-0` normalization, and a large array and object copied without
   exceeding the host's argument limit.
-- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rule 2. It records
-  typed tuples in call order, and truncates a `calls` array the test captured before the `clear()`.
-- [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts) — rule 10 across the
+- [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rules 2, 10, and 12.
+  `createRecorder` records typed tuples in call order, and truncates a `calls` array the test
+  captured before the `clear()`. `createTeardown` takes newest-first order across synchronous and
+  asynchronous handlers, a synchronous throw and an asynchronous rejection each rethrown by identity
+  with every remaining handler still run, both together aggregated in run order, a handler added
+  during a run kept for the next call, the count reset before the handlers run, and a `destroy()`
+  that is called empty and called twice. `createHostileValues` proves all six naive-reader failures,
+  frozen and fresh membership, and one total guard's benign and hostile answers with loop-index
+  attribution.
+- [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts) — rule 13 across the
   layer, in real Chromium against constructed markup. The resolver takes a bare name, a role that
   disambiguates a tab from its own panel, a name no element carries, a name carried only by a role
   outside `ACCESSIBLE_ROLES`, and the disabled, hidden, and inert matches that are present but
@@ -925,16 +1179,29 @@ Each entry names the rules its file proves. The test names carry the cases.
   at the walked one with its spellings normalized to one rule, its four link refusals with a
   contained intermediate link as the control on the fourth, a root-level `__proto__` file, and the
   host's own case behavior probed rather than assumed.
-- [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — rules 7 and 8. The
-  ungrouped cases take the `0700` mode, nested seeding, the cleanup after a failed seed, the lexical
-  refusals, the empty target's answers, and every member refused at a symbolic-link root and at a
-  file root; `destroy()` is idempotent, leaves a replacement directory standing, and leaves a moved
-  allocation alone. Then one group per ruled member. `destruction` takes all six members after
-  `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root.
+- [`tests/src/server/factories.test.ts`](../tests/src/server/factories.test.ts) — rules 7, 8, and 11.
+  `createLoopback` takes a real `fetch` answered from its own origin, a live keep-alive connection
+  dropped by `destroy()` with a second server then binding the released port, a repeated `destroy()`
+  handed the same promise before either call settles, ten parallel instances landing on distinct
+  ports, a plain `node:net` server bound and closed, and a server already listening when it was
+  handed over, refused. For `createScratch`, the ungrouped cases take the `0700` mode, nested
+  seeding, the cleanup after a failed seed, the lexical refusals, the empty target's answers, and
+  `has`, `write`, `read`, `names`, `ensure`, `link`, and `remove` each refused at a symbolic-link
+  root and at a file root; `destroy()` is idempotent, leaves a replacement directory standing, and
+  leaves a moved allocation alone. Then one group per subject.
+  `destruction` takes `write`, `read`, `has`, `names`, `ensure`, `link`, and `remove` after
+  `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root, and
+  `remove` proving its root and escape refusals answer before the destroyed-allocation one.
   `names` takes its sorted output, including the population that discriminates a dropped `.sort()`.
   `ensure` takes an empty directory, every missing parent, and a repeated call. `link` takes
   traversal through a planted link, the final segment `has` reports rather than follows, and the
-  `EEXIST` an occupied final segment throws. `parent` and `prefix` take their own refusals.
+  `EEXIST` an occupied final segment throws. `remove` takes eleven cases: a file beside a kept
+  sibling, an empty directory, a populated subtree, a missing target, an ancestor link back to the
+  allocation with every seeded file read back afterwards, a final link whose destination is read back
+  afterwards, a sibling directory reached through that same ancestor link, an escaping target with
+  the file outside left intact, the root refused in all three spellings, a foreign directory swapped
+  onto the allocated path that `remove('')` refuses, and that same swap under `destroy()`, which
+  removes nothing either. `parent` and `prefix` take their own refusals.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — rule 1: the `## Surface` ↔ source bijection,
   the barrel ↔ source bijection, the behavioral-interface ↔ `## Methods` bijection and each group's
   members, the fence imports, and link resolution for this guide.
