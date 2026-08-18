@@ -36,7 +36,7 @@ describe('createPortfolio', () => {
 				variant: 'dark-1440',
 				directory: DIRECTORY,
 			}),
-		).toThrowError('Capture variant "dark-1440" is not registered')
+		).toThrow('Capture variant "dark-1440" is not registered')
 	})
 
 	it('expands the registry across every variant whether or not the run writes', () => {
@@ -77,7 +77,7 @@ describe('createPortfolio', () => {
 			directory: DIRECTORY,
 			enabled: true,
 		})
-		await expect(portfolio.place('answer-partial')).rejects.toThrowError(
+		await expect(portfolio.place('answer-partial')).rejects.toThrow(
 			'Capture state "answer-partial" is not registered',
 		)
 		expect(portfolio.states).toStrictEqual([])
@@ -115,7 +115,7 @@ describe('createPortfolio', () => {
 			enabled: true,
 		})
 		await portfolio.place('answer-ideal')
-		await expect(portfolio.place('answer-ideal')).rejects.toThrowError(
+		await expect(portfolio.place('answer-ideal')).rejects.toThrow(
 			'Capture state "answer-ideal" is already placed',
 		)
 		expect(portfolio.states).toStrictEqual(['answer-ideal'])

@@ -47,14 +47,14 @@ describe('resolveRendered', () => {
 		)
 		expect(resolveRendered('tab', 'Drafts')).toBe(container.querySelector('[role="tab"]'))
 		expect(resolveRendered('tabpanel', 'Drafts')).toBe(container.querySelector('[role="tabpanel"]'))
-		expect(() => resolveRendered('Drafts')).toThrowError(
+		expect(() => resolveRendered('Drafts')).toThrow(
 			'Interactive target "Drafts" is ambiguous across 2 elements',
 		)
 	})
 
 	it('refuses a name no element carries', () => {
 		buildFixture('<button type="button">Save changes</button>')
-		expect(() => resolveRendered('Nowhere')).toThrowError(
+		expect(() => resolveRendered('Nowhere')).toThrow(
 			'No interactive element has the accessible name "Nowhere"',
 		)
 	})
@@ -62,7 +62,7 @@ describe('resolveRendered', () => {
 	it('refuses a name carried only by a role outside the searched set', () => {
 		buildFixture('<h2 tabindex="0">Report</h2>')
 		expect(ACCESSIBLE_ROLES).not.toContain('heading')
-		expect(() => resolveRendered('Report')).toThrowError(
+		expect(() => resolveRendered('Report')).toThrow(
 			'No interactive element has the accessible name "Report"',
 		)
 	})
@@ -74,7 +74,7 @@ describe('resolveRendered', () => {
 				'<div inert><button type="button">Sealed</button></div>',
 		)
 		for (const name of ['Locked', 'Folded', 'Sealed']) {
-			expect(() => resolveRendered(name)).toThrowError(
+			expect(() => resolveRendered(name)).toThrow(
 				`Interactive target "${name}" is not visible and focus-reachable`,
 			)
 		}
@@ -97,7 +97,7 @@ describe('resolveAccessible', () => {
 			'<button type="button" style="position: fixed; top: -200px; width: 80px; height: 40px">' +
 				'Offscreen</button>',
 		)
-		expect(() => resolveAccessible('Offscreen')).toThrowError(
+		expect(() => resolveAccessible('Offscreen')).toThrow(
 			'Interactive target "Offscreen" is unreachable after scrolling',
 		)
 	})
@@ -166,7 +166,7 @@ describe('clickAccessibleWithin', () => {
 
 	it('refuses a control the region does not reach', async () => {
 		buildFixture('<section aria-label="Ledger"><button type="button">Add row</button></section>')
-		await expect(clickAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrowError(
+		await expect(clickAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrow(
 			'Interactive target "Remove" is not reachable inside "Ledger"',
 		)
 	})
@@ -177,7 +177,7 @@ describe('clickAccessibleWithin', () => {
 				'<button type="button">Add row</button><button type="button">Add column</button>' +
 				'</section>',
 		)
-		await expect(clickAccessibleWithin('Ledger', 'button', 'Add')).rejects.toThrowError(
+		await expect(clickAccessibleWithin('Ledger', 'button', 'Add')).rejects.toThrow(
 			'Interactive target "Add" is ambiguous across 2 elements inside "Ledger"',
 		)
 	})
@@ -194,7 +194,7 @@ describe('clickDisclosure', () => {
 
 	it('refuses a summary no rendered disclosure carries', async () => {
 		buildFixture('<details style="display: none"><summary>Folded</summary></details>')
-		await expect(clickDisclosure('Folded')).rejects.toThrowError(
+		await expect(clickDisclosure('Folded')).rejects.toThrow(
 			'Native disclosure "Folded" is not visible and focus-reachable',
 		)
 	})
@@ -203,7 +203,7 @@ describe('clickDisclosure', () => {
 		buildFixture(
 			'<details><summary>Advanced</summary></details><details><summary>Advanced</summary></details>',
 		)
-		await expect(clickDisclosure('Advanced')).rejects.toThrowError(
+		await expect(clickDisclosure('Advanced')).rejects.toThrow(
 			'Native disclosure "Advanced" is ambiguous across 2 elements',
 		)
 	})
@@ -265,7 +265,7 @@ describe('traverseAccessible', () => {
 		const container = buildFixture('<button type="button">Ghost</button>')
 		const ghost = requireValue(container.querySelector('button'))
 		ghost.addEventListener('focus', () => ghost.blur())
-		await expect(traverseAccessible('Ghost')).rejects.toThrowError(
+		await expect(traverseAccessible('Ghost')).rejects.toThrow(
 			/^Interactive target "Ghost" is not reachable through forward Tab traversal: $/u,
 		)
 	})
@@ -276,7 +276,7 @@ describe('traverseAccessible', () => {
 		)
 		const ghost = requireValue(container.querySelectorAll('button')[1])
 		ghost.addEventListener('focus', () => ghost.blur())
-		await expect(traverseAccessible('Ghost')).rejects.toThrowError(
+		await expect(traverseAccessible('Ghost')).rejects.toThrow(
 			/^Interactive target "Ghost" is not reachable through forward Tab traversal: .+$/u,
 		)
 	})
@@ -294,14 +294,14 @@ describe('readPerception', () => {
 
 	it('refuses a named region nothing renders', () => {
 		buildFixture('<section aria-label="Gone" style="display: none">Answer ready</section>')
-		expect(() => readPerception('Gone')).toThrowError('Named region "Gone" is not visible')
+		expect(() => readPerception('Gone')).toThrow('Named region "Gone" is not visible')
 	})
 
 	it('refuses a name several visible regions carry', () => {
 		buildFixture(
 			'<section aria-label="Twin">Left</section><section aria-label="Twin">Right</section>',
 		)
-		expect(() => readPerception('Twin')).toThrowError(
+		expect(() => readPerception('Twin')).toThrow(
 			'Named region "Twin" is ambiguous across 2 elements',
 		)
 	})
@@ -348,7 +348,7 @@ describe('readValue', () => {
 
 	it('refuses a resolved control that carries no value', () => {
 		buildFixture('<button type="button">Save</button>')
-		expect(() => readValue('button', 'Save')).toThrowError(
+		expect(() => readValue('button', 'Save')).toThrow(
 			'Interactive target "Save" does not carry a value',
 		)
 	})
@@ -380,7 +380,7 @@ describe('render', () => {
 describe('contrast', () => {
 	it('refuses a detached element whose foreground has no computed channels', () => {
 		const detached = document.createElement('p')
-		expect(() => contrast(detached)).toThrowError('Computed foreground color is unavailable')
+		expect(() => contrast(detached)).toThrow('Computed foreground color is unavailable')
 	})
 
 	it('measures a fully opaque stack from the element that paints, ignoring its ancestors', () => {
@@ -407,7 +407,7 @@ describe('contrast', () => {
 
 	it('refuses a stack where nothing from the element upwards paints a background', () => {
 		const container = buildFixture('<p style="color: #000">Ready</p>')
-		expect(() => contrast(requireValue(container.querySelector('p')))).toThrowError(
+		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
 			'Computed background color is unavailable',
 		)
 	})

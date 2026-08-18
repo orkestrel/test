@@ -6,8 +6,8 @@
 		"noEmit": false,
 		"declaration": true,
 		"emitDeclarationOnly": true,
-		"rootDir": "../../src/browser",
-		"outDir": "../../dist/src/browser"
+		"rootDir": "../../src",
+		"outDir": "../../dist/src"
 	},
 	"include": [
 		"../../src/browser/**/*.cts",
