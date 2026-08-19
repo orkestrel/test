@@ -12,14 +12,13 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
-	rmSync,
 	statSync,
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
-import { matchesIdentity, resolveContained } from './helpers.js'
+import { matchesIdentity, removeTree, resolveContained } from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -61,7 +60,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			writeFileSync(candidate, text)
 		}
 	} catch (error) {
-		rmSync(path, { force: true, recursive: true })
+		removeTree(path)
 		throw error
 	}
 
@@ -145,7 +144,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 					throw new Error(`${unremovable}: ${target}`)
 				}
 			}
-			rmSync(candidate, { force: true, recursive: true })
+			removeTree(candidate)
 		},
 		destroy() {
 			const status = lstatSync(path, { throwIfNoEntry: false })
@@ -156,7 +155,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 				inode: status.ino,
 			}
 			if (!matchesIdentity(identity, allocation)) return
-			rmSync(path, { force: true, recursive: true })
+			removeTree(path)
 		},
 	}
 	return scratch

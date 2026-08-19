@@ -18,9 +18,10 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createLoopback, createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
+import { CASE_SENSITIVE_FS, POSIX_MODE, RAW_BYTE_NAMES, SYMLINKS } from '../../setupServer.js'
 
 describe('createScratch', () => {
-	it('allocates its directory with mode 0700', () => {
+	it.runIf(POSIX_MODE)('allocates its directory with mode 0700', () => {
 		const scratch = createScratch()
 		try {
 			expect(statSync(scratch.path).mode & 0o777).toBe(0o700)
@@ -113,7 +114,7 @@ describe('createScratch', () => {
 		}
 	})
 
-	it('uses lexical containment without walking symbolic-link segments', () => {
+	it.runIf(SYMLINKS)('uses lexical containment without walking symbolic-link segments', () => {
 		const outside = mkdtempSync(join(tmpdir(), 'orkestrel-test-scratch-outside-'))
 		const scratch = createScratch()
 		try {
@@ -140,27 +141,30 @@ describe('createScratch', () => {
 		}
 	})
 
-	it('refuses every member that reaches the root when it is a symbolic link', () => {
-		const scratch = createScratch()
-		const moved = `${scratch.path}-moved`
-		renameSync(scratch.path, moved)
-		symlinkSync(moved, scratch.path, 'dir')
-		try {
-			const message = 'Scratch directory is a symbolic link'
-			expect(() => scratch.has('file.txt')).toThrow(message)
-			expect(() => scratch.write('file.txt', 'file')).toThrow(message)
-			expect(() => scratch.read('file.txt')).toThrow(message)
-			expect(() => scratch.names()).toThrow(message)
-			expect(() => scratch.ensure('made')).toThrow(message)
-			expect(() => scratch.link('linked', 'source')).toThrow(message)
-			expect(() => scratch.remove('file.txt')).toThrow(message)
+	it.runIf(SYMLINKS)(
+		'refuses every member that reaches the root when it is a symbolic link',
+		() => {
+			const scratch = createScratch()
+			const moved = `${scratch.path}-moved`
+			renameSync(scratch.path, moved)
+			symlinkSync(moved, scratch.path, 'dir')
+			try {
+				const message = 'Scratch directory is a symbolic link'
+				expect(() => scratch.has('file.txt')).toThrow(message)
+				expect(() => scratch.write('file.txt', 'file')).toThrow(message)
+				expect(() => scratch.read('file.txt')).toThrow(message)
+				expect(() => scratch.names()).toThrow(message)
+				expect(() => scratch.ensure('made')).toThrow(message)
+				expect(() => scratch.link('linked', 'source')).toThrow(message)
+				expect(() => scratch.remove('file.txt')).toThrow(message)
 
-			expect(readdirSync(moved)).toStrictEqual([])
-		} finally {
-			rmSync(scratch.path, { force: true })
-			rmSync(moved, { force: true, recursive: true })
-		}
-	})
+				expect(readdirSync(moved)).toStrictEqual([])
+			} finally {
+				rmSync(scratch.path, { force: true })
+				rmSync(moved, { force: true, recursive: true })
+			}
+		},
+	)
 
 	it('refuses every member that reaches the root when it is a file', () => {
 		const scratch = createScratch()
@@ -182,7 +186,7 @@ describe('createScratch', () => {
 		}
 	})
 
-	it('resolves an empty target to the allocation root', () => {
+	it.runIf(SYMLINKS)('resolves an empty target to the allocation root', () => {
 		const scratch = createScratch()
 		try {
 			scratch.write('file.txt', 'file')
@@ -282,7 +286,7 @@ describe('createScratch', () => {
 	})
 
 	describe('names', () => {
-		it('lists one level of the scratch root in code-unit order', () => {
+		it.runIf(CASE_SENSITIVE_FS)('lists one level of the scratch root in code-unit order', () => {
 			const scratch = createScratch()
 			try {
 				// Entries are created in descending order, and the population mixes case with
@@ -313,7 +317,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('sorts a population the host enumerates in the opposite order', () => {
+		it.runIf(RAW_BYTE_NAMES)('sorts a population the host enumerates in the opposite order', () => {
 			const scratch = createScratch()
 			try {
 				// The names are written from raw bytes because no JS string expresses a byte the
@@ -448,7 +452,7 @@ describe('createScratch', () => {
 		})
 	})
 
-	describe('link', () => {
+	describe.runIf(SYMLINKS)('link', () => {
 		it('creates a link at a contained target and creates its missing parents', () => {
 			const scratch = createScratch()
 			try {
@@ -661,32 +665,35 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('refuses an ancestor link back to the allocation and leaves every file intact', () => {
-			const scratch = createScratch({
-				files: {
-					'alpha.txt': 'alpha',
-					'marker.txt': 'marker',
-					'tree/deep/file.txt': 'deep',
-					'zeta.txt': 'zeta',
-				},
-			})
-			try {
-				scratch.link('up', '..')
-				const target = `up/${basename(scratch.path)}`
+		it.runIf(SYMLINKS)(
+			'refuses an ancestor link back to the allocation and leaves every file intact',
+			() => {
+				const scratch = createScratch({
+					files: {
+						'alpha.txt': 'alpha',
+						'marker.txt': 'marker',
+						'tree/deep/file.txt': 'deep',
+						'zeta.txt': 'zeta',
+					},
+				})
+				try {
+					scratch.link('up', '..')
+					const target = `up/${basename(scratch.path)}`
 
-				expect(() => scratch.remove(target)).toThrow(
-					`Scratch directory is not a removable target: ${target}`,
-				)
-				expect(scratch.read('alpha.txt')).toBe('alpha')
-				expect(scratch.read('marker.txt')).toBe('marker')
-				expect(scratch.read('tree/deep/file.txt')).toBe('deep')
-				expect(scratch.read('zeta.txt')).toBe('zeta')
-			} finally {
-				scratch.destroy()
-			}
-		})
+					expect(() => scratch.remove(target)).toThrow(
+						`Scratch directory is not a removable target: ${target}`,
+					)
+					expect(scratch.read('alpha.txt')).toBe('alpha')
+					expect(scratch.read('marker.txt')).toBe('marker')
+					expect(scratch.read('tree/deep/file.txt')).toBe('deep')
+					expect(scratch.read('zeta.txt')).toBe('zeta')
+				} finally {
+					scratch.destroy()
+				}
+			},
+		)
 
-		it('removes a final symbolic link without removing its destination', () => {
+		it.runIf(SYMLINKS)('removes a final symbolic link without removing its destination', () => {
 			const destination = createScratch({
 				files: { 'kept.txt': 'kept' },
 				prefix: 'orkestrel-test-remove-destination-',
@@ -706,7 +713,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('removes a sibling directory reached through the same ancestor link', () => {
+		it.runIf(SYMLINKS)('removes a sibling directory reached through the same ancestor link', () => {
 			const scratch = createScratch()
 			const sibling = createScratch({
 				files: { 'removed.txt': 'removed' },
@@ -839,7 +846,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it('refuses a parent whose final segment is a symbolic link', () => {
+		it.runIf(SYMLINKS)('refuses a parent whose final segment is a symbolic link', () => {
 			const parent = createScratch({ prefix: 'orkestrel-test-parent-linked-' })
 			try {
 				const real = parent.ensure('real')

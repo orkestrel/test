@@ -1,9 +1,18 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { isExcluded, matchesIdentity, readInventory, resolveContained } from '@src/server'
+import {
+	isExcluded,
+	matchesIdentity,
+	readInventory,
+	removeTree,
+	resolveContained,
+} from '@src/server'
 import { describe, expect, it } from 'vitest'
+import { SYMLINKS } from '../../setupServer.js'
 
 describe('resolveContained', () => {
 	it('resolves relative and absolute contained targets and rejects escapes', () => {
@@ -47,6 +56,72 @@ describe('matchesIdentity', () => {
 	})
 })
 
+describe('removeTree', () => {
+	// The child announces itself on stdout and then parks on a timer that never fires within the
+	// test, so it holds `held` as its working directory until the parent kills it. A child that
+	// self-exits on a fixed delay raced the assertions below — whether it was still alive when the
+	// baseline `rmSync` ran was a coin toss — so the hold is now bounded by the parent, not a clock.
+	const HOLD_CWD = "process.stdout.write('ready\\n'); setTimeout(() => {}, 1e9)"
+
+	// A live process's current working directory blocks its ancestors' removal on Windows only;
+	// POSIX permits removing a directory that is a process's cwd, so the two hosts need separate
+	// cases rather than a runtime branch around one shared `expect`.
+	it.runIf(process.platform === 'win32')(
+		'retries past a live process holding the tree as its working directory, where the un-retried baseline fails',
+		async () => {
+			const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-remove-tree-'))
+			const held = join(root, 'held')
+			mkdirSync(held)
+			const child = spawn(process.execPath, ['-e', HOLD_CWD], {
+				cwd: held,
+				stdio: ['ignore', 'pipe', 'ignore'],
+			})
+			try {
+				// The child is provably alive and holding the directory once it has spoken, so the
+				// un-retried baseline throws deterministically rather than by luck of timing.
+				await once(child.stdout, 'data')
+
+				expect(() => rmSync(root, { force: true, recursive: true })).toThrow(
+					/EPERM|EBUSY|ENOTEMPTY/,
+				)
+
+				// Kill releases the handle, but Windows frees it a beat later — exactly the lag
+				// `removeTree`'s bounded retry is built to outlast.
+				child.kill()
+				removeTree(root)
+				expect(existsSync(root)).toBe(false)
+			} finally {
+				if (child.exitCode === null && child.signalCode === null) child.kill()
+				await once(child, 'exit').catch(() => {})
+				if (existsSync(root)) rmSync(root, { force: true, recursive: true })
+			}
+		},
+	)
+
+	it.runIf(process.platform !== 'win32')(
+		'removes the tree while a live process holds it as its working directory',
+		async () => {
+			const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-remove-tree-'))
+			const held = join(root, 'held')
+			mkdirSync(held)
+			const child = spawn(process.execPath, ['-e', HOLD_CWD], {
+				cwd: held,
+				stdio: ['ignore', 'pipe', 'ignore'],
+			})
+			try {
+				await once(child.stdout, 'data')
+
+				removeTree(root)
+				expect(existsSync(root)).toBe(false)
+			} finally {
+				if (child.exitCode === null && child.signalCode === null) child.kill()
+				await once(child, 'exit').catch(() => {})
+				if (existsSync(root)) rmSync(root, { force: true, recursive: true })
+			}
+		},
+	)
+})
+
 describe('isExcluded', () => {
 	it('matches the key itself, an ancestor, and the root, and rejects a sibling', () => {
 		expect(isExcluded('src/index.ts', ['src/index.ts'])).toBe(true)
@@ -58,7 +133,7 @@ describe('isExcluded', () => {
 })
 
 describe('readInventory', () => {
-	it('refuses a named target whose intermediate link leaves the root', () => {
+	it.runIf(SYMLINKS)('refuses a named target whose intermediate link leaves the root', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-linked-escape-'))
 		const root = join(parent, 'root')
 		const outside = join(parent, 'outside')
@@ -76,7 +151,7 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('keys a named target through an intermediate link by its real path', () => {
+	it.runIf(SYMLINKS)('keys a named target through an intermediate link by its real path', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-linked-contained-'))
 		try {
 			mkdirSync(join(root, 'real'))
@@ -109,7 +184,7 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('validates the root when no directories are requested', () => {
+	it.runIf(SYMLINKS)('validates the root when no directories are requested', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-empty-'))
 		const root = join(parent, 'root')
 		const linked = join(parent, 'linked')
@@ -140,7 +215,7 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('refuses a symlinked root while accepting the real directory', () => {
+	it.runIf(SYMLINKS)('refuses a symlinked root while accepting the real directory', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-root-'))
 		const root = join(parent, 'root')
 		const linked = join(parent, 'linked')
@@ -156,7 +231,7 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('refuses a symlinked root supplied as a URL with a trailing slash', () => {
+	it.runIf(SYMLINKS)('refuses a symlinked root supplied as a URL with a trailing slash', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-url-root-'))
 		const root = join(parent, 'root')
 		const linked = join(parent, 'linked')
@@ -176,25 +251,28 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('skips a symlinked file and includes the same path when it is a regular file', () => {
-		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-file-'))
-		const root = join(parent, 'root')
-		const target = join(parent, 'target.txt')
-		const linked = join(root, 'linked.txt')
-		try {
-			mkdirSync(root)
-			writeFileSync(join(root, 'file.txt'), 'inside')
-			writeFileSync(target, 'outside')
-			symlinkSync(target, linked, 'file')
+	it.runIf(SYMLINKS)(
+		'skips a symlinked file and includes the same path when it is a regular file',
+		() => {
+			const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-file-'))
+			const root = join(parent, 'root')
+			const target = join(parent, 'target.txt')
+			const linked = join(root, 'linked.txt')
+			try {
+				mkdirSync(root)
+				writeFileSync(join(root, 'file.txt'), 'inside')
+				writeFileSync(target, 'outside')
+				symlinkSync(target, linked, 'file')
 
-			expect(Object.keys(readInventory(root, ['.']))).toStrictEqual(['file.txt'])
-			rmSync(linked)
-			writeFileSync(linked, 'regular')
-			expect(Object.keys(readInventory(root, ['.']))).toStrictEqual(['file.txt', 'linked.txt'])
-		} finally {
-			rmSync(parent, { force: true, recursive: true })
-		}
-	})
+				expect(Object.keys(readInventory(root, ['.']))).toStrictEqual(['file.txt'])
+				rmSync(linked)
+				writeFileSync(linked, 'regular')
+				expect(Object.keys(readInventory(root, ['.']))).toStrictEqual(['file.txt', 'linked.txt'])
+			} finally {
+				rmSync(parent, { force: true, recursive: true })
+			}
+		},
+	)
 
 	it('sorts keys, filters extensions, and excludes exact paths', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-options-'))
@@ -306,7 +384,7 @@ describe('readInventory', () => {
 		}
 	})
 
-	it('refuses a symlinked directory target and a symlinked file target', () => {
+	it.runIf(SYMLINKS)('refuses a symlinked directory target and a symlinked file target', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-directory-'))
 		const root = join(parent, 'root')
 		try {

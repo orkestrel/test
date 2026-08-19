@@ -223,6 +223,14 @@ Imported from `@orkestrel/test/server`.
 | `LoopbackInterface` | interface | `{ url, port }` plus `destroy` — one server on an owned ephemeral loopback port.                                     |
 | `InventoryOptions`  | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                                   |
 
+#### Constants
+
+| API                           | Kind  | Shape               | Summary                                                                              |
+| ----------------------------- | ----- | ------------------- | ------------------------------------------------------------------------------------ |
+| `REMOVE_TREE_MAX_ATTEMPTS`    | const | `number`            | The attempts `removeTree` makes before rethrowing a retryable removal error.         |
+| `REMOVE_TREE_RETRY_DELAY_MS`  | const | `number`            | The synchronous delay, in milliseconds, `removeTree` waits between attempts.         |
+| `REMOVE_TREE_RETRYABLE_CODES` | const | `readonly string[]` | The removal error codes `removeTree` retries; every other code rethrows immediately. |
+
 #### Helpers
 
 | API                | Kind     | Signature                                                                                                           | Summary                                                                          |
@@ -231,6 +239,7 @@ Imported from `@orkestrel/test/server`.
 | `resolveContained` | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                |
 | `isExcluded`       | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                      |
 | `matchesIdentity`  | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                 |
+| `removeTree`       | function | `(path: string) => void`                                                                                            | Remove a directory tree, retrying a briefly-held handle before rethrowing.       |
 
 `resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
 both call it. It resolves the target against the root — relative or absolute — and returns
