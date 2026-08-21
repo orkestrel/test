@@ -126,7 +126,10 @@ describe('createRecorder', () => {
 describe('createRecorders', () => {
 	it('records each event argument tuple in delivery order', () => {
 		const source = new ScriptedEventSource()
-		const recorders = createRecorders(source, ['ready', 'progress'])
+		const recorders = createRecorders<ScriptedEventMap, 'ready' | 'progress'>(source, [
+			'ready',
+			'progress',
+		])
 
 		source.emit('ready', ['alpha', 1])
 		source.emit('progress', [2])
@@ -141,7 +144,7 @@ describe('createRecorders', () => {
 
 	it('installs duplicate event names and retains the last recorder', () => {
 		const source = new ScriptedEventSource()
-		const recorders = createRecorders(source, ['ready', 'ready'])
+		const recorders = createRecorders<ScriptedEventMap, 'ready'>(source, ['ready', 'ready'])
 
 		source.emit('ready', ['value', 1])
 
