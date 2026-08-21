@@ -1,3 +1,4 @@
+import type { Duplex } from 'node:stream'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
@@ -9,6 +10,7 @@ import {
 	readFileSync,
 	readdirSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
@@ -17,7 +19,7 @@ import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { captureError, createRecorder, requireValue } from '@src/core'
+import { captureError, createRecorder, requireValue, waitForCondition } from '@src/core'
 import {
 	createLink,
 	createLoopback,
@@ -28,7 +30,13 @@ import {
 	matchesIdentity,
 	readInventory,
 	removeTree,
+	requestUpgrade,
 	resolveContained,
+	supportsBytes,
+	supportsCase,
+	supportsDirectoryLinks,
+	supportsFileLinks,
+	supportsMode,
 	waitForSocketClose,
 } from '@src/server'
 import { describe, expect, it } from 'vitest'
@@ -39,6 +47,60 @@ import { DIRECTORY_LINKS, FILE_LINKS } from '../../setupServer.js'
 // raced the assertions that read the hold — whether it was still alive when the un-retried baseline
 // ran was a coin toss — so every hold below is bounded by the parent rather than by a clock.
 const HOLD_CWD = "process.stdout.write('ready\\n'); setTimeout(() => {}, 1e9)"
+
+/**
+ * Attempt the permission hold `destroyScratch`'s POSIX case is built on, and report whether the host
+ * really refused the removal.
+ *
+ * @returns True if removing a directory entry under a parent stripped of write permission was
+ * refused; false if the host removed it anyway.
+ */
+function probePermissionHold(): boolean {
+	const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-hold-probe-'))
+	const held = join(parent, 'held')
+	mkdirSync(held)
+	chmodSync(parent, 0o500)
+	let refused = false
+	try {
+		rmSync(held, { force: true, recursive: true })
+	} catch {
+		refused = true
+	} finally {
+		chmodSync(parent, 0o700)
+		rmSync(parent, { force: true, recursive: true })
+	}
+	return refused
+}
+
+// Removing a directory entry needs write permission on its parent, and two different hosts decline
+// to enforce that: Windows ignores the bit, and a POSIX uid of 0 bypasses the check the bit
+// describes. `supportsMode` cannot answer this, because it reads whether a bit is stored rather than
+// whether it is enforced, and a root POSIX host stores it faithfully and enforces nothing. So the
+// mechanism itself is attempted here — strip the parent, try the removal, read the host's answer —
+// and the case below is keyed to that refusal rather than to a platform or a user name.
+const PERMISSION_HOLD_REFUSES_REMOVAL = probePermissionHold()
+
+/**
+ * Count the socket handles holding this process's event loop open.
+ *
+ * @returns The number of live TCP socket resources, server listeners excluded.
+ */
+function countSocketHandles(): number {
+	return process.getActiveResourcesInfo().filter((name) => name === 'TCPSocketWrap').length
+}
+
+/**
+ * Every host-capability probe, paired with the name its failures are reported under. The pairs are
+ * a case matrix rather than test registration, so the residue and boolean proofs below run once per
+ * probe instead of being written out per probe.
+ */
+const HOST_PROBES: ReadonlyArray<readonly [name: string, probe: () => boolean]> = Object.freeze([
+	['supportsDirectoryLinks', supportsDirectoryLinks],
+	['supportsFileLinks', supportsFileLinks],
+	['supportsMode', supportsMode],
+	['supportsCase', supportsCase],
+	['supportsBytes', supportsBytes],
+])
 
 describe('resolveContained', () => {
 	it('resolves relative and absolute contained targets and rejects escapes', () => {
@@ -814,10 +876,10 @@ describe('destroyScratch', () => {
 		expect(existsSync(scratch.path)).toBe(false)
 	})
 
-	// Removing a directory entry needs write permission on its parent, which POSIX enforces against
-	// this uid and Windows ignores, so the hold below is POSIX's alone. The Windows case beneath it
-	// holds the allocation the one way that host refuses a removal for.
-	it.runIf(process.platform !== 'win32')(
+	// The hold below is a permission hold, so it forms only where the host enforces the permission.
+	// `PERMISSION_HOLD_REFUSES_REMOVAL` records whether it did, attempted for real at load. The
+	// Windows case beneath it holds the allocation the one way that host refuses a removal for.
+	it.runIf(PERMISSION_HOLD_REFUSES_REMOVAL)(
 		'rejects when a permission hold outlasts the budget, and destroys the allocation once it lifts',
 		async () => {
 			const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-destroy-held-'))
@@ -942,6 +1004,265 @@ describe('destroyScratch', () => {
 			expect(existsSync(scratch.path)).toBe(true)
 		} finally {
 			scratch.destroy()
+		}
+	})
+})
+
+describe('requestUpgrade', () => {
+	// A server that upgrades keeps the socket it took: the connection is detached from the HTTP
+	// server, so `LoopbackInterface.destroy`'s `closeAllConnections` never reaches it and
+	// `server.close` waits on it forever. Every fixture below therefore records what its upgrade
+	// handler took and destroys it itself.
+	it('reports the protocol a server selects when it claims the upgrade', async () => {
+		const detached: Duplex[] = []
+		const server = createHTTPServer((_request, response) => {
+			response.statusCode = 500
+			response.end('the plain handler must not answer an upgrade request')
+		})
+		server.on('upgrade', (_request, socket) => {
+			detached.push(socket)
+			socket.write(
+				'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: chat\r\n\r\n',
+			)
+		})
+		const loopback = await createLoopback(server)
+		try {
+			// The offered list carries two tokens and the server selects one, so the reported
+			// protocol is the server's choice rather than an echo of what was asked for.
+			await expect(
+				requestUpgrade(loopback.port, { path: '/socket', protocols: ['chat', 'echo'] }),
+			).resolves.toStrictEqual({ claimed: true, protocol: 'chat', status: undefined })
+
+			// The upgrade handler answered, so the plain handler above did not.
+			expect(detached.length).toBe(1)
+		} finally {
+			for (const socket of detached) socket.destroy()
+			await loopback.destroy()
+		}
+	})
+
+	it('claims the upgrade with no protocol when the server selects none', async () => {
+		const detached: Duplex[] = []
+		const server = createHTTPServer((_request, response) => response.end('unused'))
+		server.on('upgrade', (_request, socket) => {
+			detached.push(socket)
+			socket.write(
+				'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+			)
+		})
+		const loopback = await createLoopback(server)
+		try {
+			// A claimed upgrade that selected nothing is the case that keeps `claimed` from being
+			// read off the protocol: absence here means "selected none", not "did not upgrade".
+			await expect(requestUpgrade(loopback.port)).resolves.toStrictEqual({
+				claimed: true,
+				protocol: undefined,
+				status: undefined,
+			})
+		} finally {
+			for (const socket of detached) socket.destroy()
+			await loopback.destroy()
+		}
+	})
+
+	it('reports the status a server answers when it refuses the upgrade', async () => {
+		const paths = createRecorder<[path: string | undefined]>()
+		const server = createHTTPServer((request, response) => {
+			paths.handler(request.url)
+			response.statusCode = 426
+			response.end('this server upgrades nothing')
+		})
+		const loopback = await createLoopback(server)
+		try {
+			await expect(requestUpgrade(loopback.port, { path: '/refused' })).resolves.toStrictEqual({
+				claimed: false,
+				protocol: undefined,
+				status: 426,
+			})
+
+			// The plain handler really answered, and it answered the path the options named.
+			expect(paths.calls).toStrictEqual([['/refused']])
+		} finally {
+			await loopback.destroy()
+		}
+	})
+
+	it('rejects with the transport error when nothing listens on the port', async () => {
+		const loopback = await createLoopback(createHTTPServer())
+		const port = loopback.port
+		await loopback.destroy()
+
+		const rejection: unknown = await requestUpgrade(port).catch((error: unknown) => error)
+
+		expect(rejection).toBeInstanceOf(Error)
+		// A `code` is the host's own signature; nothing this package throws carries one.
+		expect(rejection).toHaveProperty('code', 'ECONNREFUSED')
+	})
+
+	it('releases the client socket on the claimed, refused, and rejected paths', async () => {
+		const detached: Duplex[] = []
+		const ends = createRecorder<[]>()
+		const server = createHTTPServer((_request, response) => response.end('unused'))
+		server.on('upgrade', (_request, socket) => {
+			detached.push(socket)
+			socket.on('end', ends.handler)
+			socket.write(
+				'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+			)
+		})
+		const upgrading = await createLoopback(server)
+		// No `upgrade` listener, so Node routes the same request to the plain handler and this
+		// server drives the refused path while the one above drives the claimed path.
+		const refusing = await createLoopback(
+			createHTTPServer((_request, response) => {
+				response.statusCode = 426
+				response.end('this server upgrades nothing')
+			}),
+		)
+		const released = await createLoopback(createHTTPServer())
+		const port = released.port
+		await released.destroy()
+		try {
+			// The cases before this one leave sockets draining, so the floor is established by
+			// waiting for them to finish rather than by reading a number that is still falling.
+			await waitForCondition(
+				'every socket the earlier cases opened has drained',
+				() => countSocketHandles() === 0,
+				{ budget: 1000 },
+			)
+
+			const claimed = await requestUpgrade(upgrading.port, { path: '/socket' })
+			const refused = await requestUpgrade(refusing.port)
+			const rejection: unknown = await requestUpgrade(port).catch((error: unknown) => error)
+
+			// All three paths were really driven, so the release below covers each of them rather
+			// than one path taken three times.
+			expect([claimed.claimed, refused.claimed]).toStrictEqual([true, false])
+			expect(rejection).toBeInstanceOf(Error)
+
+			// The peer's own reading of the claimed path: an upgraded socket is detached from the
+			// request and outlives it, so the server end sees `end` only where the helper destroyed
+			// the client end itself.
+			await waitForCondition(
+				'the upgraded server end saw the client end close',
+				() => ends.count === 1,
+				{ budget: 1000 },
+			)
+
+			// The fixture deliberately still holds the socket its upgrade handler took, so this
+			// reading clears only when every client socket the three calls opened is gone and that
+			// one server socket is what remains. A pooled or undestroyed client socket keeps a
+			// runner's event loop from draining after the suite finishes, and shows up here.
+			expect(detached.length).toBe(1)
+			await waitForCondition(
+				'only the socket the fixture still holds is left open',
+				() => countSocketHandles() === detached.length,
+				{ budget: 1000 },
+			)
+		} finally {
+			for (const socket of detached) socket.destroy()
+			await upgrading.destroy()
+			await refusing.destroy()
+		}
+	})
+})
+
+describe('host capability probes', () => {
+	for (const [name, probe] of HOST_PROBES) {
+		it(`${name} answers this host with a boolean`, () => {
+			expect(typeof probe()).toBe('boolean')
+		})
+
+		it(`${name} allocates below the host temporary directory and leaves nothing there`, () => {
+			const owned = createScratch({ prefix: 'orkestrel-test-residue-' })
+			const restore = process.env.TMPDIR
+			try {
+				// `os.tmpdir()` reads `TMPDIR`, so pointing it at an owned empty directory is what
+				// makes the residue reading exact rather than a guess about which entry under the
+				// real temporary directory belonged to this call.
+				process.env.TMPDIR = owned.path
+				expect(tmpdir()).toBe(owned.path)
+
+				probe()
+
+				expect(owned.names()).toStrictEqual([])
+			} finally {
+				if (restore === undefined) delete process.env.TMPDIR
+				else process.env.TMPDIR = restore
+				owned.destroy()
+			}
+		})
+
+		it(`${name} raises a failure to allocate rather than reading it as a refusal`, () => {
+			const owned = createScratch({ prefix: 'orkestrel-test-missing-tmpdir-' })
+			const missing = join(owned.path, 'absent')
+			const restore = process.env.TMPDIR
+			try {
+				// This is the control for the residue case: with `TMPDIR` steered at a path that does
+				// not exist, allocation throws. A probe that ignored `os.tmpdir()` would answer
+				// `false` here, and the residue case above would then be reading an empty directory
+				// nothing had ever allocated in.
+				process.env.TMPDIR = missing
+				const failure = captureError(probe)
+
+				expect(failure).toBeInstanceOf(Error)
+				expect(failure).toHaveProperty('code', 'ENOENT')
+			} finally {
+				if (restore === undefined) delete process.env.TMPDIR
+				else process.env.TMPDIR = restore
+				owned.destroy()
+			}
+		})
+	}
+
+	it('supportsCase reads case folding, on a pair of names differing only by case', () => {
+		const upper = 'Cased'
+		const lower = 'cased'
+		const owned = createScratch({ prefix: 'orkestrel-test-case-control-' })
+		try {
+			// The subject has to differ by case and by nothing else, or the reading below is true on
+			// every host and answers nothing about folding.
+			expect(upper).not.toBe(lower)
+			expect(upper.toLowerCase()).toBe(lower)
+
+			owned.write(upper, 'written')
+
+			// A second mechanism that can disagree with the probe's: the probe compares contents
+			// after two writes, while this asks the host to resolve a name that was never created.
+			expect(supportsCase()).toBe(!owned.has(lower))
+
+			// The control for that lookup: it finds the name that was written and refuses one that
+			// was not, so a `false` from it is an answer rather than a lookup that never works.
+			expect(owned.has(upper)).toBe(true)
+			expect(owned.has(`${upper}Extra`)).toBe(false)
+		} finally {
+			owned.destroy()
+		}
+	})
+
+	it('supportsDirectoryLinks and supportsFileLinks answer separately', () => {
+		// The two are one question only where every host answers them together. An unprivileged
+		// Windows host creates a junction and refuses a file link, so a single `supportsLinks` would
+		// hide a capability the suites here select on independently.
+		expect(supportsDirectoryLinks()).toBe(DIRECTORY_LINKS)
+		expect(supportsFileLinks()).toBe(FILE_LINKS)
+	})
+
+	it('supportsMode reads whether a bit is stored, not whether it is enforced', () => {
+		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-mode-control-'))
+		try {
+			mkdirSync(join(parent, 'held'))
+			chmodSync(parent, 0o500)
+			const stored = (statSync(parent).mode & 0o777) === 0o500
+
+			// The two readings come apart on a root POSIX host, which stores every bit faithfully
+			// and bypasses the check the bits describe. That is why the permission-hold case above
+			// probes the refusal instead of reading `supportsMode`.
+			expect(supportsMode()).toBe(stored)
+			expect(PERMISSION_HOLD_REFUSES_REMOVAL).toBe(stored && PERMISSION_HOLD_REFUSES_REMOVAL)
+		} finally {
+			chmodSync(parent, 0o700)
+			rmSync(parent, { force: true, recursive: true })
 		}
 	})
 })

@@ -166,3 +166,31 @@ export interface InventoryOptions {
 	 */
 	readonly exclude?: readonly string[]
 }
+
+/** Options for driving a client upgrade request. */
+export interface UpgradeOptions {
+	/** The request path, written with its leading slash. Defaults to `/`. */
+	readonly path?: string
+	/**
+	 * The subprotocol tokens the request offers. They are sent as one comma-separated
+	 * `Sec-WebSocket-Protocol` field, and an empty or omitted list sends no field at all.
+	 */
+	readonly protocols?: readonly string[]
+}
+
+/** What one server did with a client upgrade request. */
+export interface UpgradeResult {
+	/**
+	 * True if the server upgraded the connection; false if it answered with a plain response
+	 * instead.
+	 */
+	readonly claimed: boolean
+	/** The plain response's status, or `undefined` when the server upgraded. */
+	readonly status: number | undefined
+	/**
+	 * The subprotocol the server selected, or `undefined` when the server selected none and when it
+	 * answered plainly. A server selects at most one, so this is the field it sent rather than a
+	 * list.
+	 */
+	readonly protocol: string | undefined
+}

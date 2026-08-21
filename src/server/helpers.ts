@@ -1,16 +1,28 @@
 import type { Socket } from 'node:net'
 import type { WaitOptions } from '@src/core'
-import type { InventoryOptions, ScratchIdentity, ScratchInterface } from './types.js'
+import type {
+	InventoryOptions,
+	ScratchIdentity,
+	ScratchInterface,
+	UpgradeOptions,
+	UpgradeResult,
+} from './types.js'
+import { Buffer } from 'node:buffer'
 import {
 	lstatSync,
+	mkdirSync,
+	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	writeFileSync,
 } from 'node:fs'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { request as requestHTTP } from 'node:http'
+import { tmpdir } from 'node:os'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { waitForDelay } from '@src/core'
 import {
@@ -396,5 +408,208 @@ export async function destroyScratch(
 			})
 		}
 		await waitForDelay(interval)
+	}
+}
+
+/**
+ * Drives a real client upgrade request against a loopback port and reports what the server did.
+ *
+ * @param port - The port the server listens on at `127.0.0.1`.
+ * @param options - Optional request path and offered subprotocols.
+ * @returns A promise resolving to the server's answer: a claimed upgrade with the protocol it
+ * selected, or a refusal with the status it answered.
+ * @throws The client's own transport error, such as the `ECONNREFUSED` a closed port answers.
+ * @remarks The request carries `Connection: Upgrade` and `Upgrade: websocket`, which is what makes a
+ * server's `upgrade` handler the one that answers it. The `upgrade`, `response`, and `error` events
+ * are mutually exclusive in practice and the promise settles on whichever arrives first, so a second
+ * event changes nothing. The client socket is destroyed before every settlement, on the claimed path
+ * because an upgraded socket is detached from the request and outlives it otherwise. The request is
+ * made with no agent, so no pooled connection survives the call to keep a suite's event loop alive.
+ *
+ * A `101` is the claimed path's status on the wire and is deliberately not reported: `status` is the
+ * plain answer's status, and a claimed upgrade produced no plain answer.
+ * @example
+ * ```ts
+ * const answer = await requestUpgrade(loopback.port, { path: '/socket', protocols: ['chat'] })
+ * // { claimed: true, status: undefined, protocol: 'chat' }
+ * ```
+ */
+export async function requestUpgrade(
+	port: number,
+	options?: UpgradeOptions,
+): Promise<UpgradeResult> {
+	const headers: Record<string, string> = { connection: 'Upgrade', upgrade: 'websocket' }
+	const protocols = options?.protocols ?? []
+	if (protocols.length > 0) headers['sec-websocket-protocol'] = protocols.join(', ')
+
+	const request = requestHTTP({
+		agent: false,
+		headers,
+		host: '127.0.0.1',
+		path: options?.path ?? '/',
+		port,
+	})
+	const settled = Promise.withResolvers<UpgradeResult>()
+	request.on('upgrade', (response, socket) => {
+		const protocol = response.headers['sec-websocket-protocol']
+		socket.destroy()
+		settled.resolve({ claimed: true, protocol, status: undefined })
+	})
+	request.on('response', (response) => {
+		const status = response.statusCode
+		response.destroy()
+		request.destroy()
+		settled.resolve({ claimed: false, protocol: undefined, status })
+	})
+	request.on('error', (error) => {
+		request.destroy()
+		settled.reject(error)
+	})
+	request.end()
+
+	try {
+		return await settled.promise
+	} finally {
+		request.destroy()
+	}
+}
+
+/**
+ * Checks whether this host links a directory, by creating one link and reading through it.
+ *
+ * @returns True if the created link reports as a symbolic link, resolves to a directory, and reaches
+ * the destination's contents; false otherwise, including every host refusal.
+ * @throws Nothing the attempt itself raises. Failing to allocate the probe directory, and failing to
+ * remove it afterwards, both propagate.
+ * @remarks `symlinkSync(source, target, 'junction')` creates a directory junction on Windows, which
+ * needs no privilege, and Node ignores the type argument off Windows, so one call covers both hosts.
+ * The answer is false on a filesystem carrying neither reparse points nor symbolic links. Every call
+ * probes and cleans up after itself, so a host whose answer changes is read again rather than
+ * remembered.
+ */
+export function supportsDirectoryLinks(): boolean {
+	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-directory-links-'))
+	try {
+		const source = join(directory, 'source')
+		const link = join(directory, 'link')
+		mkdirSync(source)
+		writeFileSync(join(source, 'marker.txt'), 'marked')
+		symlinkSync(source, link, 'junction')
+		return (
+			lstatSync(link).isSymbolicLink() &&
+			statSync(link).isDirectory() &&
+			readFileSync(join(link, 'marker.txt'), 'utf8') === 'marked'
+		)
+	} catch {
+		return false
+	} finally {
+		removeTree(directory)
+	}
+}
+
+/**
+ * Checks whether this host links a file, by creating one link and reading the file through it.
+ *
+ * @returns True if the file's contents are readable through the link; false otherwise, including
+ * every host refusal.
+ * @throws Nothing the attempt itself raises. Failing to allocate the probe directory, and failing to
+ * remove it afterwards, both propagate.
+ * @remarks `symlinkSync(source, target, 'file')` needs the symbolic-link privilege, which Windows
+ * grants under Developer Mode or administrator rights and refuses with `EPERM` otherwise, so the
+ * answer is true on POSIX and on a privileged Windows host. Where it is false, no mechanism reaches a
+ * file through a link and a proof that reads one back cannot run. This is a separate question from
+ * {@link supportsDirectoryLinks}, which an unprivileged Windows host answers true through a junction
+ * while answering this one false.
+ */
+export function supportsFileLinks(): boolean {
+	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-file-links-'))
+	try {
+		const source = join(directory, 'source.txt')
+		const link = join(directory, 'link.txt')
+		writeFileSync(source, 'linked')
+		symlinkSync(source, link, 'file')
+		return readFileSync(link, 'utf8') === 'linked'
+	} catch {
+		return false
+	} finally {
+		removeTree(directory)
+	}
+}
+
+/**
+ * Checks whether POSIX permission bits round-trip through this host's `chmod` and `stat`.
+ *
+ * @returns True if a directory created with mode `0o700` reports that mode back; false otherwise,
+ * including every host refusal.
+ * @throws Nothing the attempt itself raises. Failing to allocate the probe directory, and failing to
+ * remove it afterwards, both propagate.
+ * @remarks POSIX reports `mode & 0o777 === 0o700` and Windows reports `0o666` regardless, so the
+ * answer is true on POSIX and false on Windows. Storing a bit is a narrower question than enforcing
+ * it: a POSIX host running as uid `0` stores every bit faithfully and bypasses the access check the
+ * bits describe, so a caller that needs a permission to be enforced probes the refusal it needs
+ * rather than reading this.
+ */
+export function supportsMode(): boolean {
+	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-mode-'))
+	try {
+		const path = join(directory, 'moded')
+		mkdirSync(path, { mode: 0o700 })
+		return (statSync(path).mode & 0o777) === 0o700
+	} catch {
+		return false
+	} finally {
+		removeTree(directory)
+	}
+}
+
+/**
+ * Checks whether this host treats two names differing only by case as distinct files.
+ *
+ * @returns True if `A` and `a` hold the contents each was written with; false otherwise, including
+ * every host refusal.
+ * @throws Nothing the attempt itself raises. Failing to allocate the probe directory, and failing to
+ * remove it afterwards, both propagate.
+ * @remarks The names `A` and `a` differ by case and by nothing else, which is what makes the reading
+ * an answer about case folding rather than an answer about two unrelated files. A case-folding volume
+ * routes the second write onto the first entry, so reading the first back returns the second's
+ * contents and the answer is false. The answer is true on a typical POSIX host and false on a
+ * case-folding Windows or macOS volume.
+ */
+export function supportsCase(): boolean {
+	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-case-'))
+	try {
+		const upper = join(directory, 'A')
+		const lower = join(directory, 'a')
+		writeFileSync(upper, 'upper')
+		writeFileSync(lower, 'lower')
+		return readFileSync(upper, 'utf8') === 'upper' && readFileSync(lower, 'utf8') === 'lower'
+	} catch {
+		return false
+	} finally {
+		removeTree(directory)
+	}
+}
+
+/**
+ * Checks whether this host accepts a filename carrying a raw byte no UTF-8 decoder resolves.
+ *
+ * @returns True if a name ending in byte `0x80` is written and read back; false otherwise, including
+ * every host refusal.
+ * @throws Nothing the attempt itself raises. Failing to allocate the probe directory, and failing to
+ * remove it afterwards, both propagate.
+ * @remarks Byte `0x80` is an invalid UTF-8 lead byte. POSIX stores the name verbatim and Windows
+ * rejects it with `ENOENT`, so the answer is true on POSIX and false on Windows. The path is passed
+ * as a `Buffer` because the byte survives no string round trip.
+ */
+export function supportsBytes(): boolean {
+	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-bytes-'))
+	try {
+		const name = Buffer.concat([Buffer.from(`${directory}${sep}`), Buffer.from([0x80])])
+		writeFileSync(name, 'raw')
+		return readFileSync(name, 'utf8') === 'raw'
+	} catch {
+		return false
+	} finally {
+		removeTree(directory)
 	}
 }
