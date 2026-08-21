@@ -2,6 +2,7 @@ import type { CaptureVariant, Color } from '@src/browser'
 import {
 	ACCESSIBLE_ROLES,
 	blendColor,
+	build,
 	CANVAS_COLOR,
 	CAPTURE_PANE,
 	captureFrame,
@@ -9,6 +10,8 @@ import {
 	clickAccessible,
 	clickAccessibleWithin,
 	clickDisclosure,
+	colorEqual,
+	commitInput,
 	contrast,
 	describeFocus,
 	describeTree,
@@ -16,13 +19,17 @@ import {
 	extractOrphans,
 	FIELD_ROLES,
 	fillAccessible,
+	findKeyframes,
+	findRule,
 	IMPLICIT_ROLES,
 	isOutsideViewport,
 	isReachable,
 	isRendered,
 	measureContrast,
 	measureLuminance,
+	mount,
 	parseColor,
+	pixels,
 	pressKeys,
 	readBackdrop,
 	readCascade,
@@ -34,17 +41,23 @@ import {
 	readRing,
 	readRole,
 	readRows,
+	readRules,
 	readStates,
 	readText,
 	readValue,
 	releasePane,
+	removeDatabase,
 	render,
 	resolveAccessible,
 	resolveRendered,
+	rgba,
+	rootToken,
 	stagePane,
 	style,
+	token,
 	traverseAccessible,
 	typeAccessible,
+	typeInput,
 	waitForFrame,
 } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
@@ -861,15 +874,170 @@ describe('waitForFrame', () => {
 	})
 })
 
+describe('build', () => {
+	it('builds the element the tag names, wearing its classes, text, and attributes', () => {
+		const element = build('button', {
+			classes: 'primary wide',
+			text: 'Save',
+			attributes: { type: 'button', 'data-row': '3' },
+		})
+		expect(element.tagName).toBe('BUTTON')
+		expect(element.className).toBe('primary wide')
+		expect(element.textContent).toBe('Save')
+		expect(element.type).toBe('button')
+		expect(element.getAttribute('data-row')).toBe('3')
+	})
+
+	it('leaves the built element out of the document', () => {
+		const element = build('div', { text: 'Ready' })
+		expect(element.isConnected).toBe(false)
+		expect(element.parentElement).toBeNull()
+		expect(document.body.contains(element)).toBe(false)
+	})
+
+	it('builds a bare element when no options are given', () => {
+		const element = build('span')
+		expect(element.tagName).toBe('SPAN')
+		expect(element.className).toBe('')
+		expect(element.textContent).toBe('')
+		expect(element.attributes).toHaveLength(0)
+	})
+
+	it('sets the text as text rather than parsing it as markup', () => {
+		const element = build('p', { text: '<em>Save</em>' })
+		expect(element.textContent).toBe('<em>Save</em>')
+		expect(element.querySelector('em')).toBeNull()
+	})
+})
+
+describe('mount', () => {
+	it('attaches the element and hands the same one back', () => {
+		const built = build('div', { classes: 'surface' })
+		const mounted = mount(built)
+		try {
+			expect(mounted).toBe(built)
+			expect(mounted.parentElement).toBe(document.body)
+			expect(mounted.isConnected).toBe(true)
+		} finally {
+			built.remove()
+		}
+	})
+
+	it('is what makes the element resolve against the cascade and lay out a box', () => {
+		buildStylesheet(
+			'.journey-mounted { box-sizing: border-box; display: block; padding-left: 12px; width: 40px }',
+		)
+		const built = build('div', { classes: 'journey-mounted' })
+		// Unmounted, the element resolves the initial value for every property and has no box. This
+		// pair is the whole contract: the append is what changes both answers.
+		expect(style(built, 'padding-left')).toBe('')
+		expect(built.getBoundingClientRect().width).toBe(0)
+		const mounted = mount(built)
+		try {
+			expect(style(mounted, 'padding-left')).toBe('12px')
+			expect(mounted.getBoundingClientRect().width).toBe(40)
+		} finally {
+			mounted.remove()
+		}
+	})
+})
+
 describe('render', () => {
 	it('attaches parsed fixture markup to the document', () => {
 		const container = render('<button type="button">Save</button>')
 		try {
 			expect(container.parentElement).toBe(document.body)
+			expect(container.tagName).toBe('DIV')
 			expect(requireValue(container.querySelector('button')).textContent).toBe('Save')
 		} finally {
 			container.remove()
 		}
+	})
+
+	it('attaches the element itself for a tag and its classes', () => {
+		const panel = render('section', 'surface muted')
+		try {
+			expect(panel.tagName).toBe('SECTION')
+			expect(panel.className).toBe('surface muted')
+			expect(panel.parentElement).toBe(document.body)
+			expect(panel.isConnected).toBe(true)
+		} finally {
+			panel.remove()
+		}
+	})
+
+	it('reads a lone argument as markup even when it spells a tag name', () => {
+		const container = render('section')
+		try {
+			expect(container.tagName).toBe('DIV')
+			expect(container.childElementCount).toBe(0)
+			expect(container.textContent).toBe('section')
+		} finally {
+			container.remove()
+		}
+	})
+})
+
+describe('typeInput', () => {
+	it('sets the value and dispatches one input event that bubbles', () => {
+		const container = buildFixture('<input value="old">')
+		const field = requireValue(container.querySelector('input'))
+		const heard = createRecorder<[string, boolean]>()
+		container.addEventListener('input', (event) => heard.handler(event.type, event.bubbles))
+		typeInput(field, 'Ada')
+		expect(field.value).toBe('Ada')
+		expect(heard.calls).toStrictEqual([['input', true]])
+	})
+
+	it('has the value already set by the time the event is heard', () => {
+		const container = buildFixture('<input value="old">')
+		const field = requireValue(container.querySelector('input'))
+		const seen = createRecorder<[string]>()
+		container.addEventListener('input', () => seen.handler(field.value))
+		typeInput(field, 'Ada')
+		expect(seen.calls).toStrictEqual([['Ada']])
+	})
+
+	it('writes into a textarea as well as an input', () => {
+		const container = buildFixture('<textarea></textarea>')
+		const field = requireValue(container.querySelector('textarea'))
+		typeInput(field, 'Two\nLines')
+		expect(field.value).toBe('Two\nLines')
+	})
+
+	it('dispatches no change event', () => {
+		const container = buildFixture('<input value="old">')
+		const field = requireValue(container.querySelector('input'))
+		const heard = createRecorder<[string]>()
+		container.addEventListener('change', (event) => heard.handler(event.type))
+		typeInput(field, 'Ada')
+		expect(heard.count).toBe(0)
+	})
+})
+
+describe('commitInput', () => {
+	it('dispatches input and then change, both bubbling', () => {
+		const container = buildFixture('<input value="old">')
+		const field = requireValue(container.querySelector('input'))
+		const heard = createRecorder<[string, boolean]>()
+		container.addEventListener('input', (event) => heard.handler(event.type, event.bubbles))
+		container.addEventListener('change', (event) => heard.handler(event.type, event.bubbles))
+		commitInput(field, 'Ada')
+		expect(field.value).toBe('Ada')
+		expect(heard.calls).toStrictEqual([
+			['input', true],
+			['change', true],
+		])
+	})
+
+	it('has the value set for both events', () => {
+		const container = buildFixture('<input value="old">')
+		const field = requireValue(container.querySelector('input'))
+		const seen = createRecorder<[string]>()
+		container.addEventListener('input', () => seen.handler(field.value))
+		container.addEventListener('change', () => seen.handler(field.value))
+		commitInput(field, 'Ada')
+		expect(seen.calls).toStrictEqual([['Ada'], ['Ada']])
 	})
 })
 
@@ -882,6 +1050,42 @@ describe('clearStorage', () => {
 		clearStorage()
 		expect(localStorage.getItem('journey')).toBeNull()
 		expect(sessionStorage.getItem('journey')).toBeNull()
+	})
+})
+
+describe('removeDatabase', () => {
+	it('deletes a database the page created', async () => {
+		const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = globalThis.indexedDB.open('journey-ledger', 1)
+			request.addEventListener('success', () => resolve(request.result))
+			request.addEventListener('error', () => reject(new Error('Ledger database did not open')))
+		})
+		opened.close()
+		await expect(removeDatabase('journey-ledger')).resolves.toBeUndefined()
+		// Read the deletion back through the registry rather than trusting the resolve, so a helper
+		// that resolved without deleting anything reddens here.
+		const registered = await globalThis.indexedDB.databases()
+		expect(registered.map((entry) => entry.name)).not.toContain('journey-ledger')
+	})
+
+	it('resolves for a database that was never created', async () => {
+		await expect(removeDatabase('journey-absent')).resolves.toBeUndefined()
+	})
+
+	it('rejects rather than waiting when an open connection blocks the deletion', async () => {
+		const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = globalThis.indexedDB.open('journey-blocked', 1)
+			request.addEventListener('success', () => resolve(request.result))
+			request.addEventListener('error', () => reject(new Error('Blocked database did not open')))
+		})
+		try {
+			await expect(removeDatabase('journey-blocked')).rejects.toThrow(
+				'IndexedDB database "journey-blocked" is blocked by an open connection',
+			)
+		} finally {
+			opened.close()
+			await removeDatabase('journey-blocked')
+		}
 	})
 })
 
@@ -922,6 +1126,64 @@ describe('parseColor', () => {
 	it('hands back a frozen color', () => {
 		const parsed = requireValue(parseColor('rgb(1, 2, 3)'))
 		expect(Object.isFrozen(parsed)).toBe(true)
+	})
+})
+
+describe('rgba', () => {
+	it('resolves the syntaxes parseColor refuses, by asking the browser', () => {
+		// Each of these returns `undefined` from `parseColor`, which is what the live resolver is for.
+		expect(parseColor('rebeccapurple')).toBeUndefined()
+		expect(parseColor('#ff0000')).toBeUndefined()
+		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(rgba('#ff0000')).toStrictEqual([255, 0, 0, 1])
+		expect(rgba('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
+	})
+
+	it('resolves a var() reference against the tokens the document declares', () => {
+		buildStylesheet(':root { --journey-ink: rgb(10, 20, 30) }')
+		expect(rgba('var(--journey-ink)')).toStrictEqual([10, 20, 30, 1])
+	})
+
+	it('refuses an expression the CSSOM will not parse', () => {
+		expect(rgba('not-a-color')).toBeUndefined()
+		expect(rgba('')).toBeUndefined()
+		expect(rgba('12px')).toBeUndefined()
+	})
+
+	it('leaves no probe element behind, on the refusing path as well as the reading one', () => {
+		const before = document.body.childElementCount
+		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(rgba('not-a-color')).toBeUndefined()
+		expect(document.body.childElementCount).toBe(before)
+		expect(document.body.querySelector(':scope > span')).toBeNull()
+	})
+})
+
+describe('colorEqual', () => {
+	it('reads two spellings of one color as equal', () => {
+		expect(colorEqual('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
+		expect(colorEqual('#ff0000', [255, 0, 0, 1])).toBe(true)
+		expect(colorEqual([1, 2, 3, 1], [1, 2, 3, 1])).toBe(true)
+	})
+
+	it('reads different colors as unequal, including on alpha alone', () => {
+		expect(colorEqual('red', [0, 0, 255, 1])).toBe(false)
+		expect(colorEqual([1, 2, 3, 1], [1, 2, 3, 0.5])).toBe(false)
+	})
+
+	it('holds at the tolerance and parts one step past it', () => {
+		expect(colorEqual([10, 20, 30, 1], [10.5, 20, 30, 1])).toBe(true)
+		expect(colorEqual([10, 20, 30, 1], [10.6, 20, 30, 1])).toBe(false)
+		// The alpha is scaled onto the same 0-255 range before it is compared, so half a channel step
+		// on the 0-1 scale is `0.5 / 255`.
+		expect(colorEqual([10, 20, 30, 1], [10, 20, 30, 1 - 0.5 / 255])).toBe(true)
+		expect(colorEqual([10, 20, 30, 1], [10, 20, 30, 1 - 0.6 / 255])).toBe(false)
+	})
+
+	it('reports false when either side names no readable color', () => {
+		expect(colorEqual('not-a-color', 'red')).toBe(false)
+		expect(colorEqual('red', 'not-a-color')).toBe(false)
+		expect(colorEqual('not-a-color', 'not-a-color')).toBe(false)
 	})
 })
 
@@ -1297,6 +1559,84 @@ describe('readCascade', () => {
 	})
 })
 
+describe('readRules', () => {
+	it('collects a sheet own rules and the rules nested inside them', () => {
+		buildStylesheet(
+			'.journey-flat { color: rgb(1, 2, 3) }' +
+				'@media (min-width: 1px) { .journey-nested { color: rgb(4, 5, 6) } }' +
+				'@keyframes journey-fade { from { opacity: 0 } to { opacity: 1 } }',
+		)
+		const selectors = readRules()
+			.filter((rule) => rule instanceof CSSStyleRule)
+			.map((rule) => rule.selectorText)
+		expect(selectors).toContain('.journey-flat')
+		expect(selectors).toContain('.journey-nested')
+		const names = readRules()
+			.filter((rule) => rule instanceof CSSKeyframesRule)
+			.map((rule) => rule.name)
+		expect(names).toContain('journey-fade')
+	})
+
+	it('meets a top-level rule before a rule nested inside an earlier one', () => {
+		buildStylesheet(
+			'@media (min-width: 1px) { .journey-inner { color: rgb(1, 2, 3) } }' +
+				'.journey-outer { color: rgb(4, 5, 6) }',
+		)
+		const collected = readRules()
+			.filter((rule) => rule instanceof CSSStyleRule)
+			.map((rule) => rule.selectorText)
+		expect(collected.indexOf('.journey-outer')).toBeLessThan(collected.indexOf('.journey-inner'))
+	})
+})
+
+describe('findRule', () => {
+	it('finds a rule declared at the top level of a sheet', () => {
+		buildStylesheet('.journey-card { padding: 8px }')
+		expect(requireValue(findRule('.journey-card')).style.getPropertyValue('padding')).toBe('8px')
+	})
+
+	it('finds a rule nested inside a grouping rule', () => {
+		buildStylesheet('@media (min-width: 1px) { .journey-grouped { padding: 9px } }')
+		expect(requireValue(findRule('.journey-grouped')).style.getPropertyValue('padding')).toBe('9px')
+	})
+
+	it('matches the fragment anywhere in the selector text', () => {
+		buildStylesheet('.journey-panel > .journey-slot:hover { padding: 10px }')
+		expect(requireValue(findRule('.journey-slot')).selectorText).toBe(
+			'.journey-panel > .journey-slot:hover',
+		)
+	})
+
+	it('reports undefined for a selector no loaded sheet declares', () => {
+		expect(findRule('.journey-never-declared')).toBeUndefined()
+	})
+})
+
+describe('findKeyframes', () => {
+	it('finds an animation the cascade declares', () => {
+		buildStylesheet('@keyframes journey-slide { from { opacity: 0 } to { opacity: 1 } }')
+		expect(requireValue(findKeyframes('journey-slide')).cssRules).toHaveLength(2)
+	})
+
+	it('finds an animation declared inside a grouping rule', () => {
+		buildStylesheet(
+			'@media (min-width: 1px) { @keyframes journey-grouped-slide { from { opacity: 0 } } }',
+		)
+		expect(requireValue(findKeyframes('journey-grouped-slide')).name).toBe('journey-grouped-slide')
+	})
+
+	it('matches the name exactly rather than as a fragment', () => {
+		buildStylesheet('@keyframes journey-pulse { from { opacity: 0 } }')
+		expect(findKeyframes('journey-pulse')).toBeDefined()
+		expect(findKeyframes('journey-puls')).toBeUndefined()
+		expect(findKeyframes('journey-pulse-slow')).toBeUndefined()
+	})
+
+	it('reports undefined for a name no loaded sheet declares', () => {
+		expect(findKeyframes('journey-never-animated')).toBeUndefined()
+	})
+})
+
 describe('readRows', () => {
 	it('joins each row from its own text nodes rather than from run-together content', () => {
 		const container = buildFixture(
@@ -1342,6 +1682,96 @@ describe('style', () => {
 	it('reads the browser resolved value of one property', () => {
 		const container = buildFixture('<p style="padding-left: 12px">Ready</p>')
 		expect(style(requireValue(container.querySelector('p')), 'padding-left')).toBe('12px')
+	})
+
+	it('returns a custom property with no surrounding whitespace, however it was declared', () => {
+		buildStylesheet(
+			'.journey-gapped { --journey-base: 8px; --journey-padded:   8px  ;' +
+				' --journey-substituted: var(--journey-base);' +
+				' --journey-fallback: var(--journey-missing, 8px) }',
+		)
+		const container = buildFixture(
+			'<p class="journey-gapped" style="--journey-inline:  8px  ">Ready</p>',
+		)
+		const subject = requireValue(container.querySelector('p'))
+		expect(style(subject, '--journey-padded')).toBe('8px')
+		expect(style(subject, '--journey-substituted')).toBe('8px')
+		expect(style(subject, '--journey-fallback')).toBe('8px')
+		expect(style(subject, '--journey-inline')).toBe('8px')
+		// This assertion does not discriminate the trim on the engine the suite runs against. Chromium
+		// 1194 returns every one of these already trimmed — a padded declaration, a `var()`
+		// substitution, a fallback, and an inline style alike — so the same values come back with the
+		// trim removed. What is proven here is the contract: the value carries no surrounding
+		// whitespace. What is unproven is that the trim is ever reached, because a custom property's
+		// computed value is its declaration's token stream and nothing requires an engine to trim it.
+		// A build that returns ' 8px' would redden the assertions above and prove the rest.
+		expect(getComputedStyle(subject).getPropertyValue('--journey-padded')).toBe('8px')
+	})
+
+	it('keeps the whitespace inside a value', () => {
+		const container = buildFixture('<p style="--journey-shadow: 0 0 2px">Ready</p>')
+		expect(style(requireValue(container.querySelector('p')), '--journey-shadow')).toBe('0 0 2px')
+	})
+
+	it('reads a property the element resolves none of as an empty string', () => {
+		const container = buildFixture('<p>Ready</p>')
+		expect(style(requireValue(container.querySelector('p')), '--journey-absent')).toBe('')
+	})
+})
+
+describe('token', () => {
+	it('reads a custom property with and without its leading dashes', () => {
+		const container = buildFixture('<p style="--journey-ink: rgb(1, 2, 3)">Ready</p>')
+		const subject = requireValue(container.querySelector('p'))
+		expect(token(subject, 'journey-ink')).toBe('rgb(1, 2, 3)')
+		expect(token(subject, '--journey-ink')).toBe('rgb(1, 2, 3)')
+	})
+
+	it('reads a token declared on an ancestor', () => {
+		const container = buildFixture('<div style="--journey-ink: rgb(4, 5, 6)"><p>Ready</p></div>')
+		expect(token(requireValue(container.querySelector('p')), 'journey-ink')).toBe('rgb(4, 5, 6)')
+	})
+
+	it('reads a token nothing declares as an empty string', () => {
+		const container = buildFixture('<p>Ready</p>')
+		const subject = requireValue(container.querySelector('p'))
+		expect(token(subject, 'journey-undeclared')).toBe('')
+		expect(token(subject, '--journey-undeclared')).toBe('')
+	})
+})
+
+describe('rootToken', () => {
+	it('reads a token the document declares, with and without its leading dashes', () => {
+		buildStylesheet(':root { --journey-surface: rgb(7, 8, 9) }')
+		expect(rootToken('journey-surface')).toBe('rgb(7, 8, 9)')
+		expect(rootToken('--journey-surface')).toBe('rgb(7, 8, 9)')
+		expect(rootToken('journey-surface')).toBe(token(document.documentElement, 'journey-surface'))
+	})
+
+	it('reads a token the document does not declare as an empty string', () => {
+		expect(rootToken('journey-unthemed')).toBe('')
+	})
+})
+
+describe('pixels', () => {
+	it('reads a resolved length as its number of pixels', () => {
+		const container = buildFixture('<p style="padding-left: 12px; margin-top: 0.5px">Ready</p>')
+		const subject = requireValue(container.querySelector('p'))
+		expect(pixels(subject, 'padding-left')).toBe(12)
+		expect(pixels(subject, 'margin-top')).toBe(0.5)
+	})
+
+	it('reads a custom property carrying a length', () => {
+		const container = buildFixture('<p style="--journey-gap: 8px">Ready</p>')
+		expect(pixels(requireValue(container.querySelector('p')), '--journey-gap')).toBe(8)
+	})
+
+	it('reads an unparsable value as zero', () => {
+		const container = buildFixture('<p style="--journey-label: wide">Ready</p>')
+		const subject = requireValue(container.querySelector('p'))
+		expect(style(subject, '--journey-label')).toBe('wide')
+		expect(pixels(subject, '--journey-label')).toBe(0)
+		expect(pixels(subject, '--journey-absent')).toBe(0)
 	})
 })
 

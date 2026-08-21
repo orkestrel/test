@@ -1,4 +1,4 @@
-import type { CaptureVariant, Color, FrameOptions } from './types.js'
+import type { CaptureVariant, Color, ElementOptions, FrameOptions } from './types.js'
 import { commands, page, userEvent } from 'vitest/browser'
 import {
 	ACCESSIBLE_ROLES,
@@ -806,22 +806,154 @@ export function waitForFrame(): Promise<void> {
 }
 
 /**
- * Renders trusted fixture markup into a container attached to the document.
+ * Builds one unmounted element of a known tag, wearing the classes, text, and attributes asked for.
  *
- * @param markup - The fixture markup to render.
- * @returns The attached container.
+ * @param tag - The HTML tag name, which fixes the returned element's exact type.
+ * @param options - The class list, the text, and the attributes to apply.
+ * @returns The built element, not yet in any document.
+ *
+ * @remarks
+ * The element is unmounted on purpose, so a fixture is assembled before the page ever sees it and a
+ * test decides where it goes. Nothing here resolves against the cascade: a built element computes no
+ * style and lays out no box until {@link mount} puts it in the document.
+ *
+ * The text is set as text rather than parsed as markup, so a `<` in it stays a `<`. Use
+ * {@link render} where the fixture is markup.
+ *
+ * @example
+ * ```ts
+ * const button = build('button', { classes: 'primary', text: 'Save', attributes: { type: 'button' } })
+ * ```
+ */
+export function build<K extends keyof HTMLElementTagNameMap>(
+	tag: K,
+	options?: ElementOptions,
+): HTMLElementTagNameMap[K] {
+	const element = document.createElement(tag)
+	if (options?.classes !== undefined) element.className = options.classes
+	if (options?.text !== undefined) element.textContent = options.text
+	for (const [name, value] of Object.entries(options?.attributes ?? {})) {
+		element.setAttribute(name, value)
+	}
+	return element
+}
+
+/**
+ * Puts one element into the document and hands it straight back.
+ *
+ * @param element - The element to attach.
+ * @returns The same element, now appended to `document.body`.
+ *
+ * @remarks
+ * What this buys is the invariant, not the append: after it returns, the element is connected, so
+ * `getComputedStyle` resolves against the shipped cascade, custom properties inherit from `:root`,
+ * and the element lays out a real box. An unmounted element answers every one of those questions
+ * with the initial value instead, which reads as a styling defect rather than as a detached node.
+ *
+ * Taking it back out belongs to the consumer's teardown, because this records nothing: a browser
+ * test file shares one page, so a fixture left behind is the next test's resolver ambiguity. Build a
+ * recorded container in a setup module and remove it from an `afterEach` hook.
+ *
+ * @example
+ * ```ts
+ * const panel = mount(build('div', { classes: 'surface' }))
+ * panel.remove()
+ * ```
+ */
+export function mount<T extends Element>(element: T): T {
+	document.body.append(element)
+	return element
+}
+
+/**
+ * Renders one fixture into the document, from trusted markup or from a tag and its classes.
+ *
+ * @param first - The fixture markup, or the HTML tag name when `second` is present.
+ * @param second - The class list when `first` supplies the tag name.
+ * @returns The attached container for the markup form, and the attached element itself for the tag
+ * form.
+ *
+ * @remarks
+ * The class list is required in the tag form, which is what keeps the two forms apart: a
+ * one-argument call is always markup. A tag with no classes is `mount(build(tag))`.
+ *
+ * The markup form parses `first` into a fresh container and returns that container, so the fixture's
+ * own nodes are its children. The tag form returns the element itself, typed as exactly that tag.
+ * Both attach to `document.body` and neither records anything, so removal is the caller's, exactly
+ * as it is for {@link mount}.
  *
  * @example
  * ```ts
  * const container = render('<button type="button">Save</button>')
+ * const panel = render('section', 'surface muted')
  * container.remove()
+ * panel.remove()
  * ```
  */
-export function render(markup: string): HTMLDivElement {
-	const container = document.createElement('div')
-	container.innerHTML = markup
-	document.body.append(container)
-	return container
+export function render(markup: string): HTMLDivElement
+export function render<K extends keyof HTMLElementTagNameMap>(
+	tag: K,
+	classes: string,
+): HTMLElementTagNameMap[K]
+export function render(first: string, second?: string): HTMLElement {
+	if (second === undefined) {
+		const container = build('div')
+		container.innerHTML = first
+		return mount(container)
+	}
+	// `build` is generic over the known tag names and this signature carries a plain string, so the
+	// tag branch cannot route through it without an assertion. It applies the class list the one way
+	// `build` applies it, so the two forms stay one behaviour.
+	const element = document.createElement(first)
+	element.className = second
+	return mount(element)
+}
+
+/**
+ * Sets one field's value and announces it the way typing into the field does.
+ *
+ * @param element - The input or textarea to write into.
+ * @param text - The value to set.
+ *
+ * @remarks
+ * This is the synthetic pair of {@link typeAccessible}, for a component that listens for `input` and
+ * a test that has the element already. It sets the value in one write and dispatches one bubbling
+ * `input` event, so a delegated listener on an ancestor hears it. It sends no keystrokes, so a
+ * component reading `key`, composition, or selection sees nothing; drive that one through
+ * `typeAccessible` instead.
+ *
+ * No `change` event follows. Use {@link commitInput} where the component waits for the field to be
+ * committed.
+ *
+ * @example
+ * ```ts
+ * typeInput(requireValue(container.querySelector('input')), 'Ada')
+ * ```
+ */
+export function typeInput(element: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+	element.value = text
+	element.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
+ * Sets one field's value and commits it, the way typing and then leaving the field does.
+ *
+ * @param element - The input or textarea to write into.
+ * @param text - The value to set.
+ *
+ * @remarks
+ * The order is the browser's: {@link typeInput} first, so `input` is dispatched with the value
+ * already set, and one bubbling `change` after it. A component that reads the value from either
+ * event therefore reads `text` from both.
+ *
+ * @example
+ * ```ts
+ * commitInput(requireValue(container.querySelector('input')), 'Ada')
+ * ```
+ */
+export function commitInput(element: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+	typeInput(element, text)
+	element.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
 /**
@@ -840,6 +972,40 @@ export function render(markup: string): HTMLDivElement {
 export function clearStorage(): void {
 	localStorage.clear()
 	sessionStorage.clear()
+}
+
+/**
+ * Deletes one IndexedDB database and reports what the request actually did.
+ *
+ * @param name - The database name to delete.
+ * @returns A promise resolving after the deletion completes.
+ * @throws Thrown when the request errors, and when an open connection blocks it.
+ *
+ * @remarks
+ * Deleting a database that was never created succeeds, so this is safe to call from a teardown hook
+ * that runs whether or not the test reached the code that opens one.
+ *
+ * A block is a rejection rather than a wait. `blocked` fires when another connection is still open,
+ * and a suite that swallowed it would leave the next test reading the previous test's records
+ * through a database that reports itself deleted. The connection holding it open is the caller's to
+ * close, so the block is handed back rather than absorbed.
+ *
+ * @example
+ * ```ts
+ * afterEach(() => removeDatabase('ledger'))
+ * ```
+ */
+export function removeDatabase(name: string): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		const request = globalThis.indexedDB.deleteDatabase(name)
+		request.addEventListener('success', () => resolve())
+		request.addEventListener('error', () =>
+			reject(new Error(`IndexedDB database "${name}" could not be deleted`)),
+		)
+		request.addEventListener('blocked', () =>
+			reject(new Error(`IndexedDB database "${name}" is blocked by an open connection`)),
+		)
+	})
 }
 
 /**
@@ -884,6 +1050,87 @@ export function parseColor(value: string): Color | undefined {
 	if (red === undefined || green === undefined || blue === undefined) return undefined
 	if (![red, green, blue, alpha].every((channel) => Number.isFinite(channel))) return undefined
 	return Object.freeze([red, green, blue, alpha])
+}
+
+/**
+ * Resolves any CSS color expression to straight sRGB channels, by asking the browser.
+ *
+ * @param value - Any value the `color` property accepts: a keyword, a hex triple, a `var()`
+ * reference, a `color-mix()`, or an already-computed `rgb()`.
+ * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value or the
+ * computed result names no color {@link parseColor} speaks.
+ *
+ * @remarks
+ * This is the live half of the pair {@link parseColor} opens. `parseColor` reads text and speaks
+ * only the computed syntaxes a cascade hands back; this stages a probe element, hands it to the real
+ * cascade, and reads back what the engine computed — which is the only way a keyword, a hex triple,
+ * or a `var()` reference becomes channels at all. The read itself goes through `parseColor`, so both
+ * halves agree on what a computed value means.
+ *
+ * The probe is mounted, because an unmounted element inherits nothing and a `var()` reference to a
+ * token declared on `:root` would resolve to the initial value instead. It is removed in a `finally`,
+ * so a value that throws on the way through leaves no node behind.
+ *
+ * Refusal is the CSSOM's: an expression it will not parse leaves the probe's inline `color` empty
+ * and this returns `undefined`. A `var()` naming an undeclared custom property is not refused,
+ * because the cascade accepts it and computes the inherited color, so a test that means to catch a
+ * missing token asserts on {@link token} rather than on this.
+ *
+ * @example
+ * ```ts
+ * rgba('rebeccapurple') // [102, 51, 153, 1]
+ * rgba('not-a-color') // undefined
+ * ```
+ */
+export function rgba(value: string): Color | undefined {
+	const probe = mount(build('span'))
+	try {
+		probe.style.color = value
+		if (probe.style.color === '') return undefined
+		return parseColor(style(probe, 'color'))
+	} finally {
+		probe.remove()
+	}
+}
+
+/**
+ * Determines whether two colors render the same, within the rounding a browser does.
+ *
+ * @param first - A CSS color expression or an already-parsed color.
+ * @param second - A CSS color expression or an already-parsed color.
+ * @returns `true` when every channel and the alpha agree within the tolerance; `false` otherwise,
+ * including when either side names no readable color.
+ *
+ * @remarks
+ * Each string side is resolved through {@link rgba}, so a keyword, a token reference, and the
+ * `rgb()` the engine computes for either of them compare equal without a test converting anything
+ * first. A side that resolves to nothing makes the answer `false` rather than a throw, because this
+ * is a predicate.
+ *
+ * The tolerance is half a channel step on the 0–255 scale, and the alpha is scaled onto that same
+ * range before it is compared, so one number covers both. Half a step is what a composite of
+ * translucent layers and a `color-mix()` round trip actually drift by; anything a reader could see
+ * is further than that and reports unequal.
+ *
+ * @example
+ * ```ts
+ * colorEqual('rebeccapurple', 'rgb(102, 51, 153)') // true
+ * colorEqual('red', [0, 0, 255, 1]) // false
+ * ```
+ */
+export function colorEqual(first: string | Color, second: string | Color): boolean {
+	const left = typeof first === 'string' ? rgba(first) : first
+	const right = typeof second === 'string' ? rgba(second) : second
+	if (left === undefined || right === undefined) return false
+	const tolerance = 0.5
+	const [leftRed, leftGreen, leftBlue, leftAlpha] = left
+	const [rightRed, rightGreen, rightBlue, rightAlpha] = right
+	return (
+		Math.abs(leftRed - rightRed) <= tolerance &&
+		Math.abs(leftGreen - rightGreen) <= tolerance &&
+		Math.abs(leftBlue - rightBlue) <= tolerance &&
+		Math.abs(leftAlpha - rightAlpha) * 255 <= tolerance
+	)
 }
 
 /**
@@ -1142,17 +1389,104 @@ export function readRing(control: Element, worn?: Element): number | undefined {
  */
 export function readCascade(): ReadonlySet<string> {
 	const known = new Set<string>()
-	const rules: CSSRule[] = []
-	for (const sheet of document.styleSheets) rules.push(...sheet.cssRules)
-	while (rules.length > 0) {
-		const rule = rules.pop()
-		if (rule instanceof CSSGroupingRule) rules.push(...rule.cssRules)
+	for (const rule of readRules()) {
 		if (!(rule instanceof CSSStyleRule)) continue
 		for (const match of rule.selectorText.matchAll(/\.([a-zA-Z][\w-]*)/g)) {
 			known.add(String(match[1]))
 		}
 	}
 	return known
+}
+
+/**
+ * Collects every rule the stylesheets loaded into this document hold, nested rules included.
+ *
+ * @returns Every rule reachable in the shipped cascade: each sheet's own rules in sheet order, then
+ * the rules nested inside them, level by level.
+ *
+ * @remarks
+ * The walk is iterative and reads the list it is still appending to, which is what expands a media
+ * query, a supports block, a layer, and a nested style rule without recursion. Expanding by level
+ * rather than by depth is why a top-level rule is always met before a rule nested inside an earlier
+ * one; {@link findRule} returns the first match in exactly this order.
+ *
+ * A stylesheet the document cannot read — a cross-origin sheet with no CORS grant — throws from its
+ * own `cssRules` getter, and that sheet is skipped rather than ending the walk. What a page loaded
+ * from another origin declares is unreadable to every caller here, so the alternative is a helper
+ * that works until a test page adds a font or an analytics stylesheet.
+ *
+ * @example
+ * ```ts
+ * readRules().filter((rule) => rule instanceof CSSKeyframesRule)
+ * ```
+ */
+export function readRules(): readonly CSSRule[] {
+	const rules: CSSRule[] = []
+	for (const sheet of document.styleSheets) {
+		try {
+			rules.push(...sheet.cssRules)
+		} catch {
+			continue
+		}
+	}
+	for (let index = 0; index < rules.length; index += 1) {
+		const rule = rules[index]
+		if (rule instanceof CSSGroupingRule) rules.push(...rule.cssRules)
+	}
+	return rules
+}
+
+/**
+ * Finds the first style rule in the cascade whose selector carries a fragment.
+ *
+ * @param selector - The selector fragment to look for, matched as a substring of the whole selector
+ * text.
+ * @returns The first matching rule in {@link readRules} order, or `undefined` when no rule carries
+ * the fragment.
+ *
+ * @remarks
+ * This proves a declaration exists in the cascade at all, which is a different question from what an
+ * element resolves to: {@link style} reads the winner, and a rule this finds may be overridden by
+ * another. Assert on this where the subject is the stylesheet, and on `style` where the subject is
+ * the rendered result.
+ *
+ * The match is a substring, so `findRule('.card')` finds `.card`, `.card:hover`, and
+ * `.panel > .card` alike. Pass more of the selector to narrow it.
+ *
+ * @example
+ * ```ts
+ * findRule('.card')?.style.getPropertyValue('padding')
+ * ```
+ */
+export function findRule(selector: string): CSSStyleRule | undefined {
+	for (const rule of readRules()) {
+		if (rule instanceof CSSStyleRule && rule.selectorText.includes(selector)) return rule
+	}
+	return undefined
+}
+
+/**
+ * Finds the animation the cascade declares under one name.
+ *
+ * @param name - The exact `@keyframes` name.
+ * @returns The first matching rule in {@link readRules} order, or `undefined` when the cascade
+ * declares no animation under that name.
+ *
+ * @remarks
+ * The name is matched exactly, which is where this parts from {@link findRule}: a selector is
+ * compound and a fragment of one is a useful question, and an animation name is one atom that either
+ * is or is not the one an `animation` declaration references.
+ *
+ * @example
+ * ```ts
+ * findKeyframes('fade')?.cssRules.length
+ * ```
+ */
+export function findKeyframes(name: string): CSSKeyframesRule | undefined {
+	for (const rule of readRules()) {
+		if (rule instanceof CSSKeyframesRule && rule.name === name) return rule
+	}
+	return undefined
 }
 
 /**
@@ -1219,8 +1553,17 @@ export function extractOrphans(root: ParentNode, child: string, parent: string):
  * Reads one resolved CSS property from a real browser element.
  *
  * @param element - The element whose resolved style to inspect.
- * @param property - The CSS property name.
- * @returns The browser's resolved property value.
+ * @param property - The CSS property name, registered or custom.
+ * @returns The browser's resolved property value, trimmed; an empty string when the element resolves
+ * none.
+ *
+ * @remarks
+ * The value is trimmed, so what comes back is the value and never the whitespace around it. A
+ * registered property computes to a normalized value with nothing around it either way. A custom
+ * property computes to its declaration's own token stream, and no rule requires an engine to strip
+ * what surrounds that stream, so trimming is what makes one reader answer the same for a token and a
+ * length on every engine. Internal whitespace is kept: `--shadow: 0 0 2px` reads back with its
+ * spaces.
  *
  * @example
  * ```ts
@@ -1228,7 +1571,84 @@ export function extractOrphans(root: ParentNode, child: string, parent: string):
  * ```
  */
 export function style(element: Element, property: string): string {
-	return getComputedStyle(element).getPropertyValue(property)
+	return getComputedStyle(element).getPropertyValue(property).trim()
+}
+
+/**
+ * Reads one custom property from an element's resolved style.
+ *
+ * @param element - The element whose resolved style to inspect.
+ * @param name - The custom property name, with or without its leading dashes.
+ * @returns The resolved value, trimmed; an empty string when the element inherits no such property.
+ *
+ * @remarks
+ * The dashes are optional because a token is spoken about both ways — `--surface` in a stylesheet
+ * and `surface` in prose — and a reader that accepted only one spelling would turn that into a silent
+ * empty string. An absent token reads as `''`, which is what the CSSOM returns and is
+ * indistinguishable from a token declared empty; assert on the value you expect rather than on
+ * presence.
+ *
+ * Resolution is inheritance, so a token declared on `:root` reads from any mounted descendant and
+ * from an unmounted element reads as `''`. Use {@link rootToken} where the declaration is the
+ * document's.
+ *
+ * @example
+ * ```ts
+ * token(panel, 'surface') // '#ffffff'
+ * token(panel, '--surface') // '#ffffff'
+ * ```
+ */
+export function token(element: Element, name: string): string {
+	return style(element, name.startsWith('--') ? name : `--${name}`)
+}
+
+/**
+ * Reads one custom property from the document element.
+ *
+ * @param name - The custom property name, with or without its leading dashes.
+ * @returns The resolved value, trimmed; an empty string when the document declares no such property.
+ *
+ * @remarks
+ * This is {@link token} against `document.documentElement`, which is where a theme declares its
+ * tokens and where a `[data-theme]` switch retunes them. It exists as its own name because that
+ * element is the one a token question is nearly always about, and naming it at every call site
+ * buries the question.
+ *
+ * @example
+ * ```ts
+ * rootToken('surface')
+ * ```
+ */
+export function rootToken(name: string): string {
+	return token(document.documentElement, name)
+}
+
+/**
+ * Reads one resolved CSS length as a number of pixels.
+ *
+ * @param element - The element whose resolved style to inspect.
+ * @param property - The CSS property name, registered or custom.
+ * @returns The leading numeric part of the resolved value, and `0` when it carries none.
+ *
+ * @remarks
+ * A resolved length is text with a unit — `'12px'` — so this reads the number in front of the unit
+ * and discards the rest. The unit is not checked: the resolved value of a length is in pixels in
+ * every case a browser hands back, and a property that resolves to something else is the caller's
+ * mistake rather than this reader's.
+ *
+ * An unparsable value reads as `0` rather than as absence, because every caller of this is measuring
+ * and `'auto'`, `'none'`, and `''` each contribute no pixels to what a reader sees. Where the
+ * distinction matters, read the text with {@link style} instead.
+ *
+ * @example
+ * ```ts
+ * pixels(button, 'padding-left') // 12
+ * pixels(button, 'width') // 0 when the width resolves to `auto`
+ * ```
+ */
+export function pixels(element: Element, property: string): number {
+	const measured = Number.parseFloat(style(element, property))
+	return Number.isFinite(measured) ? measured : 0
 }
 
 /**

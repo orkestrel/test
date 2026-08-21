@@ -7,6 +7,71 @@ import type {
 import { captureFrame, expandCaptures } from './helpers.js'
 
 /**
+ * Creates one real pointer event, ready to dispatch.
+ *
+ * @param name - The event type, such as `pointerdown`.
+ * @param options - Any `PointerEventInit` member, each one overriding the default beneath it.
+ * @returns A real `PointerEvent` of that type.
+ *
+ * @remarks
+ * The defaults are what a browser's own pointer event carries and a hand-built one does not:
+ * `bubbles` and `cancelable` are set, so a delegated listener hears it and a handler can prevent it,
+ * and `pointerId`, `pointerType`, and `isPrimary` describe a single primary mouse, so a component
+ * that branches on the pointer kind takes the branch a mouse takes. Override any of them by naming
+ * it; a touch is `{ pointerType: 'touch' }` and nothing else has to be restated.
+ *
+ * The event is real rather than a shaped object, so `instanceof PointerEvent` holds and the
+ * coordinate and modifier members a handler reads are the ones the platform defines.
+ *
+ * @example
+ * ```ts
+ * element.dispatchEvent(createPointerEvent('pointerdown', { clientX: 10, clientY: 20 }))
+ * ```
+ */
+export function createPointerEvent(name: string, options?: PointerEventInit): PointerEvent {
+	return new PointerEvent(name, {
+		bubbles: true,
+		cancelable: true,
+		pointerId: 1,
+		pointerType: 'mouse',
+		isPrimary: true,
+		...options,
+	})
+}
+
+/**
+ * Creates one real drag event carrying a live data transfer, ready to dispatch.
+ *
+ * @param name - The event type, such as `dragstart`.
+ * @param options - Any `DragEventInit` member, each one overriding the default beneath it.
+ * @returns A real `DragEvent` of that type.
+ *
+ * @remarks
+ * A drag event with no `dataTransfer` is the shape that makes a drop handler fail in a test and work
+ * in a browser, so one is allocated where the environment defines `DataTransfer` and the member is
+ * `null` where it does not. Pass your own to seed it: a `dataTransfer` given in `options` replaces
+ * the allocated one, which is how a drop is driven with the payload the drag was supposed to carry.
+ *
+ * `bubbles` and `cancelable` are set, because a drop handler that never prevents the default event
+ * is a drop the browser handles itself.
+ *
+ * @example
+ * ```ts
+ * const started = createDragEvent('dragstart')
+ * started.dataTransfer?.setData('text/plain', 'row-3')
+ * element.dispatchEvent(started)
+ * ```
+ */
+export function createDragEvent(name: string, options?: DragEventInit): DragEvent {
+	return new DragEvent(name, {
+		bubbles: true,
+		cancelable: true,
+		dataTransfer: 'DataTransfer' in globalThis ? new DataTransfer() : null,
+		...options,
+	})
+}
+
+/**
  * Creates the capture portfolio one run places its screenshots through.
  *
  * @param options - The state registry, the variant matrix, the variant this run renders, the

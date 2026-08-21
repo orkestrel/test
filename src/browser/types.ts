@@ -8,6 +8,24 @@
  */
 export type Color = readonly [red: number, green: number, blue: number, alpha: number]
 
+/**
+ * Options for one built element.
+ *
+ * @remarks
+ * `classes` is written the way a `class` attribute is written — one space-separated string — so a
+ * fixture reads as the markup it stands in for. `attributes` is set name by name after the class
+ * list and the text, so an `attributes` entry named `class` wins over `classes` rather than merging
+ * with it.
+ */
+export interface ElementOptions {
+	/** The class list, space-separated, exactly as a `class` attribute writes it. */
+	readonly classes?: string
+	/** The text the element carries, set as text rather than parsed as markup. */
+	readonly text?: string
+	/** Every attribute to set, keyed by attribute name. */
+	readonly attributes?: Readonly<Record<string, string>>
+}
+
 /** Options for one captured frame. */
 export interface FrameOptions {
 	/** The frame's path, relative to the calling test file. */
