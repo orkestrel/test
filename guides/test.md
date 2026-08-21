@@ -4,14 +4,16 @@
 > records, what it waits for, and what it owns, with a pair outside all of them and a browser journey
 > layer beside them.
 >
-> **What a test records.** A call recorder, a captured throw, a drained async source, a JSON copy, a
-> required value, a decoded JSON Lines stream, and a cookie jar filled from real responses. Each
-> turns what the code under test did into a value you can assert on.
+> **What a test records.** A call recorder, a map of recorders subscribed to an emitter's events, a
+> signal's live abort-listener tally, a numbered resource ledger, a captured throw, a drained async
+> source, a JSON copy, a required value, a decoded JSON Lines stream, and a cookie jar filled from
+> real responses. Each turns what the code under test did into a value you can assert on.
 >
 > **What a test waits for.** A real delay, and — each bounded by a budget, an interval, and an abort
 > signal — a named condition, a produced value, a first event delivery, a socket's close, and a
-> directory the host has finally let go. Nothing here replaces the host clock: every bound is a real
-> elapsed interval read with `performance.now()`.
+> directory the host has finally let go. One wait takes no bound at all, because it needs none:
+> `waitForAbort` parks on a signal's own abort. Nothing here replaces the host clock: every bound is
+> a real elapsed interval read with `performance.now()`.
 >
 > **What a test owns and must give back.** A temporary directory, a cleanup list, and a loopback
 > server, each carrying `destroy()`. Each one takes something from the host.
@@ -21,11 +23,18 @@
 > neither owns anything to give back.
 >
 > `createHostileValues` sits outside them too, on the input side: it is what a test feeds its guards,
-> a corpus whose every member makes a naive reader throw.
+> a corpus whose every member makes a naive reader throw. The host-capability probes are outside them
+> on the environment side, answering what this filesystem does rather than what its platform is
+> called. `invokeUnchecked` and `readProperty` are outside them at the type boundary, where a value
+> nothing declares meets a claim its caller owns, and `flattenHeaders` is outside them on the
+> comparison side, turning any header initializer into one frozen record.
 >
 > The journey layer drives a real interface by role and accessible name through the installed Vitest
 > provider, measures what a reader can see of the result, records the scenario and the page's own
-> output as it goes, and generates the capture portfolio from the same journeys.
+> output as it goes, and generates the capture portfolio from the same journeys. Around it sit the
+> fixture the journey runs against and the readings a styling claim rests on: an element built and
+> mounted, a field driven the way its component listens for, the tokens, colors, and rules the
+> cascade resolved, and a database given back at the end of the test that filled it.
 >
 > A helper ships here when it is a reusable test mechanism with a real consumer that no native or
 > declared primitive already covers; [Limits](#limits) states that rule and what it refused. This
@@ -87,64 +96,83 @@ Imported from `@orkestrel/test`.
 
 #### Types
 
-| Type                | Kind      | Shape                                                                                                                                                                                                                                                                                    |
-| ------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WaitOptions`       | interface | `{ budget?, interval?, signal? }` — the elapsed-time limit, delay between readings, and abort signal for a bounded wait.                                                                                                                                                                 |
-| `RetryOptions`      | interface | `WaitOptions` plus `{ attempts? }` — the optional producer-call limit for a bounded retry.                                                                                                                                                                                               |
-| `EventSubscriber`   | type      | `(listener) => cleanup \| void` — installs one event listener and may return its cleanup.                                                                                                                                                                                                |
-| `RecorderInterface` | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                                                                                                           |
-| `TeardownInterface` | interface | `{ count }` plus `add` / `destroy` — the cleanup one test registers as it goes.                                                                                                                                                                                                          |
-| `TeardownHandler`   | type      | `() => void \| Promise<void>` — the work one registered entry performs.                                                                                                                                                                                                                  |
-| `JSONValue`         | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`.                                                                                                                                                                                  |
-| `JSONSafe`          | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops or reshapes outside its declared type mapped to `never`: `undefined`, an opaque `object` member, and a symbol-keyed member. `unknown` still passes through, so `Record<string, unknown>` is accepted. |
+| Type                       | Kind      | Shape                                                                                                                                                                                                                                                                                    |
+| -------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WaitOptions`              | interface | `{ budget?, interval?, signal? }` — the elapsed-time limit, delay between readings, and abort signal for a bounded wait.                                                                                                                                                                 |
+| `RetryOptions`             | interface | `WaitOptions` plus `{ attempts? }` — the optional producer-call limit for a bounded retry.                                                                                                                                                                                               |
+| `EventSubscriber`          | type      | `(listener) => cleanup \| void` — installs one event listener and may return its cleanup.                                                                                                                                                                                                |
+| `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                                                                                                           |
+| `EventSourceInterface`     | interface | `on` alone — the subscribe half of a typed event source; it carries no data members.                                                                                                                                                                                                     |
+| `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }` — one recorder per requested event name.                                                                                                                                                                                         |
+| `SignalInterface`          | interface | `{ controller, signal, count }` — a real abort controller, its instrumented signal, and that signal's live abort-listener tally.                                                                                                                                                         |
+| `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy` — numbered resources, with a recorder for the ids created and one for the ids destroyed.                                                                                                                                              |
+| `TeardownInterface`        | interface | `{ count }` plus `add` / `destroy` — the cleanup one test registers as it goes.                                                                                                                                                                                                          |
+| `TeardownHandler`          | type      | `() => void \| Promise<void>` — the work one registered entry performs.                                                                                                                                                                                                                  |
+| `JSONValue`                | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }`.                                                                                                                                                                                  |
+| `JSONSafe`                 | type      | `JSONSafe<T>` — `T` with each member JSON preserves kept, and each member it drops or reshapes outside its declared type mapped to `never`: `undefined`, an opaque `object` member, and a symbol-keyed member. `unknown` still passes through, so `Record<string, unknown>` is accepted. |
+| `HeadersSource`            | type      | `NonNullable<ConstructorParameters<typeof Headers>[0]>` — every value the host `Headers` constructor accepts: a record, an entries array, or another `Headers` value.                                                                                                                    |
 
 Each interface's `readonly` data members are the row above; its call-signature members are listed
 under [Methods](#methods).
 
 #### Helpers
 
-| API                | Kind     | Signature                                                   | Summary                                                     |
-| ------------------ | -------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| `waitForCondition` | function | `(description, condition, options?) => Promise<void>`       | Reads until a condition holds within a monotonic budget.    |
-| `retryUntil`       | function | `(description, produce, satisfied, options?) => Promise<T>` | Produces until a value satisfies a predicate or a bound.    |
-| `waitForEvent`     | function | `(subscribe, description, options?) => Promise<TArgs>`      | Parks until the first event delivery, timeout, or abort.    |
-| `decodeJSONLines`  | function | `(text: string) => readonly unknown[]`                      | Decodes non-empty JSON Lines in physical-line order.        |
-| `waitForDelay`     | function | `(ms?: number) => Promise<void>`                            | Waits for a real host timer; defaults to `0`.               |
-| `captureError`     | function | `(thunk: () => unknown) => unknown`                         | Runs a synchronous thunk and returns whatever it threw.     |
-| `requireValue`     | function | `<T>(value: T \| null \| undefined, message?: string) => T` | Narrows away `null` and `undefined` by throwing.            |
-| `collect`          | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`    | Drains an async iterable into an array, in iteration order. |
-| `collectStream`    | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`   | Drains a readable stream into an array, in read order.      |
-| `roundTripJSON`    | function | `<T>(value: T & JSONSafe<T>) => T`                          | Copies a JSON value; throws on a non-finite number.         |
-| `resolveRoot`      | function | `(meta: ImportMeta) => URL`                                 | The URL one directory above the calling module's own file.  |
+| API                | Kind     | Signature                                                              | Summary                                                        |
+| ------------------ | -------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `waitForCondition` | function | `(description, condition, options?) => Promise<void>`                  | Reads until a condition holds within a monotonic budget.       |
+| `retryUntil`       | function | `(description, produce, satisfied, options?) => Promise<T>`            | Produces until a value satisfies a predicate or a bound.       |
+| `waitForEvent`     | function | `(subscribe, description, options?) => Promise<TArgs>`                 | Parks until the first event delivery, timeout, or abort.       |
+| `decodeJSONLines`  | function | `(text: string) => readonly unknown[]`                                 | Decodes non-empty JSON Lines in physical-line order.           |
+| `waitForDelay`     | function | `(ms?: number) => Promise<void>`                                       | Waits for a real host timer; defaults to `0`.                  |
+| `waitForAbort`     | function | `(signal: AbortSignal) => Promise<void>`                               | Parks on a signal's abort; an aborted signal resolves at once. |
+| `captureError`     | function | `(thunk: () => unknown) => unknown`                                    | Runs a synchronous thunk and returns whatever it threw.        |
+| `requireValue`     | function | `<T>(value: T \| null \| undefined, message?: string) => T`            | Narrows away `null` and `undefined` by throwing.               |
+| `collect`          | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`               | Drains an async iterable into an array, in iteration order.    |
+| `collectStream`    | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`              | Drains a readable stream into an array, in read order.         |
+| `roundTripJSON`    | function | `<T>(value: T & JSONSafe<T>) => T`                                     | Copies a JSON value; throws on a non-finite number.            |
+| `invokeUnchecked`  | function | `<T>(target: unknown, method: unknown, args: readonly unknown[]) => T` | Calls an unknown method under a return type the caller claims. |
+| `readProperty`     | function | `<T>(target: unknown, key: PropertyKey) => T`                          | Reads a property off an unknown value under the same claim.    |
+| `flattenHeaders`   | function | `(init: HeadersSource) => Readonly<Record<string, string>>`            | Normalizes any header initializer into a frozen plain record.  |
+| `resolveRoot`      | function | `(meta: ImportMeta) => URL`                                            | The URL one directory above the calling module's own file.     |
 
 #### Factories
 
-| API                   | Kind     | Signature                                                          | Summary                                                     |
-| --------------------- | -------- | ------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `createHostileValues` | function | `() => readonly unknown[]`                                         | Fresh hostile values for proving that a guard is total.     |
-| `createRecorder`      | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>` | A recorder whose `handler` appends each call, in order.     |
-| `createTeardown`      | function | `() => TeardownInterface`                                          | A cleanup list that runs newest-first when it is destroyed. |
+| API                     | Kind     | Signature                                                                                                 | Summary                                                          |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `createHostileValues`   | function | `() => readonly unknown[]`                                                                                | Fresh hostile values for proving that a guard is total.          |
+| `createRecorder`        | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>`                                        | A recorder whose `handler` appends each call, in order.          |
+| `createRecorders`       | function | `<TMap, TName>(source: EventSourceInterface<TMap>, events: readonly TName[]) => RecorderMap<TMap, TName>` | One recorder per named event, each subscribed to the source.     |
+| `createSignal`          | function | `() => SignalInterface`                                                                                   | A real controller whose signal reports its live abort listeners. |
+| `createResourceFactory` | function | `() => ResourceFactoryInterface`                                                                          | Numbered resources with every creation and destruction recorded. |
+| `createTeardown`        | function | `() => TeardownInterface`                                                                                 | A cleanup list that runs newest-first when it is destroyed.      |
 
 ### Browser
 
-Imported from `@orkestrel/test/browser`. Every acting verb here resolves its own target from a role
-and an accessible name and drives it through the installed Vitest provider, and none of them takes
-an element, a component instance, or a selector for the thing it acts on. That is what keeps a
-journey a description of what a person does rather than of what the markup happens to be. `render`
-takes markup and creates a node, and `clearStorage` takes nothing at all. The predicates, the
-element readers, and the describers do name an element or a root — `isRendered`, `isReachable`,
-`readText`, `readRole`, `readName`, `readStates`, `describeTree`, `describeFocus`, `extractOrphans`,
-`readRows`, `style`, `contrast`, `readLayers`, `readBackdrop`, and `readRing` — and each reads a
-node the caller already has rather than acting on a target it was handed. `captureFrame` and `place`
-take an element as well, and photographing one is a reading too: neither moves focus, dispatches an
-event, or changes what the element renders. The color leaves, the pane verbs, and the whole-document
-readers take a value or nothing at all, so they name no target either.
+Imported from `@orkestrel/test/browser`. Every journey verb here resolves its own target from a
+role and an accessible name and drives it through the installed Vitest provider, and none of them
+takes an element, a component instance, or a selector for the thing it acts on. That is what keeps
+a journey a description of what a person does rather than of what the markup happens to be.
+
+The fixture builders, the readers, and the field writers do take an element, and none of them is a
+journey verb. `build` creates a node, `mount` attaches one, and `render` does both from
+markup or from a tag and its classes; `clearStorage` takes nothing at all, and `removeDatabase`
+takes a database name. The predicates, the element readers, and the describers name a node the
+caller already has — `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`,
+`describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `style`, `token`, `pixels`,
+`contrast`, `readLayers`, `readBackdrop`, and `readRing` — and each reads that node rather than
+acting on a target it was handed. `captureFrame` and `place` take an element as well, and
+photographing one is a reading too: neither moves focus, dispatches an event, or changes what the
+element renders. `typeInput` and `commitInput` are the exception, and it stays narrow: they write
+into the field they are given, as the synthetic counterpart of `typeAccessible` for a component
+that listens for `input`. The color leaves, the cascade readers, the pane verbs, and the
+whole-document readers take a value or nothing at all, so they name no target either.
 
 #### Types
 
 | Type                 | Kind      | Shape                                                                                                                                               |
 | -------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Color`              | type      | `readonly [red, green, blue, alpha]` — one rendered color, its channels 0–255 and its alpha 0–1.                                                    |
+| `ElementOptions`     | interface | `{ classes?, text?, attributes? }` — the class list, the text, and the attributes one built element carries.                                        |
 | `FrameOptions`       | interface | `{ path, width, height, element? }` — where one frame is written, the viewport it is shot at, and what it shoots.                                   |
 | `CaptureVariant`     | interface | `{ name, width, height, apply? }` — one theme-and-viewport pair, and the document change it needs first.                                            |
 | `PortfolioOptions`   | interface | `{ states, variants, variant, directory, enabled? }` — the registry, the matrix, this run's variant, where it writes, and whether it writes at all. |
@@ -167,56 +195,71 @@ readers take a value or nothing at all, so they name no target either.
 
 #### Helpers
 
-| API                     | Kind     | Signature                                                                               | Summary                                                                                                                                     |
-| ----------------------- | -------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`         | One visible, focus-reachable control, scrolled into view once before reachability is measured.                                              |
-| `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                       | The same resolver without the viewport requirement; the acting verbs use it.                                                                |
-| `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                               | Whether a measured rectangle lies wholly outside the viewport.                                                                              |
-| `isRendered`            | function | `(element: Element) => boolean`                                                         | Whether the accessibility tree presents the element at all; no geometry is read, so a zero-size announced control passes.                   |
-| `isReachable`           | function | `(element: Element) => boolean`                                                         | Whether a person can click the element where it sits; the one reachability filter every acting verb applies.                                |
-| `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`     | Trusted activation of one resolved control.                                                                                                 |
-| `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                         | Trusted activation inside one named region, matching the control's name loosely.                                                            |
-| `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                       | Trusted activation of a native `<summary>`, which carries no role locators accept.                                                          |
-| `typeAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Focus, select all, delete, then real keystrokes, with the provider's key syntax escaped.                                                    |
-| `fillAccessible`        | function | `(name: string, text: string) => Promise<void>`                                         | Replaces a value in one operation, for text too long to type.                                                                               |
-| `pressKeys`             | function | `(keys: string) => Promise<void>`                                                       | A provider keyboard sequence sent to whatever holds focus.                                                                                  |
-| `traverseAccessible`    | function | `(name: string) => Promise<HTMLElement>`                                                | Forward Tab alone, until focus lands on the re-resolved target.                                                                             |
-| `readPerception`        | function | `(name: string) => string`                                                              | The normalized `innerText` of exactly one visible named region, dialog, table, panel, or alert.                                             |
-| `readPage`              | function | `() => string`                                                                          | The normalized `innerText` of the whole page.                                                                                               |
-| `readFocus`             | function | `() => string \| undefined`                                                             | The focused HTML element's rendered text (`''` included); `undefined` for a non-HTML focus; the whole page's text when nothing holds focus. |
-| `readValue`             | function | `(role: string, name: string) => string`                                                | The value a resolved input, textarea, or select renders.                                                                                    |
-| `readText`              | function | `(element: Element) => string`                                                          | The element's rendered text with every `aria-hidden` descendant dropped and its whitespace runs collapsed.                                  |
-| `readRole`              | function | `(element: Element) => string \| undefined`                                             | The declared role, the implicit one, or `undefined` when the element carries none.                                                          |
-| `readName`              | function | `(element: Element) => string`                                                          | The accessible name, computed in the order a browser computes it; an empty string when nothing names the element.                           |
-| `readStates`            | function | `(element: Element) => readonly string[]`                                               | Every state the element declares, in one fixed order.                                                                                       |
-| `describeTree`          | function | `(element: Element) => string`                                                          | One indented line per roled element, naming its role, its name, and its states; indentation follows the roles rather than the markup.       |
-| `describeFocus`         | function | `(element: Element) => string`                                                          | One numbered line per reachable control, a positive `tabindex` first in ascending order and everything else in document order.              |
-| `waitForFrame`          | function | `() => Promise<void>`                                                                   | One `requestAnimationFrame`, to settle pending paint work.                                                                                  |
-| `render`                | function | `(markup: string) => HTMLDivElement`                                                    | Trusted fixture markup in a container attached to the document.                                                                             |
-| `clearStorage`          | function | `() => void`                                                                            | Empties local and session storage together, for an `afterEach` hook that runs after a failed test too.                                      |
-| `parseColor`            | function | `(value: string) => Color \| undefined`                                                 | One computed `rgb()`, `rgba()`, or `color(srgb …)` value as straight channels; `undefined` for anything else.                               |
-| `blendColor`            | function | `(front: Color, back: Color) => Color`                                                  | One color composited over another, always opaque.                                                                                           |
-| `measureLuminance`      | function | `(color: Color) => number`                                                              | One opaque color's WCAG relative luminance, from `0` to `1`.                                                                                |
-| `measureContrast`       | function | `(front: Color, back: Color) => number`                                                 | The WCAG 2.x ratio between two opaque colors, from `1` to `21`.                                                                             |
-| `readLayers`            | function | `(element: Element) => readonly Color[]`                                                | Every painted layer between the element and its first opaque ancestor, that ancestor last; an unpainted stack is empty.                     |
-| `readBackdrop`          | function | `(element: Element, floor: Color) => Color`                                             | The opaque color behind an element, every translucent layer composited onto the required floor.                                             |
-| `contrast`              | function | `(element: Element, floor?: Color) => number`                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.               |
-| `readRing`              | function | `(control: Element, worn?: Element) => number \| undefined`                             | The ratio the painted focus chrome reaches against its backdrop; `undefined` off `:focus-visible` or with no painted chrome.                |
-| `stagePane`             | function | `(width: number, height: number) => Promise<void>`                                      | Sets the viewport and renders the runner's tester pane at that size, unscaled.                                                              |
-| `releasePane`           | function | `() => void`                                                                            | Hands the staged pane back to the runner's own layout.                                                                                      |
-| `captureFrame`          | function | `(options: FrameOptions) => Promise<string>`                                            | Stages, shoots, reads the file back, and returns the verified absolute path; releases the pane either way.                                  |
-| `readCascade`           | function | `() => ReadonlySet<string>`                                                             | Every class token the stylesheets loaded into this document define.                                                                         |
-| `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                             | One line per matched element, built from its text nodes rather than from `textContent`.                                                     |
-| `extractOrphans`        | function | `(root: ParentNode, child: string, parent: string) => readonly string[]`                | The markup of every element carrying the `child` class with no `parent` class above it.                                                     |
-| `style`                 | function | `(element: Element, property: string) => string`                                        | One resolved CSS property, read from the real browser.                                                                                      |
-| `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]` | The registry times the variants, as `<state>--<variant>.png` names.                                                                         |
+| API                     | Kind     | Signature                                                                                               | Summary                                                                                                                                     |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`                         | One visible, focus-reachable control, scrolled into view once before reachability is measured.                                              |
+| `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                                       | The same resolver without the viewport requirement; the acting verbs use it.                                                                |
+| `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                                               | Whether a measured rectangle lies wholly outside the viewport.                                                                              |
+| `isRendered`            | function | `(element: Element) => boolean`                                                                         | Whether the accessibility tree presents the element at all; no geometry is read, so a zero-size announced control passes.                   |
+| `isReachable`           | function | `(element: Element) => boolean`                                                                         | Whether a person can click the element where it sits; the one reachability filter every acting verb applies.                                |
+| `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                     | Trusted activation of one resolved control.                                                                                                 |
+| `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                                         | Trusted activation inside one named region, matching the control's name loosely.                                                            |
+| `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                                       | Trusted activation of a native `<summary>`, which carries no role locators accept.                                                          |
+| `typeAccessible`        | function | `(name: string, text: string) => Promise<void>`                                                         | Focus, select all, delete, then real keystrokes, with the provider's key syntax escaped.                                                    |
+| `fillAccessible`        | function | `(name: string, text: string) => Promise<void>`                                                         | Replaces a value in one operation, for text too long to type.                                                                               |
+| `pressKeys`             | function | `(keys: string) => Promise<void>`                                                                       | A provider keyboard sequence sent to whatever holds focus.                                                                                  |
+| `traverseAccessible`    | function | `(name: string) => Promise<HTMLElement>`                                                                | Forward Tab alone, until focus lands on the re-resolved target.                                                                             |
+| `readPerception`        | function | `(name: string) => string`                                                                              | The normalized `innerText` of exactly one visible named region, dialog, table, panel, or alert.                                             |
+| `readPage`              | function | `() => string`                                                                                          | The normalized `innerText` of the whole page.                                                                                               |
+| `readFocus`             | function | `() => string \| undefined`                                                                             | The focused HTML element's rendered text (`''` included); `undefined` for a non-HTML focus; the whole page's text when nothing holds focus. |
+| `readValue`             | function | `(role: string, name: string) => string`                                                                | The value a resolved input, textarea, or select renders.                                                                                    |
+| `readText`              | function | `(element: Element) => string`                                                                          | The element's rendered text with every `aria-hidden` descendant dropped and its whitespace runs collapsed.                                  |
+| `readRole`              | function | `(element: Element) => string \| undefined`                                                             | The declared role, the implicit one, or `undefined` when the element carries none.                                                          |
+| `readName`              | function | `(element: Element) => string`                                                                          | The accessible name, computed in the order a browser computes it; an empty string when nothing names the element.                           |
+| `readStates`            | function | `(element: Element) => readonly string[]`                                                               | Every state the element declares, in one fixed order.                                                                                       |
+| `describeTree`          | function | `(element: Element) => string`                                                                          | One indented line per roled element, naming its role, its name, and its states; indentation follows the roles rather than the markup.       |
+| `describeFocus`         | function | `(element: Element) => string`                                                                          | One numbered line per reachable control, a positive `tabindex` first in ascending order and everything else in document order.              |
+| `waitForFrame`          | function | `() => Promise<void>`                                                                                   | One `requestAnimationFrame`, to settle pending paint work.                                                                                  |
+| `build`                 | function | `<K extends keyof HTMLElementTagNameMap>(tag: K, options?: ElementOptions) => HTMLElementTagNameMap[K]` | One unmounted element of exactly that tag, carrying its classes, text, and attributes.                                                      |
+| `mount`                 | function | `<T extends Element>(element: T) => T`                                                                  | Appends an element to the document and hands the same element back.                                                                         |
+| `render`                | function | `(markup: string) => HTMLDivElement` / `(tag: K, classes: string) => HTMLElementTagNameMap[K]`          | Trusted fixture markup in an attached container, or one attached element of that tag.                                                       |
+| `typeInput`             | function | `(element: HTMLInputElement \| HTMLTextAreaElement, text: string) => void`                              | Sets a field's value and dispatches one bubbling `input` event.                                                                             |
+| `commitInput`           | function | `(element: HTMLInputElement \| HTMLTextAreaElement, text: string) => void`                              | Sets a field's value, then dispatches `input` and `change`, in that order.                                                                  |
+| `clearStorage`          | function | `() => void`                                                                                            | Empties local and session storage together, for an `afterEach` hook that runs after a failed test too.                                      |
+| `removeDatabase`        | function | `(name: string) => Promise<void>`                                                                       | Deletes one IndexedDB database; rejects on an error and on a block.                                                                         |
+| `parseColor`            | function | `(value: string) => Color \| undefined`                                                                 | One computed `rgb()`, `rgba()`, or `color(srgb …)` value as straight channels; `undefined` for anything else.                               |
+| `rgba`                  | function | `(value: string) => Color \| undefined`                                                                 | Any CSS color expression resolved to channels by the real cascade; `undefined` when the CSSOM refuses it.                                   |
+| `colorEqual`            | function | `(first: string \| Color, second: string \| Color) => boolean`                                          | Whether two colors render the same, within half a channel step.                                                                             |
+| `blendColor`            | function | `(front: Color, back: Color) => Color`                                                                  | One color composited over another, always opaque.                                                                                           |
+| `measureLuminance`      | function | `(color: Color) => number`                                                                              | One opaque color's WCAG relative luminance, from `0` to `1`.                                                                                |
+| `measureContrast`       | function | `(front: Color, back: Color) => number`                                                                 | The WCAG 2.x ratio between two opaque colors, from `1` to `21`.                                                                             |
+| `readLayers`            | function | `(element: Element) => readonly Color[]`                                                                | Every painted layer between the element and its first opaque ancestor, that ancestor last; an unpainted stack is empty.                     |
+| `readBackdrop`          | function | `(element: Element, floor: Color) => Color`                                                             | The opaque color behind an element, every translucent layer composited onto the required floor.                                             |
+| `contrast`              | function | `(element: Element, floor?: Color) => number`                                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.               |
+| `readRing`              | function | `(control: Element, worn?: Element) => number \| undefined`                                             | The ratio the painted focus chrome reaches against its backdrop; `undefined` off `:focus-visible` or with no painted chrome.                |
+| `stagePane`             | function | `(width: number, height: number) => Promise<void>`                                                      | Sets the viewport and renders the runner's tester pane at that size, unscaled.                                                              |
+| `releasePane`           | function | `() => void`                                                                                            | Hands the staged pane back to the runner's own layout.                                                                                      |
+| `captureFrame`          | function | `(options: FrameOptions) => Promise<string>`                                                            | Stages, shoots, reads the file back, and returns the verified absolute path; releases the pane either way.                                  |
+| `readCascade`           | function | `() => ReadonlySet<string>`                                                                             | Every class token the stylesheets loaded into this document define.                                                                         |
+| `readRules`             | function | `() => readonly CSSRule[]`                                                                              | Every rule the loaded stylesheets hold, level by level, nested rules included.                                                              |
+| `findRule`              | function | `(selector: string) => CSSStyleRule \| undefined`                                                       | The first style rule whose selector text carries a fragment.                                                                                |
+| `findKeyframes`         | function | `(name: string) => CSSKeyframesRule \| undefined`                                                       | The animation the cascade declares under an exact name.                                                                                     |
+| `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                                             | One line per matched element, built from its text nodes rather than from `textContent`.                                                     |
+| `extractOrphans`        | function | `(root: ParentNode, child: string, parent: string) => readonly string[]`                                | The markup of every element carrying the `child` class with no `parent` class above it.                                                     |
+| `style`                 | function | `(element: Element, property: string) => string`                                                        | One resolved CSS property, trimmed, read from the real browser.                                                                             |
+| `token`                 | function | `(element: Element, name: string) => string`                                                            | One custom property off an element's resolved style, its dashes optional.                                                                   |
+| `rootToken`             | function | `(name: string) => string`                                                                              | The same reading taken against the document element.                                                                                        |
+| `pixels`                | function | `(element: Element, property: string) => number`                                                        | One resolved length as a number of pixels; `0` when it carries none.                                                                        |
+| `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]`                 | The registry times the variants, as `<state>--<variant>.png` names.                                                                         |
 
 #### Factories
 
-| API               | Kind     | Signature                                           | Summary                                                       |
-| ----------------- | -------- | --------------------------------------------------- | ------------------------------------------------------------- |
-| `createPortfolio` | function | `(options: PortfolioOptions) => PortfolioInterface` | The capture registry one run places its screenshots through.  |
-| `createJournal`   | function | `() => JournalInterface`                            | The record of one scenario's steps and the page's own output. |
+| API                  | Kind     | Signature                                                    | Summary                                                       |
+| -------------------- | -------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
+| `createPointerEvent` | function | `(name: string, options?: PointerEventInit) => PointerEvent` | One real pointer event carrying a browser's own defaults.     |
+| `createDragEvent`    | function | `(name: string, options?: DragEventInit) => DragEvent`       | One real drag event carrying a live data transfer.            |
+| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`          | The capture registry one run places its screenshots through.  |
+| `createJournal`      | function | `() => JournalInterface`                                     | The record of one scenario's steps and the page's own output. |
 
 `resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
 passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its
@@ -241,6 +284,50 @@ revisits one — that is a complete cycle of the tab order — and re-resolves t
 every step, because a framework may replace the node between resolution and focus arrival. Its hard
 cap is three times the page's candidate count plus ten, including disabled controls and elements
 with `tabindex="-1"`, so a page whose focus never settles fails instead of hanging.
+
+`build` and `mount` are the halves of a fixture, and `render` is the pair spelled as one call.
+`build` creates the element and applies its class list, its text, and its attributes, and leaves it
+out of the document, so nothing resolves against the cascade and no box is laid out until the
+element is attached. Its text is set as text rather than parsed as markup, so a `<` in it stays a
+`<`. `mount` attaches an element and hands that same element back, which is what makes a computed
+style, an inherited custom property, and a real box available. `render` takes trusted fixture markup
+and returns the attached container holding it, or takes a tag and its class list and returns the
+attached element itself, typed as exactly that tag. The class list is required in the tag form,
+which is what keeps the forms apart: a one-argument call is always markup.
+
+None of them records anything. A browser test file shares one page, so a fixture left behind is the
+next test's resolver ambiguity, and removal belongs to the consumer's teardown: build the container
+in a setup module, register its removal on a `createTeardown` list or in an `afterEach` hook, and
+mount every fixture inside it.
+
+`typeInput` and `commitInput` write into a field the test already holds. `typeInput` sets the value
+in one write and dispatches one bubbling `input` event, with the value already set by the time a
+listener reads it. `commitInput` does that and then dispatches one bubbling `change`, which is the
+order a browser produces when a person types and then leaves the field. Neither sends a keystroke,
+so a component reading `key`, composition, or selection receives nothing from them — drive that one
+through `typeAccessible` instead.
+
+`removeDatabase` deletes one IndexedDB database and reports what the request did. Deleting a
+database that was never created succeeds, so an `afterEach` hook calls it whether or not the test
+reached the code that opens one. A block is a rejection rather than a wait: `blocked` fires while
+another connection is still open, and a suite that swallowed it would leave the next test reading
+the previous test's records through a database that reports itself deleted. The connection holding
+it open is the caller's to close, and [Voices](#voices) carries the message each refusal spells.
+
+`rgba` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks only the
+computed syntaxes a cascade hands back; `rgba` stages a probe element, hands the expression to the
+real cascade, and reads back what the engine computed — which is the only way a keyword, a hex
+triple, a `var()` reference, or a `color-mix()` becomes channels at all. The probe is mounted, so a
+`var()` reference resolves against the tokens `:root` declares, and it is removed in a `finally`.
+Refusal is the CSSOM's: an expression it will not parse returns `undefined`. A `var()` naming an
+undeclared custom property is not refused, and [Limits](#limits) states what that costs.
+
+`colorEqual` compares two colors as a browser renders them. Each string side resolves through
+`rgba`, so a keyword, a token reference, and the `rgb()` an engine computes for either compare equal
+without a test converting anything first. The tolerance is half a channel step on the 0–255 scale,
+and the alpha is scaled onto that same range before it is compared, so one number covers every
+channel. A side that resolves to nothing makes the answer `false` rather than a throw, because this
+is a predicate.
 
 `contrast` resolves a transparent or translucent background through the element's ancestors: every
 painted layer from the element up to the first opaque one composites top-over-bottom onto that
@@ -270,6 +357,32 @@ the browser painted once it landed: the `outline` the cascade declares, and the 
 `undefined` — in each case no measurement taken here would be about focus. `worn` names the element
 the chrome is painted onto when that is not the element holding focus, which is the hidden-input
 control whose visible label wears every pixel of its chrome.
+
+`readRules` is the one walk over the shipped cascade, and `readCascade`, `findRule`, and
+`findKeyframes` all read through it. It collects each sheet's own rules in sheet order and then
+expands the grouping rules level by level, so a media query, a supports block, a layer, and a nested
+style rule all surface, and a top-level rule is always met before a rule nested inside an earlier
+one. A stylesheet the document cannot read — a cross-origin sheet with no CORS grant — throws from
+its own `cssRules` getter, and that sheet is skipped rather than ending the walk.
+
+`findRule` and `findKeyframes` differ in how they match, and the subject is what decides it. A
+selector is compound, so `findRule` matches its argument as a substring of the whole selector text:
+`findRule('.card')` finds `.card`, `.card:hover`, and `.panel > .card` alike, and more of the
+selector narrows it. An animation name is one atom, so `findKeyframes` matches it exactly. Each
+answers what a stylesheet declares rather than what an element resolves to, and a rule either one
+finds may be overridden by another — assert on `style` where the rendered result is the subject.
+
+`token`, `rootToken`, and `pixels` are `style` with the question narrowed. `token` reads a custom
+property and accepts the name with or without its leading dashes, because a token is spoken about
+both ways — `--surface` in a stylesheet and `surface` in prose. An absent token reads as `''`, which
+is what the CSSOM returns and is indistinguishable from a token declared empty, so assert on the
+value you expect rather than on presence. Resolution is inheritance: a token declared on `:root`
+reads from any mounted descendant, and from an unmounted element it reads as `''`. `rootToken` is
+that reading taken against `document.documentElement`, which is where a theme declares its tokens
+and where a `[data-theme]` switch retunes them. `pixels` reads the leading number of a resolved
+length and answers `0` for a value carrying none, because `'auto'`, `'none'`, and `''` each
+contribute no pixels to what a reader sees; read the text with `style` where that distinction
+matters.
 
 `stagePane` unscales the runner's tester and lifts it to the window's origin, because a frame shot
 through the runner's fitting scale is a thumbnail of the surface. That couples it to Vitest's own
@@ -313,14 +426,16 @@ Imported from `@orkestrel/test/server`.
 
 #### Types
 
-| Type                 | Kind      | Shape                                                                                                                |
-| -------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
-| `ScratchInterface`   | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` — one owned directory. |
-| `ScratchIdentity`    | interface | `{ device, inode, birth }` — the three fields that together name one allocation on its host.                         |
-| `ScratchOptions`     | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`.                                    |
-| `LoopbackInterface`  | interface | `{ url, port }` plus `destroy` — one server on an owned ephemeral loopback port.                                     |
-| `CookieJarInterface` | interface | `{ header }` plus `read` / `capture` — one name-keyed cookie store filled from real responses.                       |
-| `InventoryOptions`   | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                                   |
+| Type                 | Kind      | Shape                                                                                                                      |
+| -------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ScratchInterface`   | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` — one owned directory.       |
+| `ScratchIdentity`    | interface | `{ device, inode, birth }` — the three fields that together name one allocation on its host.                               |
+| `ScratchOptions`     | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`.                                          |
+| `LoopbackInterface`  | interface | `{ url, port }` plus `destroy` — one server on an owned ephemeral loopback port.                                           |
+| `CookieJarInterface` | interface | `{ header }` plus `read` / `capture` — one name-keyed cookie store filled from real responses.                             |
+| `InventoryOptions`   | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`.                                                         |
+| `UpgradeOptions`     | interface | `{ path?, protocols? }` — the request path and the subprotocol tokens one upgrade request offers.                          |
+| `UpgradeResult`      | interface | `{ claimed, status, protocol }` — whether the server upgraded, the plain answer's status, and the subprotocol it selected. |
 
 #### Constants
 
@@ -332,17 +447,23 @@ Imported from `@orkestrel/test/server`.
 
 #### Helpers
 
-| API                  | Kind     | Signature                                                                                                           | Summary                                                                          |
-| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `readInventory`      | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Named files and walked directories, keyed by root-relative path in sorted order. |
-| `resolveContained`   | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                |
-| `isExcluded`         | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                      |
-| `matchesIdentity`    | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                 |
-| `createLink`         | function | `(path: string, source: string) => void`                                                                            | Create a symbolic link, or a directory junction where the host refuses one.      |
-| `removeTree`         | function | `(path: string) => void`                                                                                            | Remove a directory tree, retrying a briefly-held handle before rethrowing.       |
-| `isRunning`          | function | `(pid: number) => boolean`                                                                                          | Whether a process id names a live process at the moment of the call.             |
-| `waitForSocketClose` | function | `(socket: Socket, options?: WaitOptions) => Promise<void>`                                                          | Wait for a socket's `close`, waiting past a peer reset.                          |
-| `destroyScratch`     | function | `(scratch: ScratchInterface, options?: WaitOptions) => Promise<void>`                                               | Destroy a scratch directory, retrying until the host releases it.                |
+| API                      | Kind     | Signature                                                                                                           | Summary                                                                                |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `readInventory`          | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Named files and walked directories, keyed by root-relative path in sorted order.       |
+| `resolveContained`       | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                      |
+| `isExcluded`             | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                            |
+| `matchesIdentity`        | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                       |
+| `createLink`             | function | `(path: string, source: string) => void`                                                                            | Create a symbolic link, or a directory junction where the host refuses one.            |
+| `removeTree`             | function | `(path: string) => void`                                                                                            | Remove a directory tree, retrying a briefly-held handle before rethrowing.             |
+| `isRunning`              | function | `(pid: number) => boolean`                                                                                          | Whether a process id names a live process at the moment of the call.                   |
+| `waitForSocketClose`     | function | `(socket: Socket, options?: WaitOptions) => Promise<void>`                                                          | Wait for a socket's `close`, waiting past a peer reset.                                |
+| `destroyScratch`         | function | `(scratch: ScratchInterface, options?: WaitOptions) => Promise<void>`                                               | Destroy a scratch directory, retrying until the host releases it.                      |
+| `requestUpgrade`         | function | `(port: number, options?: UpgradeOptions) => Promise<UpgradeResult>`                                                | Drives one client upgrade request and reports what the server did.                     |
+| `supportsDirectoryLinks` | function | `() => boolean`                                                                                                     | Whether this host links a directory and reads through the link.                        |
+| `supportsFileLinks`      | function | `() => boolean`                                                                                                     | Whether this host links a file and reads the file through the link.                    |
+| `supportsMode`           | function | `() => boolean`                                                                                                     | Whether POSIX permission bits round-trip through this host's `chmod` and `stat` calls. |
+| `supportsCase`           | function | `() => boolean`                                                                                                     | Whether names differing only by case are distinct files on this host.                  |
+| `supportsBytes`          | function | `() => boolean`                                                                                                     | Whether a filename carrying a raw non-UTF-8 byte is written and read back.             |
 
 `resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
 both call it. It resolves the target against the root — relative or absolute — and returns
@@ -385,6 +506,33 @@ than re-exporting it.
 link points at, which is `link`'s vocabulary rather than `node:fs`'s. It is exported because a
 fixture creating its own links wants the same host handling rather than a second reading of it.
 
+`requestUpgrade` drives one real client upgrade request against a loopback port and reports what the
+server did. The request carries `Connection: Upgrade` and `Upgrade: websocket`, which is what routes
+it to a server's `upgrade` handler, and the offered subprotocols travel as one comma-separated
+`Sec-WebSocket-Protocol` field. `claimed` answers whether the server upgraded. `status` is the plain
+answer's status and is `undefined` on the claimed path, because a claimed upgrade produced no plain
+answer — the `101` on the wire is deliberately not reported as one. `protocol` is the field the
+server sent, so `undefined` there means the server selected none rather than that it refused. The
+promise settles once, on whichever of `upgrade`, `response`, and `error` arrives first, and a
+transport error — the `ECONNREFUSED` a closed port answers — is the rejection.
+
+The client socket is destroyed before every settlement and the request is made with no agent, so no
+pooled connection outlives the call to keep a suite's event loop alive. The socket the server keeps
+is the fixture's own: [Limits](#limits) states why `createLoopback` cannot take it back.
+
+The capability probes read this host rather than branching on `process.platform`.
+`supportsDirectoryLinks`, `supportsFileLinks`, `supportsMode`, `supportsCase`, and `supportsBytes`
+each allocate a directory under the host temporary directory, attempt the operation, read the result
+back, and remove the allocation in a `finally`. Each reads a host refusal as `false` rather than
+throwing, so the answer is a fact about this run rather than an error to handle, and each probes
+afresh on every call rather than remembering an answer a host can change. Gate a proof on the probe
+that names the mechanism it needs: an unprivileged Windows host answers `supportsDirectoryLinks`
+`true` through a junction while answering `supportsFileLinks` `false`, so a fixture that reads a
+file through a link asks the second question rather than the first. `supportsMode` answers whether a
+permission bit is stored, which is narrower than whether it is enforced — a POSIX host running as
+uid `0` stores every bit faithfully and bypasses the access check those bits describe, so a proof
+that needs a refusal probes that refusal itself.
+
 #### Factories
 
 | API               | Kind     | Signature                                        | Summary                                                              |
@@ -423,6 +571,19 @@ The call-signature members of each behavioral interface. Their `readonly` data m
 | Method  | Returns | Behavior                                                                     |
 | ------- | ------- | ---------------------------------------------------------------------------- |
 | `clear` | `void`  | Truncates the recorded calls in place; the recorder stays usable afterwards. |
+
+#### `EventSourceInterface`
+
+| Method | Returns | Behavior                                                                                                                                                                             |
+| ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `on`   | `void`  | Subscribes one handler to one event. The interface asks for the subscribe half alone, so a source that also removes handlers, emits, or counts subscriptions satisfies it unchanged. |
+
+#### `ResourceFactoryInterface`
+
+| Method    | Returns  | Behavior                                                                                                                                                                                                                          |
+| --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`  | `number` | Returns the next id and records it. The id is the creation record's length plus one, so it counts allocations rather than live resources: a destroyed id is never reissued, and clearing `created` restarts the numbering at `1`. |
+| `destroy` | `void`   | Records the id it was given and nothing else. It frees nothing, refuses nothing, and accepts an id that was never created, so a suite asserts on the record rather than on a refusal.                                             |
 
 #### `TeardownInterface`
 
@@ -577,18 +738,36 @@ absent, present-but-gated, and ambiguous are three different findings about an i
 | `Capture variant "<name>" is not registered`                                          | `createPortfolio`       |
 | `Capture state "<state>" is not registered`                                           | `place`                 |
 | `Capture state "<state>" is already placed`                                           | `place`                 |
+| `IndexedDB database "<name>" could not be deleted`                                    | `removeDatabase`        |
+| `IndexedDB database "<name>" is blocked by an open connection`                        | `removeDatabase`        |
 
 Some of them are narrowing rather than findings, and no input reaches them. Each `could not be
 resolved` is one: a preceding length check does not narrow the later lookup under
 `noUncheckedIndexedAccess`, so the branch gives the value its type.
 
-Three more are guards against a runner or provider this package does not control, and no test drives
-them either. `Tester pane is unavailable for a capture` fires where Vitest stops laying its tester
-out inside a pane. `Capture frame was written to <path> where <path> was asked for` fires where the
-provider resolves a screenshot path against a base other than the calling test file. `Capture frame
-at <path> is not the one this run shot` fires where the file on disk disagrees with the bytes the
-provider handed back — which a provider that overwrites its target never produces, so the suite
-proves that comparison discriminates with a planted file rather than by reaching the refusal.
+The capture guards are the other population no test drives, because each answers for a runner or a
+provider this package does not control. `Tester pane is unavailable for a capture` fires where
+Vitest stops laying its tester out inside a pane. `Capture frame was written to <path> where <path>
+was asked for` fires where the provider resolves a screenshot path against a base other than the
+calling test file. `Capture frame at <path> is not the one this run shot` fires where the file on
+disk disagrees with the bytes the provider handed back — which a provider that overwrites its target
+never produces, so the suite proves that comparison discriminates with a planted file rather than by
+reaching the refusal.
+
+### Refusals outside the journey layer
+
+The unchecked boundary refuses before it acts, and these are its own messages.
+
+| Voice                                  | Thrown by         |
+| -------------------------------------- | ----------------- |
+| `Method must be callable`              | `invokeUnchecked` |
+| `Target must be an object or function` | `readProperty`    |
+
+Each is a `TypeError` rather than an `Error`, because what failed is the argument's own type rather
+than a state the caller could have read first. Every other refusal `src/core` and `src/server` raise
+is documented with the member that raises it: a wait names the description it was given, a scratch
+member names the target it refused, and the [Contract](#contract) rule that owns each one spells the
+message out.
 
 ## Contract
 
@@ -765,17 +944,22 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     throwing. Whether it accepts or refuses one is that guard's own contract. Membership may grow in
     a release, so consumers loop over the whole array, assert their guard's expected answer per
     index, and attribute each failure by that index instead of naming or counting members locally.
-13. **The journey layer resolves its own targets, and imports almost nothing.** No helper in
+13. **The journey layer resolves its own targets, and imports almost nothing.** No journey verb in
     `src/browser` accepts an element, a component instance, or a selector for the target it acts on:
     each finds its own from a role and an accessible name, which is what stops a journey drifting
-    into a description of the markup. `render` takes markup and creates a node, and `clearStorage`
-    takes nothing at all. The predicates, the element readers, and the describers do take a node —
+    into a description of the markup. `build` creates a node, `mount` attaches one, `render` does
+    both, `clearStorage` takes nothing at all, and `removeDatabase` takes a database name. The
+    predicates, the element readers, and the describers do take a node —
     `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`, `describeTree`,
-    `describeFocus`, `extractOrphans`, `readRows`, `style`, `contrast`, `readLayers`,
-    `readBackdrop`, and `readRing` — and each is a reader of a node the caller already has rather
-    than a verb that acts on a target. `captureFrame` and `place` take one as the subject of a
-    photograph, which is a reading too: neither moves focus, dispatches an event, nor changes what
-    the element renders.
+    `describeFocus`, `extractOrphans`, `readRows`, `style`, `token`, `pixels`, `contrast`,
+    `readLayers`, `readBackdrop`, and `readRing` — and each is a reader of a node the caller already
+    has rather than a verb that acts on a target. `captureFrame` and `place` take one as the subject
+    of a photograph, which is a reading too: neither moves focus, dispatches an event, nor changes
+    what the element renders. `typeInput` and `commitInput` are the one pair that acts on the
+    element it is handed, and the exception is deliberately narrow: they are the synthetic
+    counterpart of `typeAccessible`, for a component that listens for `input` and a test that
+    already holds the field. Drive the field by name wherever the keystrokes are part of what the
+    journey claims.
     `readRing` is the case that makes the split explicit. It measures the focus chrome a browser
     painted and never brings the focus about, so a journey reaches the control through
     `traverseAccessible` or `pressKeys` and then measures what landed.
@@ -796,7 +980,10 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     and that description is what the timeout message carries — a wait nobody described times out
     saying nothing about what failed. Every bound is validated finite and non-negative before
     anything is read, a budget of `0` still permits the immediate first reading, and an abort rejects
-    with the signal's own reason rather than with a message of this package's. `waitForCondition` and
+    with the signal's own reason rather than with a message of this package's. `retryUntil` also
+    renders the last unsatisfying value into its exhaustion message, through `JSON.stringify` with a
+    string conversion behind it and a cut at 200 characters, so an exhausted retry reports what it
+    kept producing rather than only that it kept failing. `waitForCondition` and
     `retryUntil` throw opposite ways, and the split is deliberate: `waitForCondition` propagates a
     condition's throw
     unchanged, because a broken reading does not become true by being taken again, while `retryUntil`
@@ -917,26 +1104,26 @@ The table records the evidence and the ruling for each candidate the fleet surve
 row when the candidate's shape changes, when a native or declared primitive appears that covers it,
 or when a consumer appears the ruling did not consider.
 
-| Candidate                                                                                        | Ruling  | Why                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types | Refused | A published signature cannot import the consumer's event map, and an indexed access is not an inference site, so the map would have to be passed explicitly at every call site — and the calls that read a property off a call argument would hard-error with `as` and `!` banned. `createRecorder`, the kernel each local copy is built from, ships instead.                                  |
-| Hostile guard-input sets                                                                         | Ships   | `form`, `table`, and `supervisor` each feed one adversarial set through total readers, and the set is a mechanism rather than a policy: a guard's own contract decides the answers, not the corpus. It ships as `createHostileValues`; its members do not each become a factory, and every member carries a naive-reader negative control.                                                     |
-| Raw invocation — `invokeRaw`                                                                     | Refused | Native `Reflect.apply` already makes the call at a deliberately untyped boundary, and each caller pairs it with the domain guard that narrows what came back. A published version has to declare a return type for a call it cannot see the target of, so it would claim a type nothing proved.                                                                                                |
-| Condition polling — wall-clock predicate loops                                                   | Ships   | Rule 14 states the distinction: the no-polling architecture law governs a product's idle wakeup, and a test instrument waiting on a fact another process produces has no event to park on. It ships as `waitForCondition`. `retryUntil` ships on the same reading, because retrying a real operation is not re-reading a predicate; and where an event does exist, `waitForEvent` is the door. |
-| Deep nesting beyond a guard's cap                                                                | Refused | `table` builds a record chain and `supervisor` builds nested arrays. The two nest different containers, so one shared factory needs a selector argument that changes the construction algorithm — a mode switch rather than a mechanism.                                                                                                                                                       |
-| Canonical wire fixpoint assertions                                                               | Refused | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. The comparison is an assertion over the consumer's own codecs rather than a reusable mechanism, so the shape stays consumer-local and [Prove a wire fixpoint](#prove-a-wire-fixpoint) publishes the pattern instead.                                                                        |
-| Numeric corpora, hostile-key tables, and deep-freeze                                             | Refused | A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a mechanism, and one factory covering the variants would need a mode argument. `createHostileValues` ships because a guard's totality is a property of the guard; these encode a decision about coverage.                                                                        |
-| Clearing web storage between tests                                                               | Ships   | Emptying local and session storage together is one mechanism, and the `afterEach` hook that must run after a failed test too is where every browser suite needs it. It ships as `clearStorage`.                                                                                                                                                                                                |
-| Class-ancestry orphan detection                                                                  | Ships   | A rendered element carrying a child class with no container class above it is a real invariant a stylesheet cannot state, and the check is mechanism when the class names are parameters rather than one framework's. It ships as `extractOrphans(root, child, parent)`.                                                                                                                       |
-| A DOM element builder                                                                            | Refused | `render` already takes trusted fixture markup and attaches it to the document, so a builder assembling the same nodes one call at a time is a second way to write one fixture.                                                                                                                                                                                                                 |
-| A surface digest — `describeSurface`                                                             | Refused | Its digest format is one workspace's policy about what a summary of a surface contains, and it is assembled from the excluded `extractControls` besides. `describeTree` and `describeFocus` publish the readings a digest is built from instead.                                                                                                                                               |
-| A control extractor — `extractControls`                                                          | Refused | Generalized past its one caller it is a wrapper over `querySelectorAll` that adds no boundary, invariant, composition, or narrower contract, which is what the superfluous-wrapper rule refuses.                                                                                                                                                                                               |
-| Text resolution by selector — `resolveText`                                                      | Refused | Rule 13 is the contract it breaks: every published helper here resolves its own target from a role and an accessible name, and one that takes a selector turns a journey into a description of the markup.                                                                                                                                                                                     |
-| A hand-driven timer — `terminal`, `toolbox`                                                      | Refused | `toolbox` runtime-depends on `terminal`, so the two are one implementation rather than independent demand. The shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned and hand consumers a second incompatible type.                                                                                                                    |
-| A hand-driven clock — `mcp`, `middleware`                                                        | Refused | `AGENTS.md` bans replacing the host clock outright, so publishing one from the fleet's own test package would sanction across every workspace the substitution those rules refuse. `waitForDelay` waits on a real host timer and `waitForCondition` bounds a real elapsed interval with `performance.now()`.                                                                                   |
-| A reserve-then-release port picker                                                               | Refused | It binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given; `createLoopback` does exactly that for a server the test owns itself.                                                                         |
-| An abort-signal wait — `waitForAbort`                                                            | Refused | Every bounded member of the wait family already takes `WaitOptions.signal` and rejects with the signal's own reason, so a caller bounds its wait rather than waiting on the signal beside it. Where the abort itself is the event under test, `waitForEvent` subscribes to it.                                                                                                                 |
-| Abort-signal instrumentation                                                                     | Refused | A record of what a signal did is `createRecorder`'s handler passed to `addEventListener('abort', …)`, and what a suite then asserts about the reason and the ordering is its own. Publishing a wrapper around those two would add a name and no mechanism.                                                                                                                                     |
+| Candidate                                                                                        | Ruling  | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types | Ships   | It ships as `createRecorders`, with `RecorderMap` and `EventSourceInterface` beside it. Inference is what the earlier refusal turned on, and the shape settles it: a source parameter typed `EventSourceInterface<TMap>` is an inference site, so a call against one names no type argument, while a concrete class supplies none and the call names both. A published signature still cannot import a consumer's event map, so the interface asks for the subscribe half alone and the consumer's own map is what it is instantiated with. |
+| Hostile guard-input sets                                                                         | Ships   | `form`, `table`, and `supervisor` each feed one adversarial set through total readers, and the set is a mechanism rather than a policy: a guard's own contract decides the answers, not the corpus. It ships as `createHostileValues`; its members do not each become a factory, and every member carries a naive-reader negative control.                                                                                                                                                                                                  |
+| Raw invocation — `invokeRaw`                                                                     | Ships   | It ships as `invokeUnchecked`, with `readProperty` beside it for the read. Native `Reflect.apply` still makes the call; what these add is the boundary — a callability refusal before the call, a target refusal before the read, and one named place where an unchecked runtime result meets the type its caller claims. The claim stays the caller's, and so does the guard that narrows what came back. Without them a consumer that bans `as` cannot drive a foreign object at all.                                                     |
+| Condition polling — wall-clock predicate loops                                                   | Ships   | Rule 14 states the distinction: the no-polling architecture law governs a product's idle wakeup, and a test instrument waiting on a fact another process produces has no event to park on. It ships as `waitForCondition`. `retryUntil` ships on the same reading, because retrying a real operation is not re-reading a predicate; and where an event does exist, `waitForEvent` is the door.                                                                                                                                              |
+| Deep nesting beyond a guard's cap                                                                | Refused | `table` builds a record chain and `supervisor` builds nested arrays. The two nest different containers, so one shared factory needs a selector argument that changes the construction algorithm — a mode switch rather than a mechanism.                                                                                                                                                                                                                                                                                                    |
+| Canonical wire fixpoint assertions                                                               | Refused | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. The comparison is an assertion over the consumer's own codecs rather than a reusable mechanism, so the shape stays consumer-local and [Prove a wire fixpoint](#prove-a-wire-fixpoint) publishes the pattern instead.                                                                                                                                                                                                                     |
+| Numeric corpora, hostile-key tables, and deep-freeze                                             | Refused | A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a mechanism, and one factory covering the variants would need a mode argument. `createHostileValues` ships because a guard's totality is a property of the guard; these encode a decision about coverage.                                                                                                                                                                                                                     |
+| Clearing web storage between tests                                                               | Ships   | Emptying local and session storage together is one mechanism, and the `afterEach` hook that must run after a failed test too is where every browser suite needs it. It ships as `clearStorage`.                                                                                                                                                                                                                                                                                                                                             |
+| Class-ancestry orphan detection                                                                  | Ships   | A rendered element carrying a child class with no container class above it is a real invariant a stylesheet cannot state, and the check is mechanism when the class names are parameters rather than one framework's. It ships as `extractOrphans(root, child, parent)`.                                                                                                                                                                                                                                                                    |
+| A DOM element builder                                                                            | Ships   | It ships as `build` for the element and `mount` for the attachment, and `render` widened to take a tag and its class list as well as markup. A class list, a text, and an attribute map are what a fixture actually varies, and expressing that variation through markup means assembling a string. Nothing here assembles a tree one call at a time: a fixture with children is still written as markup.                                                                                                                                   |
+| A surface digest — `describeSurface`                                                             | Refused | Its digest format is one workspace's policy about what a summary of a surface contains, and it is assembled from the excluded `extractControls` besides. `describeTree` and `describeFocus` publish the readings a digest is built from instead.                                                                                                                                                                                                                                                                                            |
+| A control extractor — `extractControls`                                                          | Refused | Generalized past its one caller it is a wrapper over `querySelectorAll` that adds no boundary, invariant, composition, or narrower contract, which is what the superfluous-wrapper rule refuses.                                                                                                                                                                                                                                                                                                                                            |
+| Text resolution by selector — `resolveText`                                                      | Refused | Rule 13 is the contract it breaks: a journey verb resolves its own target from a role and an accessible name, and one that takes a selector turns a journey into a description of the markup. Taking a node the test already holds is a different thing, which is what the element readers do; `findRule` takes a selector because its subject is the stylesheet rather than a target to act on.                                                                                                                                            |
+| A hand-driven timer — `terminal`, `toolbox`                                                      | Refused | `toolbox` runtime-depends on `terminal`, so the two are one implementation rather than independent demand. The shape is also `@orkestrel/terminal`'s published `TimerHandler`, which a copy here would redeclare unversioned and hand consumers a second incompatible type.                                                                                                                                                                                                                                                                 |
+| A hand-driven clock — `mcp`, `middleware`                                                        | Refused | `AGENTS.md` bans replacing the host clock outright, so publishing one from the fleet's own test package would sanction across every workspace the substitution those rules refuse. `waitForDelay` waits on a real host timer and `waitForCondition` bounds a real elapsed interval with `performance.now()`.                                                                                                                                                                                                                                |
+| A reserve-then-release port picker                                                               | Refused | It binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given; `createLoopback` does exactly that for a server the test owns itself.                                                                                                                                                                                                                      |
+| An abort-signal wait — `waitForAbort`                                                            | Ships   | It ships as `waitForAbort`. Every bounded member still takes `WaitOptions.signal` and rejects with the signal's own reason, so a bounded wait needs nothing here; this answers the other case, where the abort is itself the fact the test waits for. It parks on a one-shot listener with no timer and no budget, so a signal that never aborts is the caller's own deadlock rather than a timeout this could name.                                                                                                                        |
+| Abort-signal instrumentation                                                                     | Ships   | It ships as `createSignal`. A recorder handed to `addEventListener('abort', …)` still records what one listener heard; what no recorder can answer is how many listeners stand on the signal at this moment, which is the question a leak asks. The instrumented signal counts its own abort registrations, keyed by the original callback and the capture mode, so a helper that removes what it added proves the removal.                                                                                                                 |
 
 `ScratchInterface`'s own members were ruled the same way, and coherence rather than demand decided
 them. `ensure` ships because it is the one member that produces an empty directory — `write` always
@@ -954,6 +1141,25 @@ The remaining local candidates are element and text requiring (redundant under
 `noUncheckedIndexedAccess`), unique naming (hidden module state), socket flushing (an unjustified
 constant), the throwing variant of `captureError`, and pattern requiring. Every product-specific
 peer, protocol fixture, and domain builder stays in the package that owns it.
+
+### Bounds a shipped helper carries
+
+A shipped helper can still decline the question it looks like it answers. Each bound here belongs to
+the helper rather than to the host, and each names what to reach for instead.
+
+- **`rgba` resolves an undeclared token to the inherited color.** A `var()` naming a custom property
+  nothing declares is not a parse failure: the cascade accepts it and computes the inherited color,
+  so `rgba('var(--absent)')` hands back channels rather than `undefined`. Read `token` or `rootToken`
+  where a missing token is the subject.
+- **`createLoopback` cannot take back an upgraded socket.** A server that claims an upgrade keeps
+  that connection, detached from the server itself, so `destroy()`'s `closeAllConnections` never
+  reaches it and the close waits on it. A fixture that upgrades records the socket its `upgrade`
+  handler took and destroys it before destroying the loopback.
+- **`destroyScratch`'s behavior under a permission hold is unproven where the hold cannot bind.** The
+  retry path is proven against a real host refusal, and a host that produces no such refusal cannot
+  exercise it: a container running as uid `0` bypasses the access check the mode bits describe, so
+  the suite reads a runtime probe and skips that case rather than asserting either answer. Read
+  `supportsMode` for the narrower question of whether the bits are stored at all.
 
 ## Patterns
 
@@ -978,6 +1184,107 @@ captured.length // 0 — the same array, truncated
 recorder.handler('c', 3)
 recorder.count // 1 — still usable
 ```
+
+### Record an emitter's events
+
+One call subscribes a recorder to each event you name and hands back a map keyed by those names. In
+the following fence, `createLoader` returns a loader that emits `read` for every file it reads and `fail`
+for every file it cannot.
+
+```ts
+import { createRecorders } from '@orkestrel/test'
+
+type LoaderEvents = {
+	readonly read: readonly [path: string]
+	readonly fail: readonly [reason: string, retryable: boolean]
+}
+
+const loader = createLoader()
+
+// A concrete class is no inference site for the event map, so this call names both type arguments.
+const recorders = createRecorders<LoaderEvents, 'read' | 'fail'>(loader, ['read', 'fail'])
+
+await loader.scan('src')
+
+recorders.read.count // 2
+recorders.read.calls // [['src/index.ts'], ['src/types.ts']]
+recorders.fail.calls // [['locked', true]]
+```
+
+Where the source arrives as a parameter typed `EventSourceInterface<TMap>`, the same call infers both
+type arguments and names neither.
+
+```ts
+import type { EventSourceInterface } from '@orkestrel/test'
+import { createRecorders } from '@orkestrel/test'
+
+function record(source: EventSourceInterface<LoaderEvents>) {
+	// `TMap` infers from the parameter and `TName` from the array.
+	return createRecorders(source, ['read', 'fail'])
+}
+```
+
+The interface asks for the subscribe half alone, so any source carrying a typed `on` satisfies it,
+whatever else it publishes. A duplicate event name installs a fresh recorder for each occurrence and
+the map keeps the last one, so name each event once unless the duplicate subscription is the subject.
+
+### Count the listeners on a signal
+
+`createSignal` hands back a real `AbortController`, its signal, and the tally of abort listeners
+standing on that signal at this moment. The tally is what a leak is asserted against: a recorder
+reports what one listener heard, and only the tally reports what is still installed.
+
+```ts
+import { createRecorder, createSignal, waitForAbort } from '@orkestrel/test'
+
+const instrument = createSignal()
+instrument.count // 0
+
+const heard = createRecorder<[event: Event]>()
+instrument.signal.addEventListener('abort', heard.handler)
+instrument.count // 1
+instrument.signal.addEventListener('abort', heard.handler)
+instrument.count // 1 — the same callback and capture mode register once
+
+const parked = waitForAbort(instrument.signal)
+instrument.count // 2
+
+instrument.controller.abort()
+await parked
+instrument.count // 1 — the one-shot listener left the tally when it fired
+heard.count // 1
+
+instrument.signal.removeEventListener('abort', heard.handler)
+instrument.count // 0 — removal takes the original callback, not the wrapper
+```
+
+Read `instrument.count` where you want the reading. It is a getter over the live registrations, so a
+number pulled out by destructuring is the tally as it stood at that line and stops tracking.
+
+### Number the resources a fixture allocates
+
+`createResourceFactory` answers the question a leak test asks — what was created, what was destroyed,
+and in what order — without the fixture keeping its own arrays.
+
+```ts
+import { createResourceFactory } from '@orkestrel/test'
+
+const resources = createResourceFactory()
+
+const first = resources.create() // 1
+const second = resources.create() // 2
+resources.destroy(first)
+
+resources.created.calls // [[1], [2]]
+resources.destroyed.calls // [[1]]
+resources.created.count - resources.destroyed.count // 1 — what the fixture still holds
+```
+
+The id is the creation record's length plus one, so it counts allocations rather than live resources
+and a destroyed id is never reissued. `destroy` records the id it was given and frees nothing, so it
+accepts an id that was never created and an id destroyed twice; assert on the record rather than
+expecting a refusal. Clearing `created` restarts the numbering at `1`, which is why the recorders are
+read rather than cleared mid-test.
 
 ### Capture a throw, then assert on it
 
@@ -1010,6 +1317,57 @@ requireValue(false) // false
 requireValue(undefined) // throws Error: Value is required
 requireValue(null, 'port is required') // throws Error: port is required
 ```
+
+### Cross an unchecked boundary
+
+`invokeUnchecked` and `readProperty` are the door out of a typed program and into a value nothing
+declares. Each refuses its own argument first, makes the unchecked access, and hands the result back
+under the type the caller named. In the following fence, `handle` comes back from a foreign module that
+ships no declarations.
+
+```ts
+import { invokeUnchecked, readProperty } from '@orkestrel/test'
+
+const close: unknown = readProperty(handle, 'close')
+invokeUnchecked<void>(handle, close, [])
+
+const label = readProperty<unknown>(handle, 'label')
+typeof label === 'string' // narrow what came back before asserting on it
+
+readProperty<string>(handle, 'absent') // undefined — nothing checks that the key is there
+invokeUnchecked<void>(handle, 'close', []) // throws TypeError: Method must be callable
+readProperty<string>(null, 'label') // throws TypeError: Target must be an object or function
+```
+
+The claim is yours. `readProperty<string>` narrows nothing at runtime, so a test that goes on to
+assert on the value reads it back as `unknown` and guards it, and a test that only drives the foreign
+object claims `void` and asserts on what the driving produced. That is the whole reason these ship:
+a consumer that bans `as` and `!` still has to reach a value the compiler cannot see, and this is the
+one named place where that happens.
+
+### Flatten headers into one record
+
+`flattenHeaders` turns any header initializer into a frozen plain record, so a header assertion is
+one `toStrictEqual` rather than a walk. Hand it a real response's own `headers`, a record, or an
+entries array.
+
+```ts
+import { flattenHeaders } from '@orkestrel/test'
+
+flattenHeaders({ 'Content-Type': 'application/json' }) // { 'content-type': 'application/json' }
+
+flattenHeaders([
+	['x-run', '1'],
+	['X-Run', '2'],
+]) // { 'x-run': '1, 2' } — one name, its values combined
+
+Object.isFrozen(flattenHeaders(new Headers({ accept: 'text/plain' }))) // true
+```
+
+The normalization is the host `Headers` constructor's own, so a record, an entries array, and a
+`Headers` value all answer the same way, and a name's case never decides whether an assertion
+matches. `HeadersSource` is that accepted input, derived from the constructor rather than named from
+a library, so it resolves the same in every project this package compiles under.
 
 ### Drain an async source
 
@@ -1356,6 +1714,75 @@ await loopback.destroy() // undefined — destroy is idempotent
 server.listening // false
 ```
 
+### Request an HTTP upgrade
+
+`requestUpgrade` drives a real client upgrade request at a loopback port and reports what the server
+did with it. The fixture keeps every socket its `upgrade` handler took, because an upgraded
+connection is detached from the server and `loopback.destroy()` cannot reach it.
+
+```ts
+import type { Duplex } from 'node:stream'
+import { createLoopback, requestUpgrade } from '@orkestrel/test/server'
+import { createServer } from 'node:http'
+
+const detached: Duplex[] = []
+const server = createServer((request, response) => {
+	response.statusCode = 426
+	response.end('upgrade required')
+})
+const loopback = await createLoopback(server)
+
+try {
+	// With no upgrade handler installed, the plain handler answers and the client reads that answer.
+	await requestUpgrade(loopback.port, { path: '/socket' })
+	// { claimed: false, status: 426, protocol: undefined }
+
+	server.on('upgrade', (request, socket) => {
+		detached.push(socket)
+		socket.write(
+			'HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Protocol: ledger.v2\r\n\r\n',
+		)
+	})
+
+	await requestUpgrade(loopback.port, { path: '/socket', protocols: ['ledger.v2', 'ledger.v1'] })
+	// { claimed: true, status: undefined, protocol: 'ledger.v2' }
+} finally {
+	for (const socket of detached) socket.destroy()
+	await loopback.destroy()
+}
+```
+
+Read `claimed` for what happened and the other members for the detail: `status` is the plain answer's
+status and is `undefined` on the claimed path, and `protocol` is the field the server sent, so
+`undefined` there says it selected none rather than that it refused. A closed port rejects with the
+client's own `ECONNREFUSED` rather than reporting a refusal.
+
+### Probe what the host supports
+
+Gate a proof on the mechanism it needs rather than on the platform name. Each probe allocates its own
+directory, attempts the operation, reads the result back, and removes what it made.
+
+```ts
+import { createScratch, supportsFileLinks } from '@orkestrel/test/server'
+import { expect, it } from 'vitest'
+
+it.skipIf(!supportsFileLinks())('reads a file through a link', () => {
+	const scratch = createScratch({ files: { 'source.txt': 'linked' } })
+	try {
+		scratch.link('gate.txt', 'source.txt')
+		expect(scratch.read('gate.txt')).toBe('linked')
+	} finally {
+		scratch.destroy()
+	}
+})
+```
+
+Pick the probe whose question is the one the proof rests on. `supportsDirectoryLinks` and
+`supportsFileLinks` split where an unprivileged Windows host does: it makes a directory junction and
+refuses a file link. `supportsCase` and `supportsBytes` answer for the filenames a walk can meet, and
+`supportsMode` answers whether a permission bit is stored rather than whether it is enforced. Nothing
+is remembered between calls, so a probe reads the host as it stands when the decision is taken.
+
 ### Replay response cookies
 
 `fetch` sends no cookie back on its own, so a test driving a session across requests has to carry
@@ -1413,6 +1840,41 @@ resolveContained(root, '/etc/passwd') // undefined — absolute and outside
 scratch.destroy()
 ```
 
+### Build and mount a fixture
+
+`build` makes the element, `mount` attaches it, and `render` is the pair in one call. Register the
+removal as you go: nothing here records what it created, and a browser test file shares one page, so
+a fixture left behind is the next test's resolver ambiguity.
+
+```ts
+import { createTeardown } from '@orkestrel/test'
+import { build, mount, render } from '@orkestrel/test/browser'
+import { afterEach } from 'vitest'
+
+const teardown = createTeardown()
+afterEach(() => teardown.destroy())
+
+const panel = mount(
+	build('section', { classes: 'surface', attributes: { 'aria-label': 'Ledger' } }),
+)
+teardown.add(() => panel.remove())
+
+// Built and appended inside the mounted panel, so it resolves against the shipped cascade.
+panel.append(build('button', { classes: 'primary', text: 'Save', attributes: { type: 'button' } }))
+
+const markup = render('<button type="button">Save</button>') // the attached container
+const heading = render('h2', 'title') // the attached element itself, typed as HTMLHeadingElement
+teardown.add(() => markup.remove())
+teardown.add(() => heading.remove())
+```
+
+Mount before measuring. An unmounted element inherits no custom property, resolves against no rule,
+and lays out no box, so `style`, `token`, and `pixels` each answer with the initial value — which
+reads as a styling defect rather than as a detached node — and `contrast` refuses the element
+outright, because its computed foreground color does not exist. `build` sets its `text` as text
+rather than as markup, so a `<` in it stays a `<`; write the fixture as markup where the fixture is
+markup.
+
 ### Drive an interface the way a person does
 
 Every verb finds its own target, so a journey names what a person names. Nothing here takes an
@@ -1443,6 +1905,32 @@ await traverseAccessible('Evaluate')
 
 readPerception('Run') // one visible named region, whitespace collapsed, hidden-but-read text kept
 ```
+
+### Drive a field the component listens to
+
+Drive a field by name wherever the keystrokes are part of what the journey claims. Reach for these
+where the test already holds the element and the subject is what the component does with the value.
+
+```ts
+import { requireValue } from '@orkestrel/test'
+import { commitInput, render, typeInput } from '@orkestrel/test/browser'
+
+const container = render('<input aria-label="Runs" value="0">')
+const field = requireValue(container.querySelector('input'))
+
+typeInput(field, '3') // one bubbling `input`, with the value already set when a listener reads it
+field.value // '3'
+
+commitInput(field, '4') // one `input`, then one `change`, both bubbling
+field.value // '4'
+
+container.remove()
+```
+
+`typeInput` dispatches no `change`, which is the split: a component that acts on every keystroke
+hears `input` alone, and one that waits for the field to be committed needs `commitInput`. Neither
+sends a keystroke, so a component reading `key`, composition, or selection receives nothing from
+them — `typeAccessible` is the door for that one.
 
 ### Measure what a reader sees
 
@@ -1496,6 +1984,85 @@ readRing(focused) // the ratio the painted outline or box-shadow reaches against
 // Some controls are two elements. `worn` names the one the chrome is painted onto.
 readRing(focused, requireValue(document.querySelector('label[for="evaluate"]')))
 ```
+
+### Read the tokens and colors a theme declares
+
+`token` and `rootToken` read what the cascade resolved, and `rgba` resolves any color expression by
+asking the same browser. In the following fence the document declares `--ink: rgb(1, 2, 3)` on `:root`,
+`.card` sets `padding-left: 12px`, and `card` is a mounted element carrying that class.
+
+```ts
+import { colorEqual, pixels, rgba, rootToken, token } from '@orkestrel/test/browser'
+
+rootToken('ink') // 'rgb(1, 2, 3)'
+rootToken('--ink') // 'rgb(1, 2, 3)' — the dashes are optional
+token(card, 'ink') // 'rgb(1, 2, 3)' — inherited from `:root` by a mounted element
+token(card, 'absent') // '' — an undeclared token reads as a token declared empty does
+
+rgba('var(--ink)') // [1, 2, 3, 1]
+rgba('rebeccapurple') // [102, 51, 153, 1]
+rgba('not-a-color') // undefined — the CSSOM refused the expression
+colorEqual('rebeccapurple', 'rgb(102, 51, 153)') // true
+colorEqual(token(card, 'ink'), 'rgb(1, 2, 3)') // true
+
+pixels(card, 'padding-left') // 12
+pixels(card, 'width') // 0 — a width resolving to `auto` carries no number
+```
+
+Assert on the value rather than on presence. An absent token and one declared empty both read as
+`''`, and `rgba` resolves a `var()` naming an undeclared property to the inherited color rather than
+refusing it, so a test that means to catch a missing token compares what `token` returned.
+
+### Find a rule in the cascade
+
+Assert on the stylesheet where the stylesheet is the subject, and on `style` where the rendered
+result is. In the following fence the cascade declares `.card { padding: 8px }` inside a media query, and
+an animation named `slide` carrying a `from` stop and a `to` stop.
+
+```ts
+import { findKeyframes, findRule, readRules } from '@orkestrel/test/browser'
+
+findRule('.card')?.style.getPropertyValue('padding') // '8px'
+findRule('.never-declared') // undefined
+
+findKeyframes('slide')?.cssRules.length // 2
+findKeyframes('slid') // undefined — an animation name matches exactly
+
+readRules().filter((rule) => rule instanceof CSSKeyframesRule) // every animation the cascade declares
+```
+
+`findRule` matches its argument as a substring of the whole selector text, so `findRule('.card')`
+finds `.card`, `.card:hover`, and `.panel > .card` alike; pass more of the selector to narrow it.
+Both finders read through `readRules`, which expands a media query, a supports block, a layer, and a
+nested style rule level by level, so a top-level rule is always met before a rule nested inside an
+earlier one. A rule either finder returns may still be overridden by another, which is why a claim
+about what a reader sees is asserted through `style`, `token`, `pixels`, or `contrast` instead.
+
+### Remove an IndexedDB database
+
+Close the connections the test opened, then delete. A live connection blocks the deletion, and the
+block is a rejection rather than a wait. In the following fence, `connection` is the `IDBDatabase` the
+test opened.
+
+```ts
+import { removeDatabase } from '@orkestrel/test/browser'
+import { afterEach } from 'vitest'
+
+// Runs after a failed test as well as a passing one, whether or not the test opened anything.
+afterEach(() => removeDatabase('ledger'))
+
+await removeDatabase('never-created') // resolves — deleting an absent database succeeds
+
+connection.close()
+await removeDatabase('ledger')
+
+// With that connection still open, the same call rejects instead:
+// Error: IndexedDB database "ledger" is blocked by an open connection
+```
+
+The rejection is the point. A suite that swallowed the block would leave the next test reading the
+previous test's records through a database that reports itself deleted, so the connection holding it
+open is handed back to the caller that owns it.
 
 ### Record a browser journal
 
