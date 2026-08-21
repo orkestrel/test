@@ -1,4 +1,10 @@
-import type { EventSubscriber, JSONSafe, RetryOptions, WaitOptions } from './types.js'
+import type {
+	EventSubscriber,
+	HeadersSource,
+	JSONSafe,
+	RetryOptions,
+	WaitOptions,
+} from './types.js'
 
 /**
  * Waits for a host timer to elapse.
@@ -206,7 +212,7 @@ export function readProperty<T>(target: unknown, key: PropertyKey): T {
  * @remarks Normalization follows the host `Headers` implementation, including lowercased names and
  * combined values.
  */
-export function flattenHeaders(init: HeadersInit): Readonly<Record<string, string>> {
+export function flattenHeaders(init: HeadersSource): Readonly<Record<string, string>> {
 	return Object.freeze(Object.fromEntries(new Headers(init).entries()))
 }
 

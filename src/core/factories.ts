@@ -161,7 +161,7 @@ export function createSignal(): SignalInterface {
 	const remove = signal.removeEventListener.bind(signal)
 	const registrations: Array<
 		readonly [
-			listener: EventListenerOrEventListenerObject,
+			listener: EventListener | EventListenerObject,
 			installed: EventListener,
 			capture: boolean,
 		]
@@ -171,7 +171,7 @@ export function createSignal(): SignalInterface {
 		configurable: true,
 		value(
 			type: string,
-			listener: EventListenerOrEventListenerObject | null,
+			listener: EventListener | EventListenerObject | null,
 			options?: boolean | AddEventListenerOptions,
 		) {
 			if (listener === null) return
@@ -204,7 +204,7 @@ export function createSignal(): SignalInterface {
 		configurable: true,
 		value(
 			type: string,
-			listener: EventListenerOrEventListenerObject | null,
+			listener: EventListener | EventListenerObject | null,
 			options?: boolean | EventListenerOptions,
 		) {
 			if (listener === null) return

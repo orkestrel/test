@@ -180,3 +180,12 @@ export type JSONSafe<T> = unknown extends T
 						? never
 						: { readonly [K in keyof T]: K extends symbol ? never : JSONSafe<T[K]> }
 					: never
+
+/**
+ * Any value the host `Headers` constructor accepts.
+ *
+ * @remarks Derived from the host constructor rather than named from a single library, so the type
+ * resolves identically in every project this package compiles under. The record, entries-array,
+ * and `Headers` forms all satisfy it.
+ */
+export type HeadersSource = NonNullable<ConstructorParameters<typeof Headers>[0]>
