@@ -1,18 +1,62 @@
-import { createHostileValues, createRecorder, createTeardown } from '@src/core'
+import type { EventSourceInterface } from '@src/core'
+import {
+	createHostileValues,
+	createRecorder,
+	createRecorders,
+	createResourceFactory,
+	createSignal,
+	createTeardown,
+	invokeUnchecked,
+} from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { isSerializableRecord } from '../../setup.js'
+
+type ScriptedEventMap = {
+	readonly progress: readonly [step: number]
+	readonly ready: readonly [name: string, step: number]
+}
+
+class ScriptedEventSource implements EventSourceInterface<ScriptedEventMap> {
+	readonly #subscriptions =
+		createRecorder<readonly [event: keyof ScriptedEventMap, handler: unknown]>()
+
+	get count(): number {
+		return this.#subscriptions.count
+	}
+
+	on<K extends keyof ScriptedEventMap>(
+		event: K,
+		handler: (...args: ScriptedEventMap[K]) => void,
+	): void {
+		this.#subscriptions.handler(event, handler)
+	}
+
+	emit(event: keyof ScriptedEventMap, args: readonly unknown[]): void {
+		for (const [name, handler] of this.#subscriptions.calls) {
+			if (name === event) invokeUnchecked<void>(this, handler, args)
+		}
+	}
+}
 
 describe('createHostileValues', () => {
 	it('provides a negative control for every hostile member', () => {
 		const values = createHostileValues()
 
-		expect(values.length).toBe(6)
 		expect(() => JSON.stringify(values[0])).toThrow(/circular|cyclic/i)
 		expect(() => Reflect.ownKeys(Object(values[1]))).toThrow(/revoked/i)
 		expect(() => Reflect.get(Object(values[2]), 'value')).toThrow('Hostile property read')
 		expect(() => Reflect.ownKeys(Object(values[3]))).toThrow('Hostile key enumeration')
 		expect(() => Object.getPrototypeOf(values[4])).toThrow('Hostile prototype read')
 		expect(() => Object(values[5]).hasOwnProperty('value')).toThrow(/hasOwnProperty/)
+		expect(() => Reflect.ownKeys(Object(values[6]))).toThrow(/revoked/i)
+		expect(() => JSON.stringify(values[7])).toThrow(/circular|cyclic/i)
+		expect(Object.keys(Object(values[8])).length).toBeLessThan(
+			Reflect.get(Object(values[8]), 'length'),
+		)
+		expect(Object.keys(Object(values[9])).length).toBeLessThan(
+			Reflect.ownKeys(Object(values[9])).length,
+		)
+		expect(() => Reflect.get(Object(values[10]), 'danger')).toThrow('Hostile named getter read')
 	})
 
 	it('returns a frozen array of fresh values', () => {
@@ -40,6 +84,13 @@ describe('createHostileValues', () => {
 })
 
 describe('createRecorder', () => {
+	it('defaults to unknown argument tuples', () => {
+		const recorder = createRecorder()
+		recorder.handler('value', 1)
+
+		expect(recorder.calls).toStrictEqual([['value', 1]])
+	})
+
 	it('records typed argument tuples in call order', () => {
 		const recorder = createRecorder<readonly [string, number]>()
 		expect(recorder.calls).toStrictEqual([])
@@ -69,6 +120,78 @@ describe('createRecorder', () => {
 		recorder.handler('after')
 		expect(calls).toStrictEqual([['after']])
 		expect(recorder.count).toBe(1)
+	})
+})
+
+describe('createRecorders', () => {
+	it('records each event argument tuple in delivery order', () => {
+		const source = new ScriptedEventSource()
+		const recorders = createRecorders(source, ['ready', 'progress'])
+
+		source.emit('ready', ['alpha', 1])
+		source.emit('progress', [2])
+		source.emit('ready', ['omega', 3])
+
+		expect(recorders.ready.calls).toStrictEqual([
+			['alpha', 1],
+			['omega', 3],
+		])
+		expect(recorders.progress.calls).toStrictEqual([[2]])
+	})
+
+	it('installs duplicate event names and retains the last recorder', () => {
+		const source = new ScriptedEventSource()
+		const recorders = createRecorders(source, ['ready', 'ready'])
+
+		source.emit('ready', ['value', 1])
+
+		expect(source.count).toBe(2)
+		expect(recorders.ready.calls).toStrictEqual([['value', 1]])
+	})
+})
+
+describe('createSignal', () => {
+	it('tracks listener addition and removal by original callback', () => {
+		const fixture = createSignal()
+		const recorder = createRecorder<readonly [event: Event]>()
+
+		fixture.signal.addEventListener('abort', recorder.handler)
+		expect(fixture.count).toBe(1)
+		fixture.signal.removeEventListener('abort', recorder.handler)
+		expect(fixture.count).toBe(0)
+
+		fixture.controller.abort()
+		expect(fixture.signal.aborted).toBe(true)
+		expect(recorder.count).toBe(0)
+	})
+
+	it('removes a one-shot listener from the tally when it fires', () => {
+		const fixture = createSignal()
+		const recorder = createRecorder<readonly [event: Event]>()
+		fixture.signal.addEventListener('abort', recorder.handler, { once: true })
+
+		fixture.controller.abort()
+
+		expect(fixture.signal.aborted).toBe(true)
+		expect(fixture.count).toBe(0)
+		expect(recorder.count).toBe(1)
+		fixture.signal.removeEventListener('abort', recorder.handler)
+		expect(fixture.count).toBe(0)
+	})
+})
+
+describe('createResourceFactory', () => {
+	it('creates increasing ids and records creation and destruction', () => {
+		const factory = createResourceFactory()
+
+		const first = factory.create()
+		const next = factory.create()
+		factory.destroy(next)
+		factory.destroy(first)
+
+		expect(next).toBeGreaterThan(first)
+		expect(factory.created.calls).toStrictEqual([[first], [next]])
+		expect(factory.destroyed.calls).toStrictEqual([[next], [first]])
 	})
 })
 

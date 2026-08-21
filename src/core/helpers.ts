@@ -11,6 +11,19 @@ export function waitForDelay(ms = 0): Promise<void> {
 }
 
 /**
+ * Waits until an abort signal is aborted.
+ *
+ * @param signal - The signal to observe.
+ * @returns A promise that resolves when the signal is aborted.
+ * @remarks An already-aborted signal resolves immediately. Otherwise the wait parks on a one-shot
+ * abort listener without a timer or polling.
+ */
+export function waitForAbort(signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve()
+	return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+}
+
+/**
  * Waits until a condition holds within an elapsed-time budget.
  *
  * @param description - The condition described in a timeout error.
@@ -90,13 +103,14 @@ export async function retryUntil<T>(
 	const start = performance.now()
 	let count = 0
 	let cause: unknown
+	let last: string | undefined
 	while (true) {
 		options?.signal?.throwIfAborted()
 		if (count > 0) {
 			const elapsed = performance.now() - start
 			if (elapsed >= budget) {
 				throw new Error(
-					`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)`,
+					`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)${last === undefined ? '' : ` (last value: ${last})`}`,
 					{ cause },
 				)
 			}
@@ -114,6 +128,18 @@ export async function retryUntil<T>(
 
 		if (produced.success) {
 			if (satisfied(produced.value)) return produced.value
+			let rendered: string
+			try {
+				const serialized = JSON.stringify(produced.value)
+				rendered = serialized === undefined ? String(produced.value) : serialized
+			} catch {
+				try {
+					rendered = String(produced.value)
+				} catch {
+					rendered = '[unrenderable]'
+				}
+			}
+			last = rendered.length > 200 ? `${rendered.slice(0, 197)}...` : rendered
 		} else {
 			cause = produced.error
 		}
@@ -121,17 +147,67 @@ export async function retryUntil<T>(
 		const elapsed = performance.now() - start
 		if (elapsed >= budget) {
 			throw new Error(
-				`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)`,
+				`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)${last === undefined ? '' : ` (last value: ${last})`}`,
 				{ cause },
 			)
 		}
 		if (attempts !== undefined && count >= attempts) {
-			throw new Error(`Retry "${description}" did not succeed within ${attempts} attempts`, {
-				cause,
-			})
+			throw new Error(
+				`Retry "${description}" did not succeed within ${attempts} attempts${last === undefined ? '' : ` (last value: ${last})`}`,
+				{ cause },
+			)
 		}
 		await waitForDelay(Math.min(interval, budget - elapsed))
 	}
+}
+
+/**
+ * Invokes an unknown method through an explicit unchecked result contract.
+ *
+ * @typeParam T - The result type claimed by the caller.
+ * @param target - The value used as the method's `this` argument.
+ * @param method - The unknown method to invoke.
+ * @param args - The arguments to pass.
+ * @returns The method's result under the caller's claimed type.
+ * @throws A `TypeError` when `method` is not callable.
+ * @remarks The caller owns the claim that the returned value has type `T`. The contained `any`
+ * bridges the unchecked runtime result to that caller-owned claim.
+ */
+export function invokeUnchecked<T>(target: unknown, method: unknown, args: readonly unknown[]): T {
+	if (typeof method !== 'function') throw new TypeError('Method must be callable')
+	const result: T = Reflect.apply(method, target, args)
+	return result
+}
+
+/**
+ * Reads a property from an unknown object or function.
+ *
+ * @typeParam T - The property type claimed by the caller.
+ * @param target - The unknown value to read.
+ * @param key - The property key to read.
+ * @returns The property value under the caller's claimed type.
+ * @throws A `TypeError` when `target` is neither an object nor a function.
+ * @remarks The caller owns the claim that the returned value has type `T`. The contained `any`
+ * bridges the unchecked runtime result to that caller-owned claim.
+ */
+export function readProperty<T>(target: unknown, key: PropertyKey): T {
+	if ((typeof target !== 'object' || target === null) && typeof target !== 'function') {
+		throw new TypeError('Target must be an object or function')
+	}
+	const result: T = Reflect.get(target, key)
+	return result
+}
+
+/**
+ * Normalizes headers into a frozen plain record.
+ *
+ * @param init - The platform header initializer to normalize.
+ * @returns A frozen record of normalized header names and values.
+ * @remarks Normalization follows the host `Headers` implementation, including lowercased names and
+ * combined values.
+ */
+export function flattenHeaders(init: HeadersInit): Readonly<Record<string, string>> {
+	return Object.freeze(Object.fromEntries(new Headers(init).entries()))
 }
 
 /**

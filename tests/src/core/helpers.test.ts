@@ -3,11 +3,16 @@ import {
 	captureError,
 	collect,
 	collectStream,
+	createHostileValues,
 	decodeJSONLines,
+	flattenHeaders,
+	invokeUnchecked,
+	readProperty,
 	requireValue,
 	resolveRoot,
 	retryUntil,
 	roundTripJSON,
+	waitForAbort,
 	waitForCondition,
 	waitForDelay,
 	waitForEvent,
@@ -58,6 +63,30 @@ describe('waitForDelay', () => {
 		await waitForDelay(delay)
 		const elapsed = performance.now() - start
 		expect(elapsed).toBeGreaterThanOrEqual(floor)
+	})
+})
+
+describe('waitForAbort', () => {
+	it('resolves immediately for an already-aborted signal', async () => {
+		const controller = new AbortController()
+		controller.abort()
+
+		await expect(waitForAbort(controller.signal)).resolves.toBeUndefined()
+	})
+
+	it('parks until the signal aborts', async () => {
+		const controller = new AbortController()
+		let resolved = false
+		const pending = waitForAbort(controller.signal).then(() => {
+			resolved = true
+		})
+		await Promise.resolve()
+		expect(resolved).toBe(false)
+
+		controller.abort()
+
+		await expect(pending).resolves.toBeUndefined()
+		expect(resolved).toBe(true)
 	})
 })
 
@@ -224,10 +253,48 @@ describe('retryUntil', () => {
 					return false
 				},
 				Boolean,
-				{ budget: 5, interval: 10 },
+				{ attempts: 1, budget: 0, interval: 10 },
 			),
-		).rejects.toThrow('Retry "time limit" did not succeed within 5ms')
+		).rejects.toThrow('Retry "time limit" did not succeed within 0ms')
 		expect(calls).toBe(1)
+	})
+
+	it('names the last produced value when exhausted', async () => {
+		let value = 'earlier'
+		await expect(
+			retryUntil(
+				'last value',
+				() => {
+					const current = value
+					value = 'latest'
+					return current
+				},
+				() => false,
+				{ attempts: 2, budget: 100, interval: 0 },
+			),
+		).rejects.toThrow('last value: "latest"')
+	})
+
+	it('bounds the rendered last value in the exhaustion message', async () => {
+		let caught: unknown
+		try {
+			await retryUntil(
+				'bounded value',
+				() => 'x'.repeat(400),
+				() => false,
+				{
+					attempts: 1,
+					budget: 100,
+				},
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBeInstanceOf(Error)
+		if (!(caught instanceof Error)) throw new Error('Expected a retry error')
+		expect(caught.message).toContain('...')
+		expect(caught.message.length).toBeLessThan(300)
 	})
 
 	it('returns the exact satisfying value', async () => {
@@ -432,6 +499,58 @@ describe('captureError', () => {
 				throw thrown
 			}),
 		).toBe(thrown)
+	})
+})
+
+describe('invokeUnchecked', () => {
+	it('invokes a callable and returns its result', () => {
+		const result = invokeUnchecked<number>(undefined, Math.max, [3, 7, 2])
+
+		expect(result).toBe(7)
+	})
+
+	it('throws TypeError for every hostile non-callable', () => {
+		for (const [index, value] of createHostileValues().entries()) {
+			expect(
+				() => invokeUnchecked<unknown>(undefined, value, []),
+				`hostile value ${index}`,
+			).toThrow(TypeError)
+		}
+	})
+})
+
+describe('readProperty', () => {
+	it('reads an object property under the caller-owned type', () => {
+		const value = readProperty<string>({ name: 'fixture' }, 'name')
+
+		expect(value).toBe('fixture')
+	})
+
+	it('throws TypeError for primitive targets', () => {
+		for (const value of [undefined, null, true, 1, 'text', 1n, Symbol('value')]) {
+			expect(() => readProperty<unknown>(value, 'name')).toThrow(TypeError)
+		}
+	})
+})
+
+describe('flattenHeaders', () => {
+	it('normalizes every HeadersInit form to equal frozen records', () => {
+		const record = flattenHeaders({ 'X-Test': 'value', Accept: 'text/plain' })
+		const entries = flattenHeaders([
+			['X-Test', 'value'],
+			['Accept', 'text/plain'],
+		])
+		const headers = flattenHeaders(new Headers({ 'X-Test': 'value', Accept: 'text/plain' }))
+
+		expect(record).toStrictEqual({ accept: 'text/plain', 'x-test': 'value' })
+		expect(entries).toStrictEqual(record)
+		expect(headers).toStrictEqual(record)
+		expect(Object.isFrozen(record)).toBe(true)
+		expect(Object.getPrototypeOf(record)).toBe(Object.prototype)
+	})
+
+	it('throws for an invalid header name', () => {
+		expect(() => flattenHeaders({ 'bad header': 'value' })).toThrow(TypeError)
 	})
 })
 

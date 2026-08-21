@@ -14,6 +14,62 @@ export interface RecorderInterface<TArgs extends readonly unknown[]> {
 	clear(): void
 }
 
+/**
+ * Subscribes handlers to a typed event source.
+ *
+ * @typeParam TMap - The event names and argument tuples the source delivers.
+ */
+export interface EventSourceInterface<TMap extends Record<string, readonly unknown[]>> {
+	/**
+	 * Subscribes a handler to an event.
+	 *
+	 * @param event - The event to subscribe to.
+	 * @param handler - The handler that receives each delivery.
+	 */
+	on<K extends keyof TMap>(event: K, handler: (...args: TMap[K]) => void): void
+}
+
+/**
+ * Maps event names to recorders for their delivered argument tuples.
+ *
+ * @typeParam TMap - The event names and argument tuples the source delivers.
+ * @typeParam TName - The event names represented in the map.
+ */
+export type RecorderMap<
+	TMap extends Record<string, readonly unknown[]>,
+	TName extends keyof TMap,
+> = { readonly [K in TName]: RecorderInterface<TMap[K]> }
+
+/** A real abort signal and controller instrumented with its live abort-listener tally. */
+export interface SignalInterface {
+	/** The controller that owns the signal. */
+	readonly controller: AbortController
+	/** The instrumented signal. */
+	readonly signal: AbortSignal
+	/** The live abort-listener tally. */
+	readonly count: number
+}
+
+/** A numbered resource factory with records of every creation and destruction. */
+export interface ResourceFactoryInterface {
+	/** The ids returned by `create`, in order. */
+	readonly created: RecorderInterface<readonly [id: number]>
+	/** The ids passed to `destroy`, in order. */
+	readonly destroyed: RecorderInterface<readonly [id: number]>
+	/**
+	 * Creates a numbered resource.
+	 *
+	 * @returns The next monotonically increasing id.
+	 */
+	create(): number
+	/**
+	 * Destroys a numbered resource.
+	 *
+	 * @param id - The resource id to destroy.
+	 */
+	destroy(id: number): void
+}
+
 /** The work one teardown entry performs when the list is destroyed. */
 export type TeardownHandler = () => void | Promise<void>
 
