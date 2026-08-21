@@ -1,4 +1,4 @@
-import type { EventSourceInterface } from '@src/core'
+import type { EventSourceInterface, RecorderMap } from '@src/core'
 import {
 	createHostileValues,
 	createRecorder,
@@ -7,6 +7,8 @@ import {
 	createSignal,
 	createTeardown,
 	invokeUnchecked,
+	isRecorderMapComplete,
+	requireValue,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { isSerializableRecord } from '../../setup.js'
@@ -48,7 +50,8 @@ describe('createHostileValues', () => {
 		expect(() => Reflect.ownKeys(Object(values[3]))).toThrow('Hostile key enumeration')
 		expect(() => Object.getPrototypeOf(values[4])).toThrow('Hostile prototype read')
 		expect(() => Object(values[5]).hasOwnProperty('value')).toThrow(/hasOwnProperty/)
-		expect(() => Reflect.ownKeys(Object(values[6]))).toThrow(/revoked/i)
+		expect(Array.isArray(values[6])).toBe(true)
+		expect(() => Reflect.get(Object(values[6]), 0)).toThrow('Hostile array index read')
 		expect(() => JSON.stringify(values[7])).toThrow(/circular|cyclic/i)
 		expect(Object.keys(Object(values[8])).length).toBeLessThan(
 			Reflect.get(Object(values[8]), 'length'),
@@ -140,6 +143,11 @@ describe('createRecorders', () => {
 			['omega', 3],
 		])
 		expect(recorders.progress.calls).toStrictEqual([[2]])
+		const ready: readonly [name: string, step: number] = requireValue(recorders.ready.calls[0])
+		const reversed: readonly [step: number, name: string] = [ready[1], ready[0]]
+		// The exact binding proves the tuple type; the reversed value proves the assertion detects a swap.
+		expect(ready).toStrictEqual(['alpha', 1])
+		expect(ready).not.toStrictEqual(reversed)
 	})
 
 	it('installs duplicate event names and retains the last recorder', () => {
@@ -150,6 +158,44 @@ describe('createRecorders', () => {
 
 		expect(source.count).toBe(2)
 		expect(recorders.ready.calls).toStrictEqual([['value', 1]])
+	})
+
+	it('infers exact tuples through an event-source interface', () => {
+		const scripted = new ScriptedEventSource()
+		const source: EventSourceInterface<ScriptedEventMap> = scripted
+		const recorders = createRecorders(source, ['ready', 'progress'])
+
+		scripted.emit('ready', ['value', 1])
+		scripted.emit('progress', [2])
+
+		const ready: readonly [name: string, step: number] = requireValue(recorders.ready.calls[0])
+		const progress: readonly [step: number] = requireValue(recorders.progress.calls[0])
+		expect(ready).toStrictEqual(['value', 1])
+		expect(progress).toStrictEqual([2])
+	})
+
+	it('narrows a partial map when every listed event has a recorder', () => {
+		const missing: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = {}
+		expect(isRecorderMapComplete(missing, ['ready'])).toBe(false)
+		const hostile: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = new Proxy(
+			{},
+			{
+				get() {
+					throw new Error('Hostile recorder read')
+				},
+			},
+		)
+		expect(isRecorderMapComplete(hostile, ['ready'])).toBe(false)
+
+		const partial: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = {
+			ready: createRecorder<readonly [name: string, step: number]>(),
+		}
+		if (!isRecorderMapComplete(partial, ['ready'])) {
+			throw new Error('Expected a complete recorder map')
+		}
+		const complete: RecorderMap<ScriptedEventMap, 'ready'> = partial
+		complete.ready.handler('value', 1)
+		expect(complete.ready.calls).toStrictEqual([['value', 1]])
 	})
 })
 
@@ -171,7 +217,9 @@ describe('createSignal', () => {
 	it('removes a one-shot listener from the tally when it fires', () => {
 		const fixture = createSignal()
 		const recorder = createRecorder<readonly [event: Event]>()
-		fixture.signal.addEventListener('abort', recorder.handler, { once: true })
+		fixture.signal.addEventListener('abort', recorder.handler, {
+			once: true,
+		})
 
 		fixture.controller.abort()
 
@@ -180,6 +228,36 @@ describe('createSignal', () => {
 		expect(recorder.count).toBe(1)
 		fixture.signal.removeEventListener('abort', recorder.handler)
 		expect(fixture.count).toBe(0)
+	})
+
+	it('removes a listener from the tally when its scoping signal aborts', () => {
+		const instrument = createSignal()
+		const lifetime = new AbortController()
+		const recorder = createRecorder<readonly [event: Event]>()
+		instrument.signal.addEventListener('abort', recorder.handler, {
+			signal: lifetime.signal,
+		})
+
+		expect(instrument.count).toBe(1)
+		lifetime.abort()
+		expect(instrument.count).toBe(0)
+		instrument.controller.abort()
+		expect(recorder.count).toBe(0)
+	})
+
+	it('does not tally a listener whose scoping signal is already aborted', () => {
+		const instrument = createSignal()
+		const lifetime = new AbortController()
+		const recorder = createRecorder<readonly [event: Event]>()
+		lifetime.abort()
+
+		instrument.signal.addEventListener('abort', recorder.handler, {
+			signal: lifetime.signal,
+		})
+		instrument.controller.abort()
+
+		expect(instrument.count).toBe(0)
+		expect(recorder.count).toBe(0)
 	})
 })
 

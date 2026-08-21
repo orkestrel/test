@@ -7,15 +7,28 @@ import type {
 	TeardownHandler,
 	TeardownInterface,
 } from './types.js'
+import { isRecorderMapComplete } from './validators.js'
 
 /**
  * Creates values that make common object readers throw or violate their assumptions.
  *
  * @returns A frozen array whose values are fresh on every call.
- * @remarks Every member makes a naive reader throw or violates a naive structural assumption. A
- * total guard survives every member without throwing. Whether it accepts or refuses one is that
- * guard's own contract. Membership may grow in a release, so test the whole returned set in a loop
- * and include the index in each failure.
+ * @remarks Every member makes a naive read throw or violates a naive structural assumption. A total
+ * guard survives every member without throwing. Whether it accepts or refuses one is that guard's
+ * own contract. Membership may grow in a release, so test the whole returned set in a loop and
+ * include the index in each failure.
+ *
+ * - The self-referential record makes JSON record serialization throw.
+ * - The revoked object proxy makes reflective object access throw.
+ * - The property proxy makes a named property read throw.
+ * - The key proxy makes key enumeration throw.
+ * - The prototype proxy makes a prototype read throw.
+ * - The null-prototype record breaks a direct `hasOwnProperty` call.
+ * - The array-target proxy passes an array check and makes an index read throw.
+ * - The self-referential array makes JSON collection serialization throw.
+ * - The sparse array violates the assumption that every index is enumerable.
+ * - The hidden-key record violates the assumption that every own key is enumerable.
+ * - The named getter makes its property read throw.
  * @example
  * ```ts
  * import { expect } from 'vitest'
@@ -47,8 +60,6 @@ export function createHostileValues(): readonly unknown[] {
 	cyclic.self = cyclic
 	const revoked = Proxy.revocable({}, {})
 	revoked.revoke()
-	const revokedArray = Proxy.revocable([], {})
-	revokedArray.revoke()
 	const cyclicArray: unknown[] = []
 	cyclicArray.push(cyclicArray)
 	const sparseArray = Array<unknown>(2)
@@ -92,7 +103,11 @@ export function createHostileValues(): readonly unknown[] {
 			},
 		),
 		Object.create(null),
-		revokedArray.proxy,
+		new Proxy([], {
+			get() {
+				throw new Error('Hostile array index read')
+			},
+		}),
 		cyclicArray,
 		sparseArray,
 		hidden,
@@ -133,18 +148,24 @@ export function createRecorder<
  * @param events - The events to record.
  * @returns A map from each requested event name to its recorder.
  * @remarks A duplicate event name installs a fresh recorder for every occurrence. The returned map
- * keeps the recorder installed for the last occurrence.
+ * keeps the recorder installed for the last occurrence. `TName` derives from the array's element
+ * type, so pass a literal array or tuple. An array declared with a wider union promises keys that an
+ * omitted union member does not add to the runtime map.
  */
 export function createRecorders<
 	TMap extends Record<string, readonly unknown[]>,
 	TName extends keyof TMap,
 >(source: EventSourceInterface<TMap>, events: readonly TName[]): RecorderMap<TMap, TName> {
-	const entries = events.map((event) => {
+	const recorders: Partial<RecorderMap<TMap, TName>> = {}
+	for (const event of events) {
 		const recorder = createRecorder<TMap[typeof event]>()
 		source.on(event, recorder.handler)
-		return [event, recorder]
-	})
-	return Object.fromEntries(entries)
+		recorders[event] = recorder
+	}
+	if (!isRecorderMapComplete(recorders, events)) {
+		throw new Error('Emitter recorder map is incomplete')
+	}
+	return recorders
 }
 
 /**
@@ -152,7 +173,9 @@ export function createRecorders<
  *
  * @returns The controller, its instrumented signal, and the current listener tally.
  * @remarks Instrumentation is installed on the created signal instance. A one-shot listener leaves
- * the tally when it fires, and removal accepts the original listener supplied by the caller.
+ * the tally when it fires, and removal accepts the original listener supplied by the caller. A
+ * listener scoped by another signal leaves when that signal aborts. An already-aborted scope
+ * installs and records nothing.
  */
 export function createSignal(): SignalInterface {
 	const controller = new AbortController()
@@ -162,8 +185,9 @@ export function createSignal(): SignalInterface {
 	const registrations: Array<
 		readonly [
 			listener: EventListener | EventListenerObject,
-			installed: EventListener,
+			installed: EventListener | EventListenerObject,
 			capture: boolean,
+			cleanup: AbortController | undefined,
 		]
 	> = []
 
@@ -180,6 +204,8 @@ export function createSignal(): SignalInterface {
 				return
 			}
 			const capture = typeof options === 'boolean' ? options : (options?.capture ?? false)
+			const scope = typeof options === 'object' ? options?.signal : undefined
+			if (scope?.aborted === true) return
 			if (
 				registrations.some(
 					(registration) => registration[0] === listener && registration[2] === capture,
@@ -187,17 +213,37 @@ export function createSignal(): SignalInterface {
 			) {
 				return
 			}
-			const once = typeof options === 'object' && options.once === true
-			const installed: EventListener = (event) => {
-				if (once) {
-					const index = registrations.findIndex((registration) => registration[1] === installed)
-					if (index >= 0) registrations.splice(index, 1)
-				}
-				if (typeof listener === 'function') listener.call(signal, event)
-				else listener.handleEvent(event)
+			const once = typeof options === 'object' && options?.once === true
+			const cleanup = scope === undefined ? undefined : new AbortController()
+			const installed: EventListenerObject = {
+				handleEvent(event) {
+					if (once) {
+						const index = registrations.findIndex((registration) => registration[1] === installed)
+						const registration = registrations[index]
+						if (registration !== undefined) {
+							registrations.splice(index, 1)
+							registration[3]?.abort()
+						}
+					}
+					if (typeof listener === 'function') listener.call(signal, event)
+					else listener.handleEvent(event)
+				},
 			}
-			registrations.push([listener, installed, capture])
 			add(type, installed, options)
+			registrations.push([listener, installed, capture, cleanup])
+			if (scope !== undefined && cleanup !== undefined) {
+				scope.addEventListener(
+					'abort',
+					() => {
+						const index = registrations.findIndex((registration) => registration[1] === installed)
+						const registration = registrations[index]
+						if (registration === undefined) return
+						registrations.splice(index, 1)
+						registration[3]?.abort()
+					},
+					{ once: true, signal: cleanup.signal },
+				)
+			}
 		},
 	})
 	Object.defineProperty(signal, 'removeEventListener', {
@@ -222,6 +268,7 @@ export function createSignal(): SignalInterface {
 				return
 			}
 			registrations.splice(index, 1)
+			registration[3]?.abort()
 			remove(type, registration[1], options)
 		},
 	})
