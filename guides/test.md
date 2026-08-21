@@ -271,12 +271,13 @@ whole-document readers take a value or nothing at all, so they name no target ei
 
 #### Factories
 
-| API                  | Kind     | Signature                                                    | Summary                                                       |
-| -------------------- | -------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| `createPointerEvent` | function | `(name: string, options?: PointerEventInit) => PointerEvent` | One real pointer event carrying a browser's own defaults.     |
-| `createDragEvent`    | function | `(name: string, options?: DragEventInit) => DragEvent`       | One real drag event carrying a live data transfer.            |
-| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`          | The capture registry one run places its screenshots through.  |
-| `createJournal`      | function | `() => JournalInterface`                                     | The record of one scenario's steps and the page's own output. |
+| API                  | Kind     | Signature                                                                                                 | Summary                                                                            |
+| -------------------- | -------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `createPointerEvent` | function | `(name: string, options?: PointerEventInit) => PointerEvent`                                              | One real pointer event carrying a browser's own defaults.                          |
+| `createDragEvent`    | function | `(name: string, options?: DragEventInit) => DragEvent`                                                    | One real drag event carrying a live data transfer.                                 |
+| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | The capture registry one run places its screenshots through.                       |
+| `createChannel`      | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | One console channel that records every call it receives and forwards it unchanged. |
+| `createJournal`      | function | `() => JournalInterface`                                                                                  | The record of one scenario's steps and the page's own output.                      |
 
 `resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
 passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its

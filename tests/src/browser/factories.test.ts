@@ -1,6 +1,7 @@
 import type { CaptureVariant } from '@src/browser'
 import {
 	CAPTURE_PANE,
+	createChannel,
 	createDragEvent,
 	createJournal,
 	createPointerEvent,
@@ -239,6 +240,50 @@ describe('createPortfolio', () => {
 		const shot = await commands.readFile(requireValue(element), 'base64')
 		expect(shot.length).toBeGreaterThan(0)
 		expect(shot).not.toBe(await commands.readFile(requireValue(surface), 'base64'))
+	})
+})
+
+describe('createChannel', () => {
+	it('records one prefixed line and forwards the same arguments', () => {
+		const forwarded = createRecorder<[unknown]>()
+		const output: string[] = []
+		const channel = createChannel('warn', output, forwarded.handler)
+		channel('low disk')
+		expect(output).toStrictEqual(['warn: low disk'])
+		expect(forwarded.calls).toStrictEqual([['low disk']])
+	})
+
+	it('joins every argument of one call into a single line through String', () => {
+		const forwarded = createRecorder<[unknown, unknown, unknown]>()
+		const output: string[] = []
+		const channel = createChannel('log', output, forwarded.handler)
+		channel('read', 3, { one: 1 })
+		expect(output).toStrictEqual(['log: read 3 [object Object]'])
+		expect(forwarded.count).toBe(1)
+	})
+
+	it('records a call carrying no arguments as its bare prefix', () => {
+		const forwarded = createRecorder<[]>()
+		const output: string[] = []
+		createChannel('debug', output, forwarded.handler)()
+		expect(output).toStrictEqual(['debug: '])
+	})
+
+	it('appends to the caller list, so two channels share one record in call order', () => {
+		const forwarded = createRecorder<[unknown]>()
+		const output: string[] = ['before']
+		createChannel('info', output, forwarded.handler)('first')
+		createChannel('error', output, forwarded.handler)('second')
+		expect(output).toStrictEqual(['before', 'info: first', 'error: second'])
+	})
+
+	it('records before it forwards, so a throwing target leaves the line recorded', () => {
+		const output: string[] = []
+		const channel = createChannel('error', output, () => {
+			throw new Error('Console is gone')
+		})
+		expect(() => channel('boom')).toThrow('Console is gone')
+		expect(output).toStrictEqual(['error: boom'])
 	})
 })
 

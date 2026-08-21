@@ -146,6 +146,41 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 }
 
 /**
+ * Creates one console channel that records every call it receives and hands that call on unchanged.
+ *
+ * @param name - The channel's name, which prefixes each line it records.
+ * @param output - The list each call is recorded into, appended to in place.
+ * @param forward - The channel every call is passed on to after it is recorded.
+ * @returns A channel carrying the console's own call signature.
+ *
+ * @remarks
+ * One call becomes one line. Every argument of that call is put through `String` and joined with a
+ * space, so a call carrying several values reads as the one line the page printed rather than as
+ * several entries.
+ *
+ * Nothing is swallowed. The record happens first and `forward` receives the arguments it would have
+ * received, so a page recorded through this prints exactly what it printed without it. The list
+ * belongs to the caller, so a channel writes into whatever it was handed and holds no state of its
+ * own. {@link createJournal} builds one channel per console method over one list.
+ *
+ * @example
+ * ```ts
+ * const output: string[] = []
+ * console.log = createChannel('log', output, console.log)
+ * ```
+ */
+export function createChannel(
+	name: string,
+	output: string[],
+	forward: (...data: unknown[]) => void,
+): (...data: unknown[]) => void {
+	return (...data) => {
+		output.push(`${name}: ${data.map((value) => String(value)).join(' ')}`)
+		forward(...data)
+	}
+}
+
+/**
  * Creates the journal one scenario records its steps and the page's own output into.
  *
  * @returns A journal that records nothing until it is started.
@@ -197,10 +232,7 @@ export function createJournal(): JournalInterface {
 			}
 			intercepted = forwarded
 			for (const channel of ['debug', 'error', 'info', 'log', 'warn'] as const) {
-				console[channel] = (...data: unknown[]) => {
-					output.push(`${channel}: ${data.map((value) => String(value)).join(' ')}`)
-					forwarded[channel](...data)
-				}
+				console[channel] = createChannel(channel, output, forwarded[channel])
 			}
 			const dropped = new AbortController()
 			listeners = dropped
