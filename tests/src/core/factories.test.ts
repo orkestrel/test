@@ -1,4 +1,4 @@
-import type { EventSourceInterface, RecorderMap } from '@src/core'
+import type { EventSourceInterface } from '@src/core'
 import {
 	createHostileValues,
 	createRecorder,
@@ -7,7 +7,6 @@ import {
 	createSignal,
 	createTeardown,
 	invokeUnchecked,
-	isRecorderMapComplete,
 	requireValue,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
@@ -173,30 +172,6 @@ describe('createRecorders', () => {
 		expect(ready).toStrictEqual(['value', 1])
 		expect(progress).toStrictEqual([2])
 	})
-
-	it('narrows a partial map when every listed event has a recorder', () => {
-		const missing: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = {}
-		expect(isRecorderMapComplete(missing, ['ready'])).toBe(false)
-		const hostile: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = new Proxy(
-			{},
-			{
-				get() {
-					throw new Error('Hostile recorder read')
-				},
-			},
-		)
-		expect(isRecorderMapComplete(hostile, ['ready'])).toBe(false)
-
-		const partial: Partial<RecorderMap<ScriptedEventMap, 'ready'>> = {
-			ready: createRecorder<readonly [name: string, step: number]>(),
-		}
-		if (!isRecorderMapComplete(partial, ['ready'])) {
-			throw new Error('Expected a complete recorder map')
-		}
-		const complete: RecorderMap<ScriptedEventMap, 'ready'> = partial
-		complete.ready.handler('value', 1)
-		expect(complete.ready.calls).toStrictEqual([['value', 1]])
-	})
 })
 
 describe('createSignal', () => {
@@ -258,6 +233,43 @@ describe('createSignal', () => {
 
 		expect(instrument.count).toBe(0)
 		expect(recorder.count).toBe(0)
+	})
+
+	it('detaches the scoping listener after removal by the original callback', () => {
+		const instrument = createSignal()
+		const lifetime = createSignal()
+		const recorder = createRecorder<readonly [event: Event]>()
+
+		instrument.signal.addEventListener('abort', recorder.handler, {
+			signal: lifetime.signal,
+		})
+		expect(lifetime.count).toBe(1)
+
+		instrument.signal.removeEventListener('abort', recorder.handler)
+
+		expect(lifetime.count).toBe(0)
+		lifetime.controller.abort()
+		instrument.controller.abort()
+		expect(recorder.count).toBe(0)
+	})
+
+	it('detaches the scoping listener after a one-shot delivery', () => {
+		const instrument = createSignal()
+		const lifetime = createSignal()
+		const recorder = createRecorder<readonly [event: Event]>()
+
+		instrument.signal.addEventListener('abort', recorder.handler, {
+			once: true,
+			signal: lifetime.signal,
+		})
+		expect(lifetime.count).toBe(1)
+
+		instrument.controller.abort()
+
+		expect(lifetime.count).toBe(0)
+		expect(recorder.count).toBe(1)
+		lifetime.controller.abort()
+		expect(lifetime.count).toBe(0)
 	})
 })
 

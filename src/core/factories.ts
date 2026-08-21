@@ -147,25 +147,28 @@ export function createRecorder<
  * @param source - The source to subscribe to.
  * @param events - The events to record.
  * @returns A map from each requested event name to its recorder.
+ * @throws Thrown when a listed event has no recorder, which a well-formed events array cannot
+ * produce.
  * @remarks A duplicate event name installs a fresh recorder for every occurrence. The returned map
  * keeps the recorder installed for the last occurrence. `TName` derives from the array's element
- * type, so pass a literal array or tuple. An array declared with a wider union promises keys that an
- * omitted union member does not add to the runtime map.
+ * type. An array declared with a wider union than its contents widens `TName` beyond the listed
+ * events. The omitted key reads `undefined` at runtime under a non-optional type, and the guard
+ * reports `true` because it checks the listed events. Pass a literal array or a tuple.
  */
 export function createRecorders<
 	TMap extends Record<string, readonly unknown[]>,
 	TName extends keyof TMap,
 >(source: EventSourceInterface<TMap>, events: readonly TName[]): RecorderMap<TMap, TName> {
-	const recorders: Partial<RecorderMap<TMap, TName>> = {}
+	const building: { -readonly [K in TName]?: RecorderInterface<TMap[TName]> } = {}
 	for (const event of events) {
-		const recorder = createRecorder<TMap[typeof event]>()
+		const recorder = createRecorder<TMap[TName]>()
 		source.on(event, recorder.handler)
-		recorders[event] = recorder
+		building[event] = recorder
 	}
-	if (!isRecorderMapComplete(recorders, events)) {
+	if (!isRecorderMapComplete<TMap, TName>(building, events)) {
 		throw new Error('Emitter recorder map is incomplete')
 	}
-	return recorders
+	return building
 }
 
 /**
@@ -229,7 +232,15 @@ export function createSignal(): SignalInterface {
 					else listener.handleEvent(event)
 				},
 			}
-			add(type, installed, options)
+			add(
+				type,
+				installed,
+				typeof options === 'object'
+					? options?.passive === undefined
+						? { capture, once }
+						: { capture, once, passive: options.passive }
+					: options,
+			)
 			registrations.push([listener, installed, capture, cleanup])
 			if (scope !== undefined && cleanup !== undefined) {
 				scope.addEventListener(
@@ -240,6 +251,7 @@ export function createSignal(): SignalInterface {
 						if (registration === undefined) return
 						registrations.splice(index, 1)
 						registration[3]?.abort()
+						remove(type, registration[1], { capture })
 					},
 					{ once: true, signal: cleanup.signal },
 				)
