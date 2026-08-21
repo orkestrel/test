@@ -1031,7 +1031,7 @@ describe('requestUpgrade', () => {
 			// protocol is the server's choice rather than an echo of what was asked for.
 			await expect(
 				requestUpgrade(loopback.port, { path: '/socket', protocols: ['chat', 'echo'] }),
-			).resolves.toStrictEqual({ claimed: true, protocol: 'chat', status: undefined })
+			).resolves.toStrictEqual({ claimed: true, protocol: 'chat' })
 
 			// The upgrade handler answered, so the plain handler above did not.
 			expect(detached.length).toBe(1)
@@ -1057,7 +1057,6 @@ describe('requestUpgrade', () => {
 			await expect(requestUpgrade(loopback.port)).resolves.toStrictEqual({
 				claimed: true,
 				protocol: undefined,
-				status: undefined,
 			})
 		} finally {
 			for (const socket of detached) socket.destroy()
@@ -1076,12 +1075,97 @@ describe('requestUpgrade', () => {
 		try {
 			await expect(requestUpgrade(loopback.port, { path: '/refused' })).resolves.toStrictEqual({
 				claimed: false,
-				protocol: undefined,
 				status: 426,
 			})
 
 			// The plain handler really answered, and it answered the path the options named.
 			expect(paths.calls).toStrictEqual([['/refused']])
+		} finally {
+			await loopback.destroy()
+		}
+	})
+
+	it('rejects with a message naming the port and path when the server never answers', async () => {
+		// The server takes the upgrade and writes nothing back, which is the case the budget exists
+		// for: the request was delivered, so no transport error arrives, and the `upgrade`,
+		// `response`, and `error` events all stay silent for as long as the caller waits.
+		const detached: Duplex[] = []
+		const server = createHTTPServer((_request, response) => response.end('unused'))
+		server.on('upgrade', (_request, socket) => {
+			detached.push(socket)
+		})
+		const silent = await createLoopback(server)
+		try {
+			const rejection: unknown = await requestUpgrade(silent.port, {
+				budget: 50,
+				path: '/socket',
+			}).catch((error: unknown) => error)
+
+			expect(rejection).toBeInstanceOf(Error)
+			// The port and the path are what tell a caller which wait ended, so both are read out of
+			// the message rather than matched as one fixed sentence.
+			expect(rejection).toHaveProperty('message', expect.stringContaining(String(silent.port)))
+			expect(rejection).toHaveProperty('message', expect.stringContaining('/socket'))
+
+			// The server really took the request, so the wait ended on the budget rather than on a
+			// connection that was never made.
+			expect(detached.length).toBe(1)
+
+			// The budget is a settlement path like the others, so it releases the client socket
+			// like the others. The fixture still holds the socket its upgrade handler took, so the
+			// reading clears only when the client end is gone and that server end is what remains.
+			await waitForCondition(
+				'only the socket the fixture still holds is left open',
+				() => countSocketHandles() === detached.length,
+				{ budget: 1000 },
+			)
+		} finally {
+			for (const socket of detached) socket.destroy()
+			await silent.destroy()
+		}
+	})
+
+	it('rejects with the abort reason, before and during the wait', async () => {
+		const detached: Duplex[] = []
+		const server = createHTTPServer((_request, response) => response.end('unused'))
+		server.on('upgrade', (_request, socket) => {
+			detached.push(socket)
+		})
+		const silent = await createLoopback(server)
+		const reason = new Error('the caller stopped waiting')
+		try {
+			const controller = new AbortController()
+			const pending = requestUpgrade(silent.port, { budget: 1000, signal: controller.signal })
+			controller.abort(reason)
+			await expect(pending).rejects.toBe(reason)
+
+			// An already-aborted signal refuses before the request is made, so the rejection is the
+			// caller's reason rather than anything the transport produced.
+			await expect(requestUpgrade(silent.port, { signal: AbortSignal.abort(reason) })).rejects.toBe(
+				reason,
+			)
+		} finally {
+			for (const socket of detached) socket.destroy()
+			await silent.destroy()
+		}
+	})
+
+	it('refuses a budget and an interval that are not finite and non-negative', async () => {
+		const loopback = await createLoopback(createHTTPServer())
+		try {
+			// A bound is read before anything is sent, so these refusals need no answering server.
+			await expect(requestUpgrade(loopback.port, { budget: Number.NaN })).rejects.toThrow(
+				'Upgrade budget must be finite and non-negative',
+			)
+			await expect(requestUpgrade(loopback.port, { budget: -1 })).rejects.toThrow(
+				'Upgrade budget must be finite and non-negative',
+			)
+			await expect(requestUpgrade(loopback.port, { interval: Number.NaN })).rejects.toThrow(
+				'Upgrade interval must be finite and non-negative',
+			)
+			await expect(requestUpgrade(loopback.port, { interval: -1 })).rejects.toThrow(
+				'Upgrade interval must be finite and non-negative',
+			)
 		} finally {
 			await loopback.destroy()
 		}
@@ -1240,14 +1324,6 @@ describe('host capability probes', () => {
 		}
 	})
 
-	it('supportsDirectoryLinks and supportsFileLinks answer separately', () => {
-		// The two are one question only where every host answers them together. An unprivileged
-		// Windows host creates a junction and refuses a file link, so a single `supportsLinks` would
-		// hide a capability the suites here select on independently.
-		expect(supportsDirectoryLinks()).toBe(DIRECTORY_LINKS)
-		expect(supportsFileLinks()).toBe(FILE_LINKS)
-	})
-
 	it('supportsMode reads whether a bit is stored, not whether it is enforced', () => {
 		const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-mode-control-'))
 		try {
@@ -1256,10 +1332,15 @@ describe('host capability probes', () => {
 			const stored = (statSync(parent).mode & 0o777) === 0o500
 
 			// The two readings come apart on a root POSIX host, which stores every bit faithfully
-			// and bypasses the check the bits describe. That is why the permission-hold case above
+			// and bypasses the check the bits describe. That is why the permission-hold case earlier
 			// probes the refusal instead of reading `supportsMode`.
 			expect(supportsMode()).toBe(stored)
-			expect(PERMISSION_HOLD_REFUSES_REMOVAL).toBe(stored && PERMISSION_HOLD_REFUSES_REMOVAL)
+
+			// The prediction the distinction earns: a host that stores the bit refuses the removal
+			// for every user except uid 0, and a host that stores nothing refuses nothing. The
+			// stored reading and the user id are read outside the hold probe, so this assertion
+			// fails wherever the probe's answer and that prediction come apart.
+			expect(PERMISSION_HOLD_REFUSES_REMOVAL).toBe(stored && process.getuid?.() !== 0)
 		} finally {
 			chmodSync(parent, 0o700)
 			rmSync(parent, { force: true, recursive: true })

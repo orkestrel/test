@@ -415,61 +415,96 @@ export async function destroyScratch(
  * Drives a real client upgrade request against a loopback port and reports what the server did.
  *
  * @param port - The port the server listens on at `127.0.0.1`.
- * @param options - Optional request path and offered subprotocols.
+ * @param options - Optional request path, offered subprotocols, time bounds, and abort signal.
  * @returns A promise resolving to the server's answer: a claimed upgrade with the protocol it
  * selected, or a refusal with the status it answered.
- * @throws The client's own transport error, such as the `ECONNREFUSED` a closed port answers.
- * @remarks The request carries `Connection: Upgrade` and `Upgrade: websocket`, which is what makes a
- * server's `upgrade` handler the one that answers it. The `upgrade`, `response`, and `error` events
- * are mutually exclusive in practice and the promise settles on whichever arrives first, so a second
- * event changes nothing. The client socket is destroyed before every settlement, on the claimed path
- * because an upgraded socket is detached from the request and outlives it otherwise. The request is
- * made with no agent, so no pooled connection survives the call to keep a suite's event loop alive.
+ * @throws The client's own transport error, such as the `ECONNREFUSED` a closed port answers, the
+ * abort reason, or an `Error` when a bound is invalid or the server does not answer within the
+ * budget.
+ * @remarks Default budget: `1000` milliseconds. The request carries `Connection: Upgrade` and
+ * `Upgrade: websocket`, which is what makes a server's `upgrade` handler the one that answers it.
+ * The `upgrade`, `response`, and `error` events are mutually exclusive in practice and the promise
+ * settles on whichever arrives first, so a second event changes nothing. The client socket is
+ * destroyed before every settlement, on the claimed path because an upgraded socket is detached from
+ * the request and outlives it otherwise. The request is made with no agent, so no pooled connection
+ * survives the call to keep a suite's event loop alive.
+ *
+ * A server that accepts the connection and answers nothing raises no transport error, so the budget
+ * is what ends that call: the rejection names the port and path it was waiting on. The interval is
+ * validated for consistency with the wait family but is not used, because this helper parks on the
+ * request's events.
  *
  * A `101` is the claimed path's status on the wire and is deliberately not reported: `status` is the
- * plain answer's status, and a claimed upgrade produced no plain answer.
+ * refused arm's member, and a claimed upgrade produced no plain answer.
  * @example
  * ```ts
  * const answer = await requestUpgrade(loopback.port, { path: '/socket', protocols: ['chat'] })
- * // { claimed: true, status: undefined, protocol: 'chat' }
+ * // { claimed: true, protocol: 'chat' }
  * ```
  */
 export async function requestUpgrade(
 	port: number,
 	options?: UpgradeOptions,
 ): Promise<UpgradeResult> {
+	const budget = options?.budget ?? 1000
+	const interval = options?.interval ?? 10
+	if (!Number.isFinite(budget) || budget < 0) {
+		throw new Error('Upgrade budget must be finite and non-negative')
+	}
+	if (!Number.isFinite(interval) || interval < 0) {
+		throw new Error('Upgrade interval must be finite and non-negative')
+	}
+
+	const signal = options?.signal
+	signal?.throwIfAborted()
+
+	const path = options?.path ?? '/'
+	const target = `127.0.0.1:${port}${path}`
 	const headers: Record<string, string> = { connection: 'Upgrade', upgrade: 'websocket' }
 	const protocols = options?.protocols ?? []
 	if (protocols.length > 0) headers['sec-websocket-protocol'] = protocols.join(', ')
 
-	const request = requestHTTP({
-		agent: false,
-		headers,
-		host: '127.0.0.1',
-		path: options?.path ?? '/',
-		port,
-	})
+	const request = requestHTTP({ agent: false, headers, host: '127.0.0.1', path, port })
 	const settled = Promise.withResolvers<UpgradeResult>()
+	const expiry = Promise.withResolvers<never>()
+	const aborted = Promise.withResolvers<never>()
+	const subscription = new AbortController()
 	request.on('upgrade', (response, socket) => {
 		const protocol = response.headers['sec-websocket-protocol']
 		socket.destroy()
-		settled.resolve({ claimed: true, protocol, status: undefined })
+		settled.resolve({ claimed: true, protocol })
 	})
 	request.on('response', (response) => {
 		const status = response.statusCode
 		response.destroy()
 		request.destroy()
-		settled.resolve({ claimed: false, protocol: undefined, status })
+		// A client response reaches this listener only after its status line is parsed, so the
+		// refusal is unproven; the server-side `IncomingMessage` that shares this type carries no
+		// status and would drive it.
+		if (status === undefined) {
+			settled.reject(new Error(`Upgrade request to ${target} was answered without a status`))
+			return
+		}
+		settled.resolve({ claimed: false, status })
 	})
 	request.on('error', (error) => {
 		request.destroy()
 		settled.reject(error)
 	})
+	signal?.addEventListener('abort', () => aborted.reject(signal.reason), {
+		once: true,
+		signal: subscription.signal,
+	})
+	const timer = setTimeout(() => {
+		expiry.reject(new Error(`Upgrade request to ${target} was not answered within ${budget}ms`))
+	}, budget)
 	request.end()
 
 	try {
-		return await settled.promise
+		return await Promise.race([settled.promise, expiry.promise, aborted.promise])
 	} finally {
+		clearTimeout(timer)
+		subscription.abort()
 		request.destroy()
 	}
 }

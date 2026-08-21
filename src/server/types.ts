@@ -1,3 +1,5 @@
+import type { WaitOptions } from '@src/core'
+
 /** A temporary directory a test owns, writes into, reads back, and removes when it is done. */
 export interface ScratchInterface {
 	/** The absolute path of the allocated directory. */
@@ -167,8 +169,13 @@ export interface InventoryOptions {
 	readonly exclude?: readonly string[]
 }
 
-/** Options for driving a client upgrade request. */
-export interface UpgradeOptions {
+/**
+ * Options for driving a client upgrade request.
+ *
+ * @remarks The time bounds and abort signal bound the wait for the server's answer, so a server
+ * that accepts the connection and never answers ends the call rather than parking it.
+ */
+export interface UpgradeOptions extends WaitOptions {
 	/** The request path, written with its leading slash. Defaults to `/`. */
 	readonly path?: string
 	/**
@@ -178,19 +185,14 @@ export interface UpgradeOptions {
 	readonly protocols?: readonly string[]
 }
 
-/** What one server did with a client upgrade request. */
-export interface UpgradeResult {
-	/**
-	 * True if the server upgraded the connection; false if it answered with a plain response
-	 * instead.
-	 */
-	readonly claimed: boolean
-	/** The plain response's status, or `undefined` when the server upgraded. */
-	readonly status: number | undefined
-	/**
-	 * The subprotocol the server selected, or `undefined` when the server selected none and when it
-	 * answered plainly. A server selects at most one, so this is the field it sent rather than a
-	 * list.
-	 */
-	readonly protocol: string | undefined
-}
+/**
+ * What one server did with a client upgrade request.
+ *
+ * @remarks `claimed` is the discriminant. The claimed arm carries `protocol`, the subprotocol the
+ * server selected, which is `undefined` when it selected none; a claimed upgrade produced no plain
+ * answer, so it carries no status and the `101` on the wire is deliberately not reported as one.
+ * The refused arm carries `status`, the plain answer's status, and no subprotocol.
+ */
+export type UpgradeResult =
+	| { readonly claimed: true; readonly protocol: string | undefined }
+	| { readonly claimed: false; readonly status: number }
