@@ -55,10 +55,13 @@ export interface ScratchInterface {
 	 * @param target - The relative or absolute contained path where the link is created. Unlike
 	 * `node:fs`'s `symlinkSync(target, path)` vocabulary, this interface consistently calls the
 	 * contained path the target.
-	 * @param source - The link text naming the pointed-at path. It may name a path outside the scratch
-	 * directory and is not containment-checked.
+	 * @param source - The destination path the link points at. The stored value is a path naming that
+	 * destination, but its exact text is not promised. The path may name a destination outside the
+	 * scratch directory and is not containment-checked.
 	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
-	 * link, or a file, or the host refuses to create the link.
+	 * link, or a file, or the host refuses to create the link, including a host that creates no
+	 * symbolic link when the source names an existing non-directory.
+	 * @remarks {@link createLink} owns the host-specific link mechanism.
 	 */
 	link(target: string, source: string): void
 	/**
@@ -126,6 +129,31 @@ export interface LoopbackInterface {
 	 * @remarks Idempotent. A plain `net.Server` waits for its open sockets to end.
 	 */
 	destroy(): Promise<void>
+}
+
+/** A name-keyed cookie store a test drives one origin with, filled from real responses. */
+export interface CookieJarInterface {
+	/**
+	 * The `Cookie` request header naming every stored cookie, or `undefined` while the jar holds none.
+	 */
+	readonly header: string | undefined
+	/**
+	 * Reads one stored cookie value.
+	 *
+	 * @param name - The cookie name.
+	 * @returns The stored value, or `undefined` when the jar holds no cookie of that name.
+	 */
+	read(name: string): string | undefined
+	/**
+	 * Applies every `Set-Cookie` field a response carries.
+	 *
+	 * @param response - The response whose `Set-Cookie` fields are applied.
+	 * @returns Those fields unmodified, in the order the response carried them.
+	 * @remarks Selection is by name alone. A field spelling `Max-Age=0` deletes its cookie and every
+	 * other field stores or replaces one, so `Domain`, `Path`, `Expires`, and `Secure` are read past
+	 * rather than honoured. Nothing outlives the jar.
+	 */
+	capture(response: Response): readonly string[]
 }
 
 /** Options for reading a source inventory. */

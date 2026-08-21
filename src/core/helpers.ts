@@ -1,4 +1,4 @@
-import type { JSONSafe } from './types.js'
+import type { EventSubscriber, JSONSafe, RetryOptions, WaitOptions } from './types.js'
 
 /**
  * Waits for a host timer to elapse.
@@ -8,6 +8,223 @@ import type { JSONSafe } from './types.js'
  */
 export function waitForDelay(ms = 0): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Waits until a condition holds within an elapsed-time budget.
+ *
+ * @param description - The condition described in a timeout error.
+ * @param condition - The synchronous or asynchronous condition to read.
+ * @param options - The time bounds and abort signal.
+ * @returns A promise that resolves when the condition first returns `true`.
+ * @throws The condition's thrown value, the abort reason, or an `Error` when a bound is invalid or
+ * the condition does not hold within the budget.
+ * @remarks The first read is immediate. Default budget: `1000` milliseconds. Default interval: `10`
+ * milliseconds.
+ */
+export async function waitForCondition(
+	description: string,
+	condition: () => boolean | Promise<boolean>,
+	options?: WaitOptions,
+): Promise<void> {
+	const budget = options?.budget ?? 1000
+	const interval = options?.interval ?? 10
+	if (!Number.isFinite(budget) || budget < 0) {
+		throw new Error('Wait budget must be finite and non-negative')
+	}
+	if (!Number.isFinite(interval) || interval < 0) {
+		throw new Error('Wait interval must be finite and non-negative')
+	}
+
+	const start = performance.now()
+	while (true) {
+		options?.signal?.throwIfAborted()
+		const held = await condition()
+		options?.signal?.throwIfAborted()
+		if (held) return
+
+		const elapsed = performance.now() - start
+		if (elapsed >= budget) {
+			throw new Error(
+				`Condition "${description}" did not hold within ${budget}ms (waited ${elapsed}ms)`,
+			)
+		}
+		await waitForDelay(interval)
+	}
+}
+
+/**
+ * Repeats a producer until one produced value satisfies a predicate.
+ *
+ * @typeParam T - The produced value type.
+ * @param description - The operation described in an exhaustion error.
+ * @param produce - The synchronous or asynchronous operation to repeat.
+ * @param satisfied - The predicate that accepts a produced value.
+ * @param options - The time, attempt, and abort bounds.
+ * @returns The first produced value the predicate accepts.
+ * @throws The predicate's thrown value, the abort reason, or an `Error` when a bound is invalid or
+ * the retry exhausts its budget or attempts.
+ * @remarks A producer throw counts as an unsatisfied attempt. The last producer error becomes the
+ * exhaustion error's `cause`. Default budget: `1000` milliseconds. Default interval: `10`
+ * milliseconds.
+ */
+export async function retryUntil<T>(
+	description: string,
+	produce: () => T | Promise<T>,
+	satisfied: (value: T) => boolean,
+	options?: RetryOptions,
+): Promise<T> {
+	const budget = options?.budget ?? 1000
+	const interval = options?.interval ?? 10
+	const attempts = options?.attempts
+	if (!Number.isFinite(budget) || budget < 0) {
+		throw new Error('Retry budget must be finite and non-negative')
+	}
+	if (!Number.isFinite(interval) || interval < 0) {
+		throw new Error('Retry interval must be finite and non-negative')
+	}
+	if (attempts !== undefined && (!Number.isInteger(attempts) || attempts < 1)) {
+		throw new Error('Retry attempts must be a positive integer')
+	}
+
+	const start = performance.now()
+	let count = 0
+	let cause: unknown
+	while (true) {
+		options?.signal?.throwIfAborted()
+		if (count > 0) {
+			const elapsed = performance.now() - start
+			if (elapsed >= budget) {
+				throw new Error(
+					`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)`,
+					{ cause },
+				)
+			}
+		}
+		let produced:
+			| { readonly success: false; readonly error: unknown }
+			| { readonly success: true; readonly value: T }
+		try {
+			produced = { success: true, value: await produce() }
+		} catch (error) {
+			produced = { success: false, error }
+		}
+		count += 1
+		options?.signal?.throwIfAborted()
+
+		if (produced.success) {
+			if (satisfied(produced.value)) return produced.value
+		} else {
+			cause = produced.error
+		}
+
+		const elapsed = performance.now() - start
+		if (elapsed >= budget) {
+			throw new Error(
+				`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)`,
+				{ cause },
+			)
+		}
+		if (attempts !== undefined && count >= attempts) {
+			throw new Error(`Retry "${description}" did not succeed within ${attempts} attempts`, {
+				cause,
+			})
+		}
+		await waitForDelay(Math.min(interval, budget - elapsed))
+	}
+}
+
+/**
+ * Waits for the first delivery from an event subscription.
+ *
+ * @typeParam TArgs - The delivered argument tuple.
+ * @param subscribe - The function that installs the event listener and may return its cleanup.
+ * @param description - The event described in a timeout error.
+ * @param options - The time bounds and abort signal.
+ * @returns The first delivered argument tuple.
+ * @throws The subscription's thrown value, the abort reason, or an `Error` when a bound is invalid
+ * or the event is not delivered within the budget.
+ * @remarks Default budget: `1000` milliseconds. The interval is validated for consistency with the
+ * wait family but is not used because this helper parks on the event.
+ */
+export async function waitForEvent<TArgs extends readonly unknown[]>(
+	subscribe: EventSubscriber<TArgs>,
+	description: string,
+	options?: WaitOptions,
+): Promise<TArgs> {
+	const budget = options?.budget ?? 1000
+	const interval = options?.interval ?? 10
+	if (!Number.isFinite(budget) || budget < 0) {
+		throw new Error('Event budget must be finite and non-negative')
+	}
+	if (!Number.isFinite(interval) || interval < 0) {
+		throw new Error('Event interval must be finite and non-negative')
+	}
+
+	const signal = options?.signal
+	signal?.throwIfAborted()
+	const delivery = Promise.withResolvers<TArgs>()
+	const controller = new AbortController()
+	let timeout: ReturnType<typeof setTimeout> | undefined
+	const pending: Array<Promise<TArgs>> = [
+		delivery.promise,
+		new Promise((_resolve, reject) => {
+			timeout = setTimeout(() => {
+				reject(new Error(`Event "${description}" was not delivered within ${budget}ms`))
+			}, budget)
+		}),
+	]
+	if (signal !== undefined) {
+		pending.push(
+			new Promise((_resolve, reject) => {
+				const combined = AbortSignal.any([signal, controller.signal])
+				combined.addEventListener(
+					'abort',
+					() => {
+						if (signal.aborted) reject(signal.reason)
+					},
+					{ once: true },
+				)
+			}),
+		)
+	}
+	const result = Promise.race(pending)
+	let cleanup: (() => void) | void = undefined
+	try {
+		try {
+			cleanup = subscribe((...args) => delivery.resolve(args))
+		} catch (error) {
+			delivery.reject(error)
+		}
+		return await result
+	} finally {
+		controller.abort()
+		if (timeout !== undefined) clearTimeout(timeout)
+		cleanup?.()
+	}
+}
+
+/**
+ * Decodes newline-delimited JSON values.
+ *
+ * @param text - The JSON Lines text to decode.
+ * @returns The decoded values in physical-line order.
+ * @throws An `Error` naming the malformed physical line, with the native `SyntaxError` as its
+ * `cause`.
+ */
+export function decodeJSONLines(text: string): readonly unknown[] {
+	const values: unknown[] = []
+	for (const [index, physical] of text.split('\n').entries()) {
+		const line = physical.endsWith('\r') ? physical.slice(0, -1) : physical
+		if (line.length === 0) continue
+		try {
+			const value: unknown = JSON.parse(line)
+			values.push(value)
+		} catch (cause) {
+			throw new Error(`Invalid JSON on line ${index + 1}`, { cause })
+		}
+	}
+	return values
 }
 
 /**

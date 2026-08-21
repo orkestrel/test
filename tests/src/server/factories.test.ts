@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	readlinkSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -16,9 +17,15 @@ import { Agent, createServer as createHTTPServer, get } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createLoopback, createScratch } from '@src/server'
+import { createCookieJar, createLoopback, createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { CASE_SENSITIVE_FS, POSIX_MODE, RAW_BYTE_NAMES, SYMLINKS } from '../../setupServer.js'
+import {
+	CASE_SENSITIVE_FS,
+	DIRECTORY_LINKS,
+	FILE_LINKS,
+	POSIX_MODE,
+	RAW_BYTE_NAMES,
+} from '../../setupServer.js'
 
 describe('createScratch', () => {
 	it.runIf(POSIX_MODE)('allocates its directory with mode 0700', () => {
@@ -114,21 +121,24 @@ describe('createScratch', () => {
 		}
 	})
 
-	it.runIf(SYMLINKS)('uses lexical containment without walking symbolic-link segments', () => {
-		const outside = mkdtempSync(join(tmpdir(), 'orkestrel-test-scratch-outside-'))
-		const scratch = createScratch()
-		try {
-			symlinkSync(outside, join(scratch.path, 'linked'), 'dir')
-			scratch.write('linked/file.txt', 'linked')
+	it.runIf(DIRECTORY_LINKS)(
+		'uses lexical containment without walking symbolic-link segments',
+		() => {
+			const outside = mkdtempSync(join(tmpdir(), 'orkestrel-test-scratch-outside-'))
+			const scratch = createScratch()
+			try {
+				symlinkSync(outside, join(scratch.path, 'linked'), 'junction')
+				scratch.write('linked/file.txt', 'linked')
 
-			expect(scratch.read('linked/file.txt')).toBe('linked')
-			expect(scratch.has('linked/file.txt')).toBe(true)
-			expect(readFileSync(join(outside, 'file.txt'), 'utf8')).toBe('linked')
-		} finally {
-			scratch.destroy()
-			rmSync(outside, { force: true, recursive: true })
-		}
-	})
+				expect(scratch.read('linked/file.txt')).toBe('linked')
+				expect(scratch.has('linked/file.txt')).toBe(true)
+				expect(readFileSync(join(outside, 'file.txt'), 'utf8')).toBe('linked')
+			} finally {
+				scratch.destroy()
+				rmSync(outside, { force: true, recursive: true })
+			}
+		},
+	)
 
 	it('rejects reading a directory with a package-authored error', () => {
 		const scratch = createScratch()
@@ -141,13 +151,13 @@ describe('createScratch', () => {
 		}
 	})
 
-	it.runIf(SYMLINKS)(
+	it.runIf(DIRECTORY_LINKS)(
 		'refuses every member that reaches the root when it is a symbolic link',
 		() => {
 			const scratch = createScratch()
 			const moved = `${scratch.path}-moved`
 			renameSync(scratch.path, moved)
-			symlinkSync(moved, scratch.path, 'dir')
+			symlinkSync(moved, scratch.path, 'junction')
 			try {
 				const message = 'Scratch directory is a symbolic link'
 				expect(() => scratch.has('file.txt')).toThrow(message)
@@ -186,7 +196,7 @@ describe('createScratch', () => {
 		}
 	})
 
-	it.runIf(SYMLINKS)('resolves an empty target to the allocation root', () => {
+	it('resolves an empty target to the allocation root', () => {
 		const scratch = createScratch()
 		try {
 			scratch.write('file.txt', 'file')
@@ -196,10 +206,25 @@ describe('createScratch', () => {
 			expect(scratch.names('')).toStrictEqual(['file.txt'])
 			expect(() => scratch.read('')).toThrow('Scratch path is a directory: ')
 
-			// An empty target names a directory that already exists, so both writing members surface
-			// the host's own refusal rather than a message from this package. The two codes are POSIX,
-			// which is the host this suite runs on.
+			// An empty target names a directory that already exists, so `write` surfaces the host's
+			// own refusal rather than a message from this package. `EISDIR` is what the host reports
+			// for a write onto a directory.
 			expect(() => scratch.write('', 'root')).toThrow('EISDIR')
+			expect(scratch.names()).toStrictEqual(['file.txt'])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it.runIf(DIRECTORY_LINKS)('surfaces the host EEXIST for a link at the allocation root', () => {
+		const scratch = createScratch()
+		try {
+			scratch.write('file.txt', 'file')
+
+			// The empty target resolves to the allocation root, which already exists, so the host
+			// refuses the link rather than this package. A host that creates a symbolic link refuses
+			// it there; a host that falls back to a directory junction refuses the junction with the
+			// same code.
 			expect(() => scratch.link('', 'source')).toThrow('EEXIST')
 			expect(scratch.names()).toStrictEqual(['file.txt'])
 		} finally {
@@ -452,25 +477,28 @@ describe('createScratch', () => {
 		})
 	})
 
-	describe.runIf(SYMLINKS)('link', () => {
-		it('creates a link at a contained target and creates its missing parents', () => {
-			const scratch = createScratch()
-			try {
-				scratch.write('source.txt', 'source')
-				scratch.link('nested/deep/linked.txt', join(scratch.path, 'source.txt'))
+	describe.runIf(DIRECTORY_LINKS)('link', () => {
+		it.runIf(FILE_LINKS)(
+			'creates a link at a contained target and creates its missing parents',
+			() => {
+				const scratch = createScratch()
+				try {
+					scratch.write('source.txt', 'source')
+					scratch.link('nested/deep/linked.txt', join(scratch.path, 'source.txt'))
 
-				expect(scratch.has('nested/deep/linked.txt')).toBe(true)
-				expect(lstatSync(join(scratch.path, 'nested', 'deep', 'linked.txt')).isSymbolicLink()).toBe(
-					true,
-				)
-				expect(scratch.read('nested/deep/linked.txt')).toBe('source')
-				expect(scratch.names('nested')).toStrictEqual(['deep'])
-			} finally {
-				scratch.destroy()
-			}
-		})
+					expect(scratch.has('nested/deep/linked.txt')).toBe(true)
+					expect(
+						lstatSync(join(scratch.path, 'nested', 'deep', 'linked.txt')).isSymbolicLink(),
+					).toBe(true)
+					expect(scratch.read('nested/deep/linked.txt')).toBe('source')
+					expect(scratch.names('nested')).toStrictEqual(['deep'])
+				} finally {
+					scratch.destroy()
+				}
+			},
+		)
 
-		it('points a contained link at a source outside the allocation', () => {
+		it.runIf(FILE_LINKS)('points a contained link at a source outside the allocation', () => {
 			const source = createScratch({ prefix: 'orkestrel-test-link-source-' })
 			const scratch = createScratch()
 			try {
@@ -485,6 +513,40 @@ describe('createScratch', () => {
 			} finally {
 				scratch.destroy()
 				source.destroy()
+			}
+		})
+
+		it.runIf(!FILE_LINKS)('refuses a link to an existing file and leaves the target empty', () => {
+			// The complement of the preceding proofs. Where the host refuses a file link, `link`
+			// surfaces that refusal rather than pointing a directory link at a file, which the host
+			// accepts and no reader can follow.
+			const scratch = createScratch()
+			try {
+				scratch.write('source.txt', 'source')
+
+				expect(() => scratch.link('linked.txt', join(scratch.path, 'source.txt'))).toThrow(Error)
+
+				expect(scratch.has('linked.txt')).toBe(false)
+				expect(existsSync(join(scratch.path, 'linked.txt'))).toBe(false)
+				expect(scratch.names()).toStrictEqual(['source.txt'])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
+		it.runIf(!FILE_LINKS)('stores an absolute path for a link made from a relative source', () => {
+			// Where the host refuses a symbolic link, `link` falls back to a directory junction and
+			// stores the source resolved against the link's own directory, so the stored text is
+			// absolute even for a source spelled relatively.
+			const scratch = createScratch()
+			try {
+				scratch.write('real/file.txt', 'real')
+				scratch.link('linked', 'real')
+
+				expect(isAbsolute(readlinkSync(join(scratch.path, 'linked')))).toBe(true)
+				expect(scratch.read('linked/file.txt')).toBe('real')
+			} finally {
+				scratch.destroy()
 			}
 		})
 
@@ -665,7 +727,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it.runIf(SYMLINKS)(
+		it.runIf(DIRECTORY_LINKS)(
 			'refuses an ancestor link back to the allocation and leaves every file intact',
 			() => {
 				const scratch = createScratch({
@@ -693,43 +755,49 @@ describe('createScratch', () => {
 			},
 		)
 
-		it.runIf(SYMLINKS)('removes a final symbolic link without removing its destination', () => {
-			const destination = createScratch({
-				files: { 'kept.txt': 'kept' },
-				prefix: 'orkestrel-test-remove-destination-',
-			})
-			const scratch = createScratch()
-			try {
-				scratch.link('gate', destination.path)
+		it.runIf(DIRECTORY_LINKS)(
+			'removes a final symbolic link without removing its destination',
+			() => {
+				const destination = createScratch({
+					files: { 'kept.txt': 'kept' },
+					prefix: 'orkestrel-test-remove-destination-',
+				})
+				const scratch = createScratch()
+				try {
+					scratch.link('gate', destination.path)
 
-				scratch.remove('gate')
+					scratch.remove('gate')
 
-				expect(scratch.has('gate')).toBe(false)
-				expect(destination.read('kept.txt')).toBe('kept')
-				expect(destination.names()).toStrictEqual(['kept.txt'])
-			} finally {
-				scratch.destroy()
-				destination.destroy()
-			}
-		})
+					expect(scratch.has('gate')).toBe(false)
+					expect(destination.read('kept.txt')).toBe('kept')
+					expect(destination.names()).toStrictEqual(['kept.txt'])
+				} finally {
+					scratch.destroy()
+					destination.destroy()
+				}
+			},
+		)
 
-		it.runIf(SYMLINKS)('removes a sibling directory reached through the same ancestor link', () => {
-			const scratch = createScratch()
-			const sibling = createScratch({
-				files: { 'removed.txt': 'removed' },
-				prefix: 'orkestrel-test-remove-sibling-',
-			})
-			try {
-				scratch.link('up', '..')
+		it.runIf(DIRECTORY_LINKS)(
+			'removes a sibling directory reached through the same ancestor link',
+			() => {
+				const scratch = createScratch()
+				const sibling = createScratch({
+					files: { 'removed.txt': 'removed' },
+					prefix: 'orkestrel-test-remove-sibling-',
+				})
+				try {
+					scratch.link('up', '..')
 
-				scratch.remove(`up/${basename(sibling.path)}`)
+					scratch.remove(`up/${basename(sibling.path)}`)
 
-				expect(existsSync(sibling.path)).toBe(false)
-			} finally {
-				scratch.destroy()
-				sibling.destroy()
-			}
-		})
+					expect(existsSync(sibling.path)).toBe(false)
+				} finally {
+					scratch.destroy()
+					sibling.destroy()
+				}
+			},
+		)
 
 		it('refuses an escaping target', () => {
 			const scratch = createScratch()
@@ -846,7 +914,7 @@ describe('createScratch', () => {
 			}
 		})
 
-		it.runIf(SYMLINKS)('refuses a parent whose final segment is a symbolic link', () => {
+		it.runIf(DIRECTORY_LINKS)('refuses a parent whose final segment is a symbolic link', () => {
 			const parent = createScratch({ prefix: 'orkestrel-test-parent-linked-' })
 			try {
 				const real = parent.ensure('real')
@@ -1049,5 +1117,113 @@ describe('createLoopback', () => {
 				})
 			})
 		}
+	})
+})
+
+describe('createCookieJar', () => {
+	it('renders no header and reads nothing while it holds no cookie', () => {
+		const jar = createCookieJar()
+
+		expect(jar.header).toBeUndefined()
+		expect(jar.read('session')).toBeUndefined()
+	})
+
+	it('captures every Set-Cookie field a real response carries', () => {
+		const response = new Response(null, {
+			headers: new Headers([
+				['set-cookie', 'session=abc123; Path=/; HttpOnly'],
+				['set-cookie', 'csrf=xyz789; Path=/; SameSite=Strict'],
+				// A base64 value carries its own separators, so the split takes the first one only.
+				['set-cookie', 'token=YWJjZA==; Path=/'],
+			]),
+		})
+		const jar = createCookieJar()
+
+		const fields = jar.capture(response)
+
+		expect(fields).toStrictEqual([
+			'session=abc123; Path=/; HttpOnly',
+			'csrf=xyz789; Path=/; SameSite=Strict',
+			'token=YWJjZA==; Path=/',
+		])
+		expect(jar.read('session')).toBe('abc123')
+		expect(jar.read('csrf')).toBe('xyz789')
+		expect(jar.read('token')).toBe('YWJjZA==')
+		expect(jar.read('absent')).toBeUndefined()
+		expect(jar.header).toBe('session=abc123; csrf=xyz789; token=YWJjZA==')
+	})
+
+	it('replaces a cookie the origin sets again, whatever attributes it carries', () => {
+		const jar = createCookieJar()
+		jar.capture(
+			new Response(null, { headers: new Headers([['set-cookie', 'session=first; Path=/']]) }),
+		)
+		expect(jar.read('session')).toBe('first')
+
+		// The second field names another path, which a name-keyed jar reads past: one cookie, one
+		// entry, and the later value wins.
+		jar.capture(
+			new Response(null, {
+				headers: new Headers([['set-cookie', 'session=second; Path=/reports; Secure']]),
+			}),
+		)
+
+		expect(jar.read('session')).toBe('second')
+		expect(jar.header).toBe('session=second')
+	})
+
+	it('deletes a cookie on Max-Age=0 in whatever case and spacing the origin sends', () => {
+		const jar = createCookieJar()
+		jar.capture(
+			new Response(null, {
+				headers: new Headers([
+					['set-cookie', 'plain=1'],
+					['set-cookie', 'lower=2'],
+					['set-cookie', 'tight=3'],
+					['set-cookie', 'spaced=4'],
+					['set-cookie', 'kept=5'],
+				]),
+			}),
+		)
+		expect(jar.header).toBe('plain=1; lower=2; tight=3; spaced=4; kept=5')
+
+		jar.capture(
+			new Response(null, {
+				headers: new Headers([
+					['set-cookie', 'plain=; Max-Age=0'],
+					['set-cookie', 'lower=; max-age=0; Path=/'],
+					['set-cookie', 'tight=;Max-Age=0'],
+					['set-cookie', 'spaced=; Max-Age = 0 ; Path=/'],
+					// The control from outside the deletion population: a non-zero age still stores.
+					['set-cookie', 'kept=6; Max-Age=600'],
+				]),
+			}),
+		)
+
+		expect(jar.read('plain')).toBeUndefined()
+		expect(jar.read('lower')).toBeUndefined()
+		expect(jar.read('tight')).toBeUndefined()
+		expect(jar.read('spaced')).toBeUndefined()
+		expect(jar.read('kept')).toBe('6')
+		expect(jar.header).toBe('kept=6')
+	})
+
+	it('reads past a field carrying no name and value pair, and still returns it', () => {
+		const jar = createCookieJar()
+
+		const fields = jar.capture(
+			new Response(null, {
+				headers: new Headers([
+					['set-cookie', 'malformed'],
+					['set-cookie', '=headless; Path=/'],
+					['set-cookie', 'kept=value'],
+				]),
+			}),
+		)
+
+		expect(fields).toStrictEqual(['malformed', '=headless; Path=/', 'kept=value'])
+		expect(jar.read('malformed')).toBeUndefined()
+		expect(jar.read('')).toBeUndefined()
+		expect(jar.header).toBe('kept=value')
 	})
 })

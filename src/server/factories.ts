@@ -1,5 +1,6 @@
 import type { Server } from 'node:net'
 import type {
+	CookieJarInterface,
 	LoopbackInterface,
 	ScratchIdentity,
 	ScratchInterface,
@@ -13,12 +14,11 @@ import {
 	readFileSync,
 	readdirSync,
 	statSync,
-	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
-import { matchesIdentity, removeTree, resolveContained } from './helpers.js'
+import { createLink, matchesIdentity, removeTree, resolveContained } from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -125,7 +125,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			mkdirSync(dirname(candidate), { recursive: true })
-			symlinkSync(source, candidate)
+			createLink(candidate, source)
 		},
 		remove(target) {
 			const candidate = resolveContained(path, target)
@@ -206,6 +206,43 @@ export async function createLoopback(server: Server): Promise<LoopbackInterface>
 				})
 			}
 			return destruction
+		},
+	}
+}
+
+/**
+ * Creates a cookie jar that records a real response's cookies and replays them as one header.
+ *
+ * @returns The rendered request header, and the members that read and capture cookies.
+ * @remarks Selection is by name alone: no `Domain` or `Path` matching, no `Expires` or `Secure`
+ * handling, and no persistence beyond the jar. That is what a test driving one origin over one path
+ * needs, and a fixture needing a browser's cookie store needs a browser rather than this.
+ */
+export function createCookieJar(): CookieJarInterface {
+	const cookies = new Map<string, string>()
+	return {
+		get header() {
+			const pairs = [...cookies].map(([name, value]) => `${name}=${value}`)
+			return pairs.length === 0 ? undefined : pairs.join('; ')
+		},
+		read(name) {
+			return cookies.get(name)
+		},
+		capture(response) {
+			const fields = response.headers.getSetCookie()
+			for (const field of fields) {
+				const boundary = field.indexOf(';')
+				const pair = boundary < 0 ? field : field.slice(0, boundary)
+				const separator = pair.indexOf('=')
+				if (separator < 1) continue
+
+				const name = pair.slice(0, separator)
+				// An origin spells a deletion `Max-Age=0` in whatever case and spacing it likes, so the
+				// attribute is matched rather than compared.
+				if (/;\s*max-age\s*=\s*0\s*(?:;|$)/iu.test(field)) cookies.delete(name)
+				else cookies.set(name, pair.slice(separator + 1))
+			}
+			return fields
 		},
 	}
 }

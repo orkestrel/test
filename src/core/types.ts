@@ -40,6 +40,39 @@ export interface TeardownInterface {
 	destroy(): Promise<void>
 }
 
+/**
+ * Configures a bounded asynchronous wait.
+ *
+ * @remarks
+ * A default belongs to the function that reads these bounds rather than to the shape, because the
+ * consumers do not agree on one. Each states its own numbers in its `@remarks`.
+ */
+export interface WaitOptions {
+	/** The elapsed-time limit in milliseconds. */
+	readonly budget?: number
+	/** The delay between readings in milliseconds. */
+	readonly interval?: number
+	/** The signal that aborts the wait. */
+	readonly signal?: AbortSignal
+}
+
+/** Configures a bounded retry. */
+export interface RetryOptions extends WaitOptions {
+	/** The maximum number of producer calls. When omitted, only the time budget bounds the retry. */
+	readonly attempts?: number
+}
+
+/**
+ * Subscribes a listener to one event source.
+ *
+ * @typeParam TArgs - The argument tuple the event delivers.
+ * @param listener - The listener that receives each delivery.
+ * @returns The cleanup that removes the listener, or `void` when the source needs none.
+ */
+export type EventSubscriber<TArgs extends readonly unknown[]> = (
+	listener: (...args: TArgs) => void,
+) => (() => void) | void
+
 /** Any value JSON can represent, so a round trip through JSON preserves the type. */
 export type JSONValue =
 	| string

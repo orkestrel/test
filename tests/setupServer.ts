@@ -1,4 +1,5 @@
 import {
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -31,15 +32,37 @@ function probeCapability(detect: (directory: string) => boolean): boolean {
 }
 
 /**
- * Whether this host creates symbolic links. Node's `symlinkSync` throws `EPERM` on Windows without
- * Developer Mode or administrator rights, so this is `true` on POSIX and on a privileged Windows
- * host, and `false` only where the link cannot be created.
+ * Whether this host links a file. `symlinkSync(target, link, 'file')` needs the symbolic-link
+ * privilege, which Windows grants only under Developer Mode or administrator rights and refuses with
+ * `EPERM` otherwise, so this is `true` on POSIX and on a privileged Windows host. Where it is
+ * `false`, no mechanism reaches a file through a link and a proof that reads one back cannot run.
  */
-export const SYMLINKS = probeCapability((directory) => {
+export const FILE_LINKS = probeCapability((directory) => {
+	const target = join(directory, 'target.txt')
+	const link = join(directory, 'link.txt')
+	writeFileSync(target, 'linked')
+	symlinkSync(target, link, 'file')
+	return readFileSync(link, 'utf8') === 'linked'
+})
+
+/**
+ * Whether this host links a directory. `symlinkSync(target, link, 'junction')` creates a directory
+ * junction on Windows, which needs no privilege, and Node ignores the type argument off Windows, so
+ * the same call creates an ordinary symbolic link on POSIX. This is `true` wherever the created link
+ * reports as a symbolic link, resolves to a directory, and reaches the destination's contents; it is
+ * `false` on a filesystem that carries neither reparse points nor symbolic links.
+ */
+export const DIRECTORY_LINKS = probeCapability((directory) => {
 	const target = join(directory, 'target')
+	const link = join(directory, 'link')
 	mkdirSync(target)
-	symlinkSync(target, join(directory, 'link'), 'dir')
-	return true
+	writeFileSync(join(target, 'marker.txt'), 'marked')
+	symlinkSync(target, link, 'junction')
+	return (
+		lstatSync(link).isSymbolicLink() &&
+		statSync(link).isDirectory() &&
+		readFileSync(join(link, 'marker.txt'), 'utf8') === 'marked'
+	)
 })
 
 /**

@@ -1,36 +1,175 @@
-import type { CaptureVariant } from '@src/browser'
+import type { CaptureVariant, Color } from '@src/browser'
 import {
 	ACCESSIBLE_ROLES,
+	blendColor,
+	CANVAS_COLOR,
+	CAPTURE_PANE,
+	captureFrame,
+	clearStorage,
 	clickAccessible,
 	clickAccessibleWithin,
 	clickDisclosure,
 	contrast,
+	describeFocus,
+	describeTree,
 	expandCaptures,
+	extractOrphans,
+	FIELD_ROLES,
 	fillAccessible,
+	IMPLICIT_ROLES,
 	isOutsideViewport,
+	isReachable,
+	isRendered,
+	measureContrast,
+	measureLuminance,
+	parseColor,
 	pressKeys,
+	readBackdrop,
 	readCascade,
 	readFocus,
+	readLayers,
+	readName,
 	readPage,
 	readPerception,
+	readRing,
+	readRole,
 	readRows,
+	readStates,
+	readText,
 	readValue,
+	releasePane,
 	render,
 	resolveAccessible,
 	resolveRendered,
+	stagePane,
 	style,
 	traverseAccessible,
 	typeAccessible,
 	waitForFrame,
 } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { commands, page, server } from 'vitest/browser'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
 const VARIANTS: readonly CaptureVariant[] = [
 	{ name: 'light-1440', width: 1440, height: 1000 },
 	{ name: 'dark-390', width: 390, height: 844 },
 ]
+
+// The expectations below are written out rather than read back from the constants, so a case that
+// disagrees with the map reddens instead of re-deriving the map's own answer. The membership
+// assertions beside them are what make the tables and the maps fail together.
+const IMPLICIT_ROLE_CASES: ReadonlyArray<{
+	readonly tag: string
+	readonly markup: string
+	readonly role: string
+}> = [
+	{ tag: 'ARTICLE', markup: '<article id="subject">Body</article>', role: 'article' },
+	{ tag: 'ASIDE', markup: '<aside id="subject">Body</aside>', role: 'complementary' },
+	{ tag: 'BUTTON', markup: '<button id="subject" type="button">Save</button>', role: 'button' },
+	{ tag: 'DIALOG', markup: '<dialog id="subject" open>Body</dialog>', role: 'dialog' },
+	{
+		tag: 'FIELDSET',
+		markup: '<fieldset id="subject"><legend>Range</legend></fieldset>',
+		role: 'group',
+	},
+	{ tag: 'FOOTER', markup: '<footer id="subject">Body</footer>', role: 'contentinfo' },
+	{ tag: 'FORM', markup: '<form id="subject"></form>', role: 'form' },
+	{ tag: 'H1', markup: '<h1 id="subject">Totals</h1>', role: 'heading' },
+	{ tag: 'H2', markup: '<h2 id="subject">Totals</h2>', role: 'heading' },
+	{ tag: 'H3', markup: '<h3 id="subject">Totals</h3>', role: 'heading' },
+	{ tag: 'H4', markup: '<h4 id="subject">Totals</h4>', role: 'heading' },
+	{ tag: 'H5', markup: '<h5 id="subject">Totals</h5>', role: 'heading' },
+	{ tag: 'H6', markup: '<h6 id="subject">Totals</h6>', role: 'heading' },
+	{ tag: 'HEADER', markup: '<header id="subject">Body</header>', role: 'banner' },
+	{ tag: 'HR', markup: '<hr id="subject">', role: 'separator' },
+	{ tag: 'IMG', markup: '<img id="subject" alt="Chart">', role: 'img' },
+	{ tag: 'LI', markup: '<ul><li id="subject">One</li></ul>', role: 'listitem' },
+	{ tag: 'MAIN', markup: '<main id="subject">Body</main>', role: 'main' },
+	{ tag: 'NAV', markup: '<nav id="subject">Body</nav>', role: 'navigation' },
+	{ tag: 'OL', markup: '<ol id="subject"><li>One</li></ol>', role: 'list' },
+	{ tag: 'OPTION', markup: '<select><option id="subject">One</option></select>', role: 'option' },
+	{ tag: 'OUTPUT', markup: '<output id="subject">7</output>', role: 'status' },
+	{
+		tag: 'PROGRESS',
+		markup: '<progress id="subject" value="1" max="2"></progress>',
+		role: 'progressbar',
+	},
+	{ tag: 'SEARCH', markup: '<search id="subject"></search>', role: 'search' },
+	{
+		tag: 'SECTION',
+		markup: '<section id="subject" aria-label="Ledger"></section>',
+		role: 'region',
+	},
+	{
+		tag: 'SUMMARY',
+		markup: '<details><summary id="subject">Advanced</summary></details>',
+		role: 'button',
+	},
+	{ tag: 'TABLE', markup: '<table id="subject"></table>', role: 'table' },
+	{
+		tag: 'TBODY',
+		markup: '<table><tbody id="subject"><tr><td>A</td></tr></tbody></table>',
+		role: 'rowgroup',
+	},
+	{
+		tag: 'TD',
+		markup: '<table><tbody><tr><td id="subject">A</td></tr></tbody></table>',
+		role: 'cell',
+	},
+	{ tag: 'TEXTAREA', markup: '<textarea id="subject"></textarea>', role: 'textbox' },
+	{
+		tag: 'TH',
+		markup: '<table><thead><tr><th id="subject">A</th></tr></thead></table>',
+		role: 'columnheader',
+	},
+	{
+		tag: 'THEAD',
+		markup: '<table><thead id="subject"><tr><th>A</th></tr></thead></table>',
+		role: 'rowgroup',
+	},
+	{
+		tag: 'TR',
+		markup: '<table><tbody><tr id="subject"><td>A</td></tr></tbody></table>',
+		role: 'row',
+	},
+	{ tag: 'UL', markup: '<ul id="subject"><li>One</li></ul>', role: 'list' },
+]
+
+const FIELD_ROLE_CASES: ReadonlyArray<{ readonly type: string; readonly role: string }> = [
+	{ type: 'button', role: 'button' },
+	{ type: 'checkbox', role: 'checkbox' },
+	{ type: 'email', role: 'textbox' },
+	{ type: 'number', role: 'spinbutton' },
+	{ type: 'password', role: 'textbox' },
+	{ type: 'radio', role: 'radio' },
+	{ type: 'range', role: 'slider' },
+	{ type: 'reset', role: 'button' },
+	{ type: 'search', role: 'searchbox' },
+	{ type: 'submit', role: 'button' },
+	{ type: 'tel', role: 'textbox' },
+	{ type: 'text', role: 'textbox' },
+	{ type: 'url', role: 'textbox' },
+]
+
+// Relative to this test file, which is where the provider resolves a screenshot path from. `tmp` is
+// ignored by git, so a written frame never reaches a commit.
+const FRAMES = '../../../tmp/capture/frame'
+
+// The viewport the runner handed this file, restored after every test that stages a pane, so a
+// resized tester never reaches the next test or the next file.
+let width = 0
+let height = 0
+
+beforeAll(() => {
+	width = window.innerWidth
+	height = window.innerHeight
+})
+
+afterAll(async () => {
+	await page.viewport(width, height)
+})
 
 afterEach(resetFixtures)
 
@@ -119,6 +258,76 @@ describe('isOutsideViewport', () => {
 	it('reports a rectangle straddling an edge as inside', () => {
 		expect(isOutsideViewport(DOMRect.fromRect({ x: 10, y: -20, width: 40, height: 40 }))).toBe(
 			false,
+		)
+	})
+})
+
+describe('isReachable', () => {
+	it('accepts a plain control and refuses each condition it drops', () => {
+		const container = buildFixture(
+			'<button type="button" id="open">Open</button>' +
+				'<button type="button" id="locked" disabled>Locked</button>' +
+				'<button type="button" id="refused" aria-disabled="true">Refused</button>' +
+				'<button type="button" id="folded" style="display: none">Folded</button>' +
+				'<button type="button" id="skipped" tabindex="-1">Skipped</button>' +
+				'<div inert><button type="button" id="sealed">Sealed</button></div>',
+		)
+		expect(isReachable(requireValue(container.querySelector('#open')))).toBe(true)
+		for (const id of ['locked', 'refused', 'folded', 'skipped', 'sealed']) {
+			expect(isReachable(requireValue(container.querySelector(`#${id}`)))).toBe(false)
+		}
+	})
+
+	it('refuses a control the document no longer holds', () => {
+		const container = buildFixture('<button type="button">Gone</button>')
+		const target = requireValue(container.querySelector('button'))
+		target.remove()
+		expect(isReachable(target)).toBe(false)
+	})
+
+	it('accepts a focusable SVG and refuses an element from a foreign namespace', () => {
+		const container = buildFixture('<svg tabindex="0" width="20" height="20"></svg>')
+		expect(isReachable(requireValue(container.querySelector('svg')))).toBe(true)
+		const foreign = document.createElementNS('urn:example:widgets', 'widget')
+		container.append(foreign)
+		expect(isReachable(foreign)).toBe(false)
+	})
+
+	it('is the one filter the acting verbs apply, so a refused summary throws its own voice', async () => {
+		buildFixture('<details><summary aria-disabled="true">Sealed</summary><p>Body</p></details>')
+		await expect(clickDisclosure('Sealed')).rejects.toThrow(
+			'Native disclosure "Sealed" is not visible and focus-reachable',
+		)
+	})
+})
+
+describe('isRendered', () => {
+	it('accepts a control the accessibility tree presents and refuses each removal it honours', () => {
+		const container = buildFixture(
+			'<button type="button" id="open">Open</button>' +
+				'<div aria-hidden="true"><button type="button" id="muted">Muted</button></div>' +
+				'<button type="button" id="withheld" hidden>Withheld</button>' +
+				'<input type="hidden" id="carried" value="7">' +
+				'<div style="display: none"><button type="button" id="folded">Folded</button></div>' +
+				'<div style="visibility: hidden"><button type="button" id="blanked">Blanked</button></div>',
+		)
+		expect(isRendered(requireValue(container.querySelector('#open')))).toBe(true)
+		for (const id of ['muted', 'withheld', 'carried', 'folded', 'blanked']) {
+			expect(isRendered(requireValue(container.querySelector(`#${id}`)))).toBe(false)
+		}
+	})
+
+	it('splits from isReachable on a zero-size announced control', () => {
+		const container = buildFixture(
+			'<button type="button" style="width: 0; height: 0; padding: 0; border: 0; overflow: hidden">' +
+				'Skip to content</button>',
+		)
+		const target = requireValue(container.querySelector('button'))
+		expect(target.getBoundingClientRect().width).toBe(0)
+		expect(isRendered(target)).toBe(true)
+		expect(isReachable(target)).toBe(false)
+		expect(() => resolveRendered('Skip to content')).toThrow(
+			'Interactive target "Skip to content" is not visible and focus-reachable',
 		)
 	})
 })
@@ -354,6 +563,293 @@ describe('readValue', () => {
 	})
 })
 
+describe('readText', () => {
+	it('drops an aria-hidden glyph and collapses the runs around it', () => {
+		const container = buildFixture(
+			'<button type="button"><span aria-hidden="true">*</span>  Save   changes </button>',
+		)
+		const target = requireValue(container.querySelector('button'))
+		expect(readText(target)).toBe('Save changes')
+		// `readRows` reads what the page paints, so the glyph stays there. The two readers answer
+		// different questions about the same node.
+		expect(readRows(container, 'button')).toStrictEqual(['* Save changes'])
+	})
+
+	it('reads an element with no text as an empty string', () => {
+		const container = buildFixture('<div><span aria-hidden="true">*</span></div>')
+		expect(readText(requireValue(container.querySelector('div')))).toBe('')
+	})
+})
+
+describe('readRole', () => {
+	it('answers for exactly the tags the map carries', () => {
+		expect(IMPLICIT_ROLE_CASES.map((entry) => entry.tag).sort()).toStrictEqual(
+			Object.keys(IMPLICIT_ROLES).sort(),
+		)
+		for (const entry of IMPLICIT_ROLE_CASES) {
+			const container = buildFixture(entry.markup)
+			expect({
+				tag: entry.tag,
+				role: readRole(requireValue(container.querySelector('#subject'))),
+			}).toStrictEqual({ tag: entry.tag, role: entry.role })
+		}
+	})
+
+	it('answers nothing for a tag the map leaves out', () => {
+		const container = buildFixture('<blockquote id="subject">Quoted</blockquote>')
+		expect(IMPLICIT_ROLES['BLOCKQUOTE']).toBeUndefined()
+		expect(readRole(requireValue(container.querySelector('#subject')))).toBeUndefined()
+	})
+
+	it('takes a declared role over the implicit one, and its first token', () => {
+		const container = buildFixture(
+			'<ul id="tabs" role="tablist"></ul><ul id="menu" role="  menu   menubar ">One</ul>',
+		)
+		expect(readRole(requireValue(container.querySelector('#tabs')))).toBe('tablist')
+		expect(readRole(requireValue(container.querySelector('#menu')))).toBe('menu')
+	})
+
+	it('makes a section a region only once something names it', () => {
+		const container = buildFixture(
+			'<section id="named" aria-label="Ledger">One</section>' +
+				'<span id="caption">Vault</span><section id="referenced" aria-labelledby="caption">Two' +
+				'</section><section id="bare">Three</section>',
+		)
+		expect(readRole(requireValue(container.querySelector('#named')))).toBe('region')
+		expect(readRole(requireValue(container.querySelector('#referenced')))).toBe('region')
+		expect(readRole(requireValue(container.querySelector('#bare')))).toBeUndefined()
+	})
+
+	it('heads whichever axis a th declares, and a column when it declares none', () => {
+		const container = buildFixture(
+			'<table><thead><tr><th id="column" scope="col">Month</th>' +
+				'<th id="bare">Total</th></tr></thead>' +
+				'<tbody><tr><th id="row" scope="row">April</th><td>7</td></tr></tbody></table>',
+		)
+		expect(readRole(requireValue(container.querySelector('#column')))).toBe('columnheader')
+		expect(readRole(requireValue(container.querySelector('#row')))).toBe('rowheader')
+		expect(readRole(requireValue(container.querySelector('#bare')))).toBe('columnheader')
+	})
+
+	it('makes an anchor a link only while it holds an href', () => {
+		const container = buildFixture('<a id="linked" href="#ledger">Ledger</a><a id="bare">Vault</a>')
+		expect(readRole(requireValue(container.querySelector('#linked')))).toBe('link')
+		expect(readRole(requireValue(container.querySelector('#bare')))).toBeUndefined()
+	})
+
+	it('makes a select a combobox until it offers several rows at once', () => {
+		const container = buildFixture(
+			'<select id="one"><option>April</option></select>' +
+				'<select id="many" multiple><option>April</option></select>' +
+				'<select id="sized" size="3"><option>April</option></select>',
+		)
+		expect(readRole(requireValue(container.querySelector('#one')))).toBe('combobox')
+		expect(readRole(requireValue(container.querySelector('#many')))).toBe('listbox')
+		expect(readRole(requireValue(container.querySelector('#sized')))).toBe('listbox')
+	})
+
+	it('answers for exactly the input types the field map carries', () => {
+		expect(FIELD_ROLE_CASES.map((entry) => entry.type).sort()).toStrictEqual(
+			Object.keys(FIELD_ROLES).sort(),
+		)
+		for (const entry of FIELD_ROLE_CASES) {
+			const container = buildFixture(`<input id="subject" type="${entry.type}">`)
+			expect({
+				type: entry.type,
+				role: readRole(requireValue(container.querySelector('#subject'))),
+			}).toStrictEqual({ type: entry.type, role: entry.role })
+		}
+	})
+
+	it('answers nothing for an input type the field map leaves out', () => {
+		const container = buildFixture('<input id="subject" type="color">')
+		expect(FIELD_ROLES['color']).toBeUndefined()
+		expect(readRole(requireValue(container.querySelector('#subject')))).toBeUndefined()
+	})
+})
+
+describe('readName', () => {
+	it('joins every id aria-labelledby names, in that order, skipping one nothing answers for', () => {
+		const container = buildFixture(
+			'<span id="verb">Save</span><span id="noun">changes</span>' +
+				'<button type="button" aria-labelledby="verb absent noun">Ignored</button>',
+		)
+		expect(readName(requireValue(container.querySelector('button')))).toBe('Save changes')
+	})
+
+	it('drops an aria-hidden glyph from the text a content role is named by', () => {
+		const container = buildFixture(
+			'<button type="button"><span aria-hidden="true">*</span> Save </button>',
+		)
+		expect(readName(requireValue(container.querySelector('button')))).toBe('Save')
+	})
+
+	it('takes aria-label over the text inside the control', () => {
+		const container = buildFixture('<button type="button" aria-label="Persist">Save</button>')
+		expect(readName(requireValue(container.querySelector('button')))).toBe('Persist')
+	})
+
+	it("takes a form control's own labels", () => {
+		const container = buildFixture('<label for="runs">Runs</label><input id="runs" type="text">')
+		expect(readName(requireValue(container.querySelector('input')))).toBe('Runs')
+	})
+
+	it('names a button input by its value, because it renders no text', () => {
+		const container = buildFixture('<input type="submit" value="Send">')
+		expect(readName(requireValue(container.querySelector('input')))).toBe('Send')
+	})
+
+	it('names an image by its alternative text, over a title it also carries', () => {
+		const container = buildFixture(
+			'<img alt="Chart" title="Quarterly figures" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">',
+		)
+		expect(readName(requireValue(container.querySelector('img')))).toBe('Chart')
+	})
+
+	it('carries an image with no alternative text on down the chain to its title', () => {
+		const container = buildFixture(
+			'<img alt="" title="Chart" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">' +
+				'<img id="untitled" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">',
+		)
+		expect(readName(requireValue(container.querySelector('img')))).toBe('Chart')
+		expect(readName(requireValue(container.querySelector('#untitled')))).toBe('')
+	})
+
+	it('falls through to title, and to an empty string when nothing names it', () => {
+		const container = buildFixture(
+			'<div id="hinted" role="note" title="Why this matters">Body</div>' +
+				'<div id="bare" role="note"></div>',
+		)
+		expect(readName(requireValue(container.querySelector('#hinted')))).toBe('Why this matters')
+		expect(readName(requireValue(container.querySelector('#bare')))).toBe('')
+	})
+})
+
+describe('readStates', () => {
+	it('reports every declared state in one fixed order', () => {
+		const container = buildFixture(
+			'<span id="hint">Why</span><button type="button" disabled aria-expanded="true" ' +
+				'aria-pressed="mixed" aria-current="page" aria-invalid="true" aria-selected="false" ' +
+				'aria-live="polite" aria-describedby="hint" aria-busy="true">Save</button>',
+		)
+		expect(readStates(requireValue(container.querySelector('button')))).toStrictEqual([
+			'disabled',
+			'expanded',
+			'pressed=mixed',
+			'current',
+			'invalid',
+			'selected=false',
+			'live=polite',
+			'described',
+			'busy',
+		])
+	})
+
+	it('reads a native disclosure from the platform copy of its expansion', () => {
+		const container = buildFixture(
+			'<details id="shut"><summary>Advanced</summary></details>' +
+				'<details id="open" open><summary>Basic</summary></details>',
+		)
+		expect(readStates(requireValue(container.querySelector('#shut summary')))).toStrictEqual([
+			'collapsed',
+		])
+		expect(readStates(requireValue(container.querySelector('#open summary')))).toStrictEqual([
+			'expanded',
+		])
+	})
+
+	it('reads a field from the platform properties rather than from attributes alone', () => {
+		const container = buildFixture(
+			'<input id="agreed" type="checkbox" checked required><input id="fixed" type="text" readonly>',
+		)
+		expect(readStates(requireValue(container.querySelector('#agreed')))).toStrictEqual([
+			'checked',
+			'required',
+		])
+		expect(readStates(requireValue(container.querySelector('#fixed')))).toStrictEqual(['readonly'])
+	})
+
+	it('reads a control that declares nothing as no states at all', () => {
+		const container = buildFixture('<button type="button">Save</button>')
+		expect(readStates(requireValue(container.querySelector('button')))).toStrictEqual([])
+	})
+})
+
+describe('describeTree', () => {
+	it('indents by role, so an element carrying none leaves its children where it sat', () => {
+		const container = buildFixture(
+			'<main aria-label="Board"><div class="wrapper"><h2>Totals</h2>' +
+				'<blockquote><h3>Quoted</h3></blockquote>' +
+				'<ul><li>One</li><li aria-hidden="true">Muted</li></ul></div></main>',
+		)
+		// `div` and `blockquote` carry no role, so neither writes a line and neither adds a depth:
+		// the `h3` inside the blockquote sits at the same indent as the `h2` outside it.
+		expect(describeTree(requireValue(container.querySelector('main')))).toBe(
+			[
+				'main "Board"',
+				'  heading "Totals"',
+				'  heading "Quoted"',
+				'  list',
+				'    listitem "One"',
+			].join('\n'),
+		)
+	})
+
+	it('writes each line with its name and its states', () => {
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button type="button" aria-expanded="false" disabled>' +
+				'Add row</button></section>',
+		)
+		expect(describeTree(requireValue(container.querySelector('section')))).toBe(
+			['region "Ledger"', '  button "Add row" [disabled, collapsed]'].join('\n'),
+		)
+	})
+
+	it('drops an element the accessibility tree does not present, with its whole subtree', () => {
+		const container = buildFixture(
+			'<main aria-label="Board"><div style="display: none"><h2>Folded</h2></div>' +
+				'<h2>Standing</h2></main>',
+		)
+		expect(describeTree(requireValue(container.querySelector('main')))).toBe(
+			['main "Board"', '  heading "Standing"'].join('\n'),
+		)
+	})
+
+	it('describes a subtree in which nothing carries a role as nothing', () => {
+		const container = buildFixture('<div><span>One</span></div>')
+		expect(describeTree(requireValue(container.querySelector('div')))).toBe('')
+	})
+})
+
+describe('describeFocus', () => {
+	it('puts a positive tabindex first in ascending order, then document order', () => {
+		const container = buildFixture(
+			'<button type="button">First</button>' +
+				'<button type="button" tabindex="2">Second</button>' +
+				'<button type="button" tabindex="1">Third</button>' +
+				'<button type="button" disabled>Fourth</button>' +
+				'<button type="button" tabindex="-1">Fifth</button>' +
+				'<div style="display: none"><button type="button">Sixth</button></div>' +
+				'<a href="#ledger">Seventh</a>',
+		)
+		expect(describeFocus(container)).toBe(
+			['1. button "Third"', '2. button "Second"', '3. button "First"', '4. link "Seventh"'].join(
+				'\n',
+			),
+		)
+	})
+
+	it('names a reachable control the role map does not answer for by its tag', () => {
+		const container = buildFixture('<svg tabindex="0" width="20" height="20"></svg>')
+		expect(describeFocus(container)).toBe('1. svg')
+	})
+
+	it('describes a subtree with no reachable control as nothing', () => {
+		const container = buildFixture('<p>Answer ready</p>')
+		expect(describeFocus(container)).toBe('')
+	})
+})
+
 describe('waitForFrame', () => {
 	it('resolves after the frame callbacks already queued have run', async () => {
 		let painted = false
@@ -374,6 +870,178 @@ describe('render', () => {
 		} finally {
 			container.remove()
 		}
+	})
+})
+
+describe('clearStorage', () => {
+	it('empties local and session storage together', () => {
+		localStorage.setItem('journey', 'one')
+		sessionStorage.setItem('journey', 'two')
+		expect(localStorage.getItem('journey')).toBe('one')
+		expect(sessionStorage.getItem('journey')).toBe('two')
+		clearStorage()
+		expect(localStorage.getItem('journey')).toBeNull()
+		expect(sessionStorage.getItem('journey')).toBeNull()
+	})
+})
+
+describe('parseColor', () => {
+	it('reads the legacy syntaxes, defaulting an absent alpha to one', () => {
+		expect(parseColor('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
+		expect(parseColor('rgba(1, 2, 3, 0.5)')).toStrictEqual([1, 2, 3, 0.5])
+		expect(parseColor('rgba(0, 0, 0, 0)')).toStrictEqual([0, 0, 0, 0])
+	})
+
+	it('reads the modern syntax onto the same 0-255 scale', () => {
+		expect(parseColor('color(srgb 0.5 0 0.5)')).toStrictEqual([127.5, 0, 127.5, 1])
+		expect(parseColor('color(srgb 1 1 1 / 0.25)')).toStrictEqual([255, 255, 255, 0.25])
+	})
+
+	it('refuses a keyword, a hex triple, and the empty value a detached element computes', () => {
+		expect(parseColor('rebeccapurple')).toBeUndefined()
+		expect(parseColor('#ffffff')).toBeUndefined()
+		expect(parseColor('')).toBeUndefined()
+		expect(parseColor('lab(50% 40 59.5)')).toBeUndefined()
+	})
+
+	it('reads what this browser actually computes, rather than only what a literal declares', () => {
+		// The cases above are declarations. This one asks the engine which syntax it hands back for a
+		// keyword and for a `color-mix()`, so a browser that changed either answer reddens here.
+		const container = buildFixture(
+			'<p id="named" style="color: rebeccapurple">Ready</p>' +
+				'<p id="mixed" style="color: color-mix(in srgb, red 50%, blue)">Ready</p>',
+		)
+		const named = getComputedStyle(requireValue(container.querySelector('#named'))).color
+		const mixed = getComputedStyle(requireValue(container.querySelector('#mixed'))).color
+		expect(named).toBe('rgb(102, 51, 153)')
+		expect(mixed).toBe('color(srgb 0.5 0 0.5)')
+		expect(parseColor(named)).toStrictEqual([102, 51, 153, 1])
+		expect(parseColor(mixed)).toStrictEqual([127.5, 0, 127.5, 1])
+	})
+
+	it('hands back a frozen color', () => {
+		const parsed = requireValue(parseColor('rgb(1, 2, 3)'))
+		expect(Object.isFrozen(parsed)).toBe(true)
+	})
+})
+
+describe('blendColor', () => {
+	it('composites a translucent front onto an opaque back', () => {
+		expect(blendColor([255, 255, 255, 0.5], [0, 0, 0, 1])).toStrictEqual([127.5, 127.5, 127.5, 1])
+	})
+
+	it('keeps an opaque front and keeps the back under a fully transparent one', () => {
+		expect(blendColor([10, 20, 30, 1], [0, 0, 0, 1])).toStrictEqual([10, 20, 30, 1])
+		expect(blendColor([10, 20, 30, 0], [1, 2, 3, 1])).toStrictEqual([1, 2, 3, 1])
+	})
+
+	it('always returns an opaque result', () => {
+		const [, , , alpha] = blendColor([10, 20, 30, 0.25], [0, 0, 0, 0.5])
+		expect(alpha).toBe(1)
+	})
+})
+
+describe('measureLuminance', () => {
+	it('weighs black at zero and white at one', () => {
+		expect(measureLuminance([0, 0, 0, 1])).toBe(0)
+		expect(measureLuminance([255, 255, 255, 1])).toBeCloseTo(1, 10)
+	})
+
+	it('weighs green above red above blue at one channel value', () => {
+		const red = measureLuminance([255, 0, 0, 1])
+		const green = measureLuminance([0, 255, 0, 1])
+		const blue = measureLuminance([0, 0, 255, 1])
+		expect(green).toBeGreaterThan(red)
+		expect(red).toBeGreaterThan(blue)
+	})
+
+	it('ignores the alpha it is handed', () => {
+		expect(measureLuminance([255, 255, 255, 0])).toBe(measureLuminance([255, 255, 255, 1]))
+	})
+})
+
+describe('measureContrast', () => {
+	it('reaches 21 for black against white and 1 for a color against itself', () => {
+		expect(measureContrast([0, 0, 0, 1], [255, 255, 255, 1])).toBeCloseTo(21, 10)
+		expect(measureContrast([17, 34, 51, 1], [17, 34, 51, 1])).toBe(1)
+	})
+
+	it('returns the same ratio whichever way the pair is handed over', () => {
+		const front: Color = [30, 60, 90, 1]
+		const back: Color = [200, 210, 220, 1]
+		expect(measureContrast(front, back)).toBe(measureContrast(back, front))
+	})
+})
+
+describe('readLayers', () => {
+	it('collects nothing when nothing from the element upwards paints', () => {
+		const container = buildFixture('<p style="color: #000">Ready</p>')
+		expect(readLayers(requireValue(container.querySelector('p')))).toStrictEqual([])
+	})
+
+	it('collects the painted layers element first and leaves a transparent one out', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(255, 0, 0, 0.5)">' +
+				'<div style="background: transparent">' +
+				'<p style="background: rgba(0, 0, 255, 0.25); color: #000">Ready</p></div></div>',
+		)
+		expect(readLayers(requireValue(container.querySelector('p')))).toStrictEqual([
+			[0, 0, 255, 0.25],
+			[255, 0, 0, 0.5],
+		])
+	})
+
+	it('stops at the first opaque layer, so nothing above it is collected', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(0, 255, 0, 0.5)">' +
+				'<div style="background: rgb(255, 0, 0)">' +
+				'<p style="color: #000">Ready</p></div></div>',
+		)
+		expect(readLayers(requireValue(container.querySelector('p')))).toStrictEqual([[255, 0, 0, 1]])
+	})
+
+	it('keeps the deepest layer translucent where the composite rounds to the floor', () => {
+		// The reading that separates a resolved backdrop from an assumed one survives here while the
+		// composite does not: 64 half-white layers blend to white over black and over white alike.
+		const depth = 64
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)">'.repeat(depth) +
+				'<p style="color: #000">Ready</p>' +
+				'</div>'.repeat(depth),
+		)
+		const paragraph = requireValue(container.querySelector('p'))
+		expect(readLayers(paragraph)).toHaveLength(depth)
+		expect(readLayers(paragraph).at(-1)).toStrictEqual([255, 255, 255, 0.5])
+		expect(readBackdrop(paragraph, CANVAS_COLOR)).toStrictEqual(
+			readBackdrop(paragraph, [0, 0, 0, 1]),
+		)
+	})
+})
+
+describe('readBackdrop', () => {
+	it('hands the floor back by identity when nothing above the element paints', () => {
+		const container = buildFixture('<p style="color: #000">Ready</p>')
+		const floor: Color = [1, 2, 3, 1]
+		expect(readBackdrop(requireValue(container.querySelector('p')), floor)).toBe(floor)
+	})
+
+	it('composites every translucent layer onto the supplied floor', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)">' +
+				'<p style="color: #000">Ready</p></div>',
+		)
+		expect(readBackdrop(requireValue(container.querySelector('p')), [0, 0, 0, 1])).toStrictEqual([
+			127.5, 127.5, 127.5, 1,
+		])
+	})
+
+	it('stops at the first opaque layer, so a floor beneath it changes nothing', () => {
+		const container = buildFixture(
+			'<div style="background: #000"><p style="color: #fff">Ready</p></div>',
+		)
+		const paragraph = requireValue(container.querySelector('p'))
+		expect(readBackdrop(paragraph, CANVAS_COLOR)).toStrictEqual([0, 0, 0, 1])
+		expect(readBackdrop(paragraph, [255, 0, 0, 1])).toStrictEqual([0, 0, 0, 1])
 	})
 })
 
@@ -411,6 +1079,209 @@ describe('contrast', () => {
 			'Computed background color is unavailable',
 		)
 	})
+
+	it('refuses a stack whose painted layers are all translucent, because the canvas shows through', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)">' +
+				'<p style="color: #000">Ready</p></div>',
+		)
+		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
+			'Computed background color is unavailable',
+		)
+	})
+
+	it('refuses a deep translucent stack whose composite has rounded to the floor itself', () => {
+		// 64 half-white layers composite to 255 exactly in binary floating point, because the
+		// remaining 2^-64 of the floor falls below the last bit 255 carries. A refusal decided by
+		// reading the same stack over two opposite floors therefore sees two identical answers and
+		// admits a stack no layer of which is opaque. The refusal must turn on the deepest layer's
+		// own alpha instead.
+		const depth = 64
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)">'.repeat(depth) +
+				'<p style="color: #000">Ready</p>' +
+				'</div>'.repeat(depth),
+		)
+		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
+			'Computed background color is unavailable',
+		)
+	})
+
+	it('measures the same unpainted stack against a supplied floor instead of refusing it', () => {
+		const container = buildFixture('<p style="color: #000">Ready</p>')
+		const paragraph = requireValue(container.querySelector('p'))
+		expect(contrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
+		expect(contrast(paragraph, [0, 0, 0, 1])).toBe(1)
+	})
+
+	it('composites a translucent stack onto the supplied floor', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)">' +
+				'<p style="color: #000">Ready</p></div>',
+		)
+		const paragraph = requireValue(container.querySelector('p'))
+		// The same half-white tint resolves to white over the canvas and to mid grey over black, so
+		// the floor is what the answer turns on rather than an argument the measurement ignores.
+		expect(contrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
+		expect(contrast(paragraph, [0, 0, 0, 1])).toBeCloseTo(5.28, 1)
+	})
+
+	it('refuses a detached element whichever floor it is handed', () => {
+		expect(() => contrast(document.createElement('p'), CANVAS_COLOR)).toThrow(
+			'Computed foreground color is unavailable',
+		)
+	})
+})
+
+describe('readRing', () => {
+	it('measures the ring the cascade paints once focus has really landed', async () => {
+		buildStylesheet('.journey-ring:focus-visible { outline: 3px solid rgb(0, 0, 0) }')
+		buildFixture(
+			'<div style="background: #fff">' +
+				'<button type="button" class="journey-ring">Evaluate</button></div>',
+		)
+		const control = await traverseAccessible('Evaluate')
+		expect(control.matches(':focus-visible')).toBe(true)
+		// Black against white is the strongest ratio a ring can reach, so a reading below it means
+		// the measurement found some other paint.
+		expect(readRing(control)).toBeCloseTo(21, 5)
+	})
+
+	it('reports nothing for a control that is not showing focus chrome', () => {
+		const container = buildFixture('<button type="button">Idle</button>')
+		expect(readRing(requireValue(container.querySelector('button')))).toBeUndefined()
+	})
+
+	it('reports nothing for a focused control the cascade leaves the browser ring', async () => {
+		buildFixture('<button type="button">Bare</button>')
+		const control = await traverseAccessible('Bare')
+		expect(control.matches(':focus-visible')).toBe(true)
+		expect(style(control, 'outline-style')).toBe('auto')
+		expect(readRing(control)).toBeUndefined()
+	})
+
+	it('measures the element the chrome is worn on rather than the one holding focus', async () => {
+		buildStylesheet(
+			'.journey-worn { outline: 3px solid rgb(0, 0, 0) }' +
+				'.journey-holder:focus-visible { outline: 3px solid rgb(250, 250, 250) }',
+		)
+		const container = buildFixture(
+			'<div style="background: #fff">' +
+				'<button type="button" class="journey-holder">Hold</button>' +
+				'<span class="journey-worn">Worn</span></div>',
+		)
+		const control = await traverseAccessible('Hold')
+		const worn = requireValue(container.querySelector('.journey-worn'))
+		// The holder's own near-white ring is nearly invisible on white; the worn element's black one
+		// is not, so the two readings separate and `worn` is what decided the second.
+		expect(requireValue(readRing(control))).toBeLessThan(1.1)
+		expect(readRing(control, worn)).toBeCloseTo(21, 5)
+	})
+
+	it('reports nothing for a focus style that only repaints the control fill', async () => {
+		buildStylesheet(
+			'.journey-fill { background: rgb(255, 255, 255) }' +
+				'.journey-fill:focus-visible { outline: none; background: rgb(0, 0, 0) }',
+		)
+		buildFixture(
+			'<div style="background: #fff">' +
+				'<button type="button" class="journey-fill">Filled</button></div>',
+		)
+		const control = await traverseAccessible('Filled')
+		expect(style(control, 'background-color')).toBe('rgb(0, 0, 0)')
+		// The resting fill is gone by the time focus is on the control, so nothing here is a reading
+		// about focus and the measurement says so rather than scoring the control's ordinary chrome.
+		expect(readRing(control)).toBeUndefined()
+	})
+
+	it('reads a box-shadow ring when no outline is painted', async () => {
+		buildStylesheet(
+			'.journey-shadow:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(0, 0, 0) }',
+		)
+		buildFixture(
+			'<div style="background: #fff">' +
+				'<button type="button" class="journey-shadow">Shadowed</button></div>',
+		)
+		const control = await traverseAccessible('Shadowed')
+		expect(readRing(control)).toBeCloseTo(21, 5)
+	})
+})
+
+describe('stagePane', () => {
+	it('marks the pane, renders the tester at the viewport it was given, and releases both', async () => {
+		const pane = requireValue(window.frameElement?.parentElement)
+		const owner = pane.ownerDocument
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		await stagePane(390, 844)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(true)
+		expect(owner.querySelector(`style[${CAPTURE_PANE}]`)).not.toBeNull()
+		const box = requireValue(window.frameElement).getBoundingClientRect()
+		expect(Math.round(box.width)).toBe(390)
+		expect(Math.round(box.height)).toBe(844)
+		expect(window.innerWidth).toBe(390)
+		releasePane()
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect(owner.querySelector(`style[${CAPTURE_PANE}]`)).toBeNull()
+	})
+
+	it('releases an unstaged pane without complaining', () => {
+		const pane = requireValue(window.frameElement?.parentElement)
+		releasePane()
+		releasePane()
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+	})
+})
+
+describe('captureFrame', () => {
+	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
+		const written = await captureFrame({ path: `${FRAMES}/page.png`, width: 390, height: 844 })
+		expect(written).toBe(`${server.config.root}/tmp/capture/frame/page.png`)
+		const onDisk = await commands.readFile(written, 'base64')
+		expect(onDisk.length).toBeGreaterThan(0)
+		// The negative control for the equality `captureFrame` asserts: bytes that are not this
+		// frame's read back different, so the comparison discriminates rather than always holding.
+		const planted = `${server.config.root}/tmp/capture/frame/planted.png`
+		await commands.writeFile(planted, 'not a frame')
+		expect(await commands.readFile(planted, 'base64')).not.toBe(onDisk)
+	})
+
+	it('refuses a pane that will not render at the viewport, and hands it back anyway', async () => {
+		const pane = requireValue(window.frameElement?.parentElement)
+		// The staging rule sizes the tester from the runner's own custom properties. A rule of higher
+		// specificity, marked important, outranks it, so the pane renders at a size the viewport never
+		// asked for and `stagePane` refuses instead of shooting a frame of the wrong surface.
+		const pinned = pane.ownerDocument.createElement('style')
+		pinned.textContent =
+			'html iframe[data-vitest] { width: 200px !important; height: 200px !important }'
+		pane.ownerDocument.head.append(pinned)
+		try {
+			await expect(
+				captureFrame({ path: `${FRAMES}/refused.png`, width: 390, height: 844 }),
+			).rejects.toThrow('Tester pane rendered 200x200 for a 390x844 viewport')
+		} finally {
+			pinned.remove()
+		}
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect(pane.ownerDocument.querySelector(`style[${CAPTURE_PANE}]`)).toBeNull()
+	})
+
+	it('shoots one element rather than the page, and releases the pane either way', async () => {
+		const container = buildFixture(
+			'<div style="background: #000; width: 40px; height: 40px">.</div>',
+		)
+		const pane = requireValue(window.frameElement?.parentElement)
+		const whole = await captureFrame({ path: `${FRAMES}/whole.png`, width: 390, height: 844 })
+		const part = await captureFrame({
+			path: `${FRAMES}/part.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.firstElementChild),
+		})
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		const shot = await commands.readFile(part, 'base64')
+		expect(shot.length).toBeGreaterThan(0)
+		expect(shot).not.toBe(await commands.readFile(whole, 'base64'))
+	})
 })
 
 describe('readCascade', () => {
@@ -437,6 +1308,33 @@ describe('readRows', () => {
 	it('reads an empty list as no rows', () => {
 		const container = buildFixture('<ul></ul>')
 		expect(readRows(container, 'li')).toStrictEqual([])
+	})
+})
+
+describe('extractOrphans', () => {
+	it('reports a child class rendered outside its container and leaves a nested one alone', () => {
+		const container = buildFixture(
+			'<div class="list-group"><span class="list-group-item">Nested</span></div>' +
+				'<span class="list-group-item" data-row="loose">Loose</span>',
+		)
+		expect(extractOrphans(container, 'list-group-item', 'list-group')).toStrictEqual([
+			'<span class="list-group-item" data-row="loose">Loose</span>',
+		])
+	})
+
+	it('reports nothing when every child class sits inside a container', () => {
+		const container = buildFixture(
+			'<div class="list-group"><span class="list-group-item">One</span>' +
+				'<div class="row"><span class="list-group-item">Two</span></div></div>',
+		)
+		expect(extractOrphans(container, 'list-group-item', 'list-group')).toStrictEqual([])
+	})
+
+	it('refuses an element that answers the invariant by carrying both classes itself', () => {
+		const container = buildFixture('<span class="list-group list-group-item">Both</span>')
+		expect(extractOrphans(container, 'list-group-item', 'list-group')).toStrictEqual([
+			'<span class="list-group list-group-item">Both</span>',
+		])
 	})
 })
 

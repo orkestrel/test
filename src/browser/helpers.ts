@@ -1,6 +1,15 @@
-import type { CaptureVariant } from './types.js'
-import { page, userEvent } from 'vitest/browser'
-import { ACCESSIBLE_ROLES } from './constants.js'
+import type { CaptureVariant, Color, FrameOptions } from './types.js'
+import { commands, page, userEvent } from 'vitest/browser'
+import {
+	ACCESSIBLE_ROLES,
+	CANVAS_COLOR,
+	CAPTURE_PANE,
+	CONTENT_ROLES,
+	FIELD_ROLES,
+	FOCUSABLE_SELECTOR,
+	HEADER_ROLES,
+	IMPLICIT_ROLES,
+} from './constants.js'
 
 /**
  * Determines whether a rectangle lies wholly outside the browser viewport.
@@ -20,6 +29,76 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
 		rectangle.top >= window.innerHeight ||
 		rectangle.left >= window.innerWidth
 	)
+}
+
+/**
+ * Determines whether a person can click one element where it currently sits.
+ *
+ * @param element - The element to judge.
+ * @returns `true` when the element is connected, visible, laid out with a non-zero box, in the
+ * sequential focus order, neither disabled nor marked `aria-disabled="true"`, and outside every
+ * `[inert]` subtree; `false` otherwise.
+ *
+ * @remarks
+ * This is the one reachability filter the layer applies. `resolveRendered`, `clickAccessibleWithin`,
+ * and `clickDisclosure` each narrow their own candidates and then keep the ones this accepts, so a
+ * journey meets one rule rather than three near-copies of it.
+ *
+ * It measures geometry, which is what separates it from {@link isRendered}. A control clipped to a
+ * zero-size rectangle is announced and is not clickable, so `isRendered` accepts it and this
+ * refuses it. Nothing here asks about the viewport: `resolveAccessible` scrolls a wholly
+ * off-viewport target into view and measures that separately with {@link isOutsideViewport}.
+ *
+ * @example
+ * ```ts
+ * isReachable(requireValue(container.querySelector('button')))
+ * ```
+ */
+export function isReachable(element: Element): boolean {
+	if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return false
+	const rectangle = element.getBoundingClientRect()
+	return (
+		element.isConnected &&
+		element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
+		rectangle.width > 0 &&
+		rectangle.height > 0 &&
+		element.tabIndex >= 0 &&
+		!element.matches(':disabled, [aria-disabled="true"]') &&
+		element.closest('[inert]') === null
+	)
+}
+
+/**
+ * Determines whether the accessibility tree presents one element at all.
+ *
+ * @param element - The element to judge.
+ * @returns `false` when the element is hidden from assistive technology, from sight, or from both;
+ * `true` otherwise.
+ *
+ * @remarks
+ * A control clipped to a zero-size rectangle is still announced, which is the whole point of that
+ * idiom, so nothing here reads geometry: only the removals a browser honours — `aria-hidden`
+ * anywhere above it, the `hidden` attribute, a hidden input, and a `display` or `visibility` that
+ * takes it off the page. {@link isReachable} is the clickable half of the pair and does read
+ * geometry.
+ *
+ * The last two are asked about the element's ancestors as well as itself, which reading a computed
+ * `display` cannot do: the computed value of a child of a `display: none` container is the child's
+ * own, so a control inside a closed drawer reports itself as laid out. `checkVisibility` answers
+ * for the box tree, and `visibility` inherits, so between them an ancestor cannot hide a control
+ * from a reader and leave it standing in a description.
+ *
+ * @example
+ * ```ts
+ * isRendered(requireValue(container.querySelector('[aria-hidden="true"] button'))) // false
+ * ```
+ */
+export function isRendered(element: Element): boolean {
+	if (element.closest('[aria-hidden="true"]') !== null) return false
+	if (element instanceof HTMLElement && element.hidden) return false
+	if (element instanceof HTMLInputElement && element.type === 'hidden') return false
+	if (!element.checkVisibility()) return false
+	return getComputedStyle(element).visibility !== 'hidden'
 }
 
 /**
@@ -55,18 +134,7 @@ export function resolveRendered(first: string, second?: string): HTMLElement {
 	if (matches.length === 0) {
 		throw new Error(`No interactive element has the accessible name "${name}"`)
 	}
-	const reachable = matches.filter((element) => {
-		const rectangle = element.getBoundingClientRect()
-		return (
-			element.isConnected &&
-			element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
-			rectangle.width > 0 &&
-			rectangle.height > 0 &&
-			element.tabIndex >= 0 &&
-			!element.matches(':disabled, [aria-disabled="true"]') &&
-			element.closest('[inert]') === null
-		)
-	})
+	const reachable = matches.filter((element) => isReachable(element))
 	if (reachable.length === 0) {
 		throw new Error(`Interactive target "${name}" is not visible and focus-reachable`)
 	}
@@ -183,19 +251,9 @@ export async function clickAccessibleWithin(
 		.getByRole('region', { name: region, exact: true })
 		.getByRole(role, { name, exact: false, includeHidden: true })
 		.elements()
-	const reachable = matches.filter((element) => {
-		if (!(element instanceof HTMLElement)) return false
-		const rectangle = element.getBoundingClientRect()
-		return (
-			element.isConnected &&
-			element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
-			rectangle.width > 0 &&
-			rectangle.height > 0 &&
-			element.tabIndex >= 0 &&
-			!element.matches(':disabled, [aria-disabled="true"]') &&
-			element.closest('[inert]') === null
-		)
-	})
+	const reachable = matches.filter(
+		(element) => element instanceof HTMLElement && isReachable(element),
+	)
 	if (reachable.length === 0) {
 		throw new Error(`Interactive target "${name}" is not reachable inside "${region}"`)
 	}
@@ -216,11 +274,14 @@ export async function clickAccessibleWithin(
  *
  * @param name - The summary text a person reads.
  * @returns A promise resolving after trusted activation completes.
- * @throws When no visible, focus-reachable native summary has that rendered name, or several do.
+ * @throws When no native summary with that rendered name passes {@link isReachable}, or several do.
  *
  * @remarks
  * Chromium exposes `<summary>` as a native disclosure rather than through an ARIA role accepted by
  * `getByRole`, so this resolver names the platform element and its rendered text directly.
+ *
+ * It applies the same {@link isReachable} filter the other acting verbs apply, so a summary marked
+ * `aria-disabled="true"` is refused here exactly as a button marked that way is refused there.
  *
  * @example
  * ```ts
@@ -231,17 +292,7 @@ export async function clickDisclosure(name: string): Promise<void> {
 	const matches = [...document.querySelectorAll('summary')].filter(
 		(element) => element.innerText.replaceAll(/\s+/g, ' ').trim() === name,
 	)
-	const reachable = matches.filter((element) => {
-		const rectangle = element.getBoundingClientRect()
-		return (
-			element.isConnected &&
-			element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
-			rectangle.width > 0 &&
-			rectangle.height > 0 &&
-			element.tabIndex >= 0 &&
-			element.closest('[inert]') === null
-		)
-	})
+	const reachable = matches.filter((element) => isReachable(element))
 	if (reachable.length === 0) {
 		throw new Error(`Native disclosure "${name}" is not visible and focus-reachable`)
 	}
@@ -326,11 +377,9 @@ export async function traverseAccessible(name: string): Promise<HTMLElement> {
 	// revisits an element, because that is one full cycle of the tab order. And the target is
 	// re-resolved on every step, because a framework may replace the node between resolution and
 	// focus arrival: the person's target is the role and name, never one node.
-	const cap =
-		document.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')
-			.length *
-			3 +
-		10
+	// The bound is counted off `FOCUSABLE_SELECTOR`, the one population this environment reads
+	// sequential navigation from, so a tag the selector gains is a tag this traversal budgets for.
+	const cap = document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * 3 + 10
 	const visited = new Set<Element>()
 	const trail: string[] = []
 	for (let attempt = 0; attempt < cap; attempt += 1) {
@@ -461,6 +510,288 @@ export function readValue(role: string, name: string): string {
 }
 
 /**
+ * Reads one element's rendered text the way a name computation reads it.
+ *
+ * @param element - The element whose announced words are wanted.
+ * @returns The text with every `aria-hidden` descendant dropped and whitespace runs collapsed.
+ *
+ * @remarks
+ * A glyph marked `aria-hidden` contributes nothing to a name, so a control captioned by an icon
+ * plus a word reads as the word alone — which is what a reader hears, and what a verdict citing a
+ * description has to compare against the copy a template writes. Reach for `readRows` wherever the
+ * subject is what the page paints rather than what it announces: that one keeps the glyph.
+ *
+ * @example
+ * ```ts
+ * readText(requireValue(container.querySelector('button'))) // 'Save'
+ * ```
+ */
+export function readText(element: Element): string {
+	const parts: string[] = []
+	const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+	for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+		const owner = node.parentElement
+		if (owner === null || owner.closest('[aria-hidden="true"]') !== null) continue
+		parts.push(node.textContent ?? '')
+	}
+	return parts.join(' ').replaceAll(/\s+/g, ' ').trim()
+}
+
+/**
+ * Reads the role one element carries in the accessibility tree.
+ *
+ * @param element - The element to classify.
+ * @returns The declared role, the implicit one, or `undefined` when the element carries none.
+ *
+ * @remarks
+ * A declared `role` wins outright, and its first token is the answer when several are listed.
+ * Otherwise the element's own anatomy decides: an anchor is a link only while it holds an `href`,
+ * an `input` takes the role {@link FIELD_ROLES} gives its type, a `select` is a combobox until it
+ * offers several rows at once, a `section` is a region only once something names it, and a `th`
+ * heads whichever axis its `scope` names. Every other tag answers from {@link IMPLICIT_ROLES},
+ * whose membership is the contract for what this can answer at all.
+ *
+ * @example
+ * ```ts
+ * readRole(requireValue(container.querySelector('a[href]'))) // 'link'
+ * ```
+ */
+export function readRole(element: Element): string | undefined {
+	const declared = element.getAttribute('role')?.trim()
+	if (declared !== undefined && declared.length > 0) return declared.split(/\s+/)[0]
+	if (element instanceof HTMLAnchorElement) return element.href.length > 0 ? 'link' : undefined
+	if (element instanceof HTMLInputElement) return FIELD_ROLES[element.type]
+	if (element instanceof HTMLSelectElement) {
+		return element.multiple || element.size > 1 ? 'listbox' : 'combobox'
+	}
+	const implicit = IMPLICIT_ROLES[element.tagName]
+	const scope = element.tagName === 'TH' ? element.getAttribute('scope')?.trim() : undefined
+	if (scope !== undefined) return HEADER_ROLES[scope] ?? implicit
+	if (
+		implicit === 'region' &&
+		!element.hasAttribute('aria-label') &&
+		!element.hasAttribute('aria-labelledby')
+	) {
+		return undefined
+	}
+	return implicit
+}
+
+/**
+ * Reads the accessible name one element is announced under.
+ *
+ * @param element - The element to name.
+ * @returns The computed name, or an empty string when the element carries none.
+ *
+ * @remarks
+ * The order is the one a browser follows: `aria-labelledby`, then `aria-label`, then a form
+ * control's own labels, then an image's `alt`, then the text inside a role {@link CONTENT_ROLES}
+ * names, then `title`. A submit, reset, or button input is named by its value, because it renders
+ * no text to read. An `aria-labelledby` naming several ids joins their texts in the order the
+ * attribute lists them, and an id nothing answers for is skipped rather than fatal.
+ *
+ * Each step answers only when it has something to say, so a step that carries nothing hands the
+ * element to the next one. An image whose `alt` is absent or blank is the case that shows it:
+ * `<img title="Chart">` is named `Chart` rather than the empty string its own `alt` step would
+ * have returned, and an image carrying both keeps answering `alt`.
+ *
+ * @example
+ * ```ts
+ * readName(requireValue(container.querySelector('button'))) // 'Save changes'
+ * ```
+ */
+export function readName(element: Element): string {
+	const referenced = element.getAttribute('aria-labelledby')
+	if (referenced !== null) {
+		const named = referenced
+			.split(/\s+/)
+			.map((id) => element.ownerDocument.getElementById(id))
+			.filter((node) => node !== null)
+			.map((node) => readText(node))
+			.filter((text) => text.length > 0)
+		if (named.length > 0) return named.join(' ')
+	}
+	const labelled = element.getAttribute('aria-label')?.trim()
+	if (labelled !== undefined && labelled.length > 0) return labelled
+	if (
+		element instanceof HTMLInputElement ||
+		element instanceof HTMLSelectElement ||
+		element instanceof HTMLTextAreaElement
+	) {
+		const labels = [...(element.labels ?? [])]
+			.map((label) => readText(label))
+			.filter((text) => text.length > 0)
+		if (labels.length > 0) return labels.join(' ')
+		if (element instanceof HTMLInputElement && element.value.length > 0) {
+			if (FIELD_ROLES[element.type] === 'button') return element.value
+		}
+	}
+	if (element instanceof HTMLImageElement) {
+		const alternative = element.alt.trim()
+		if (alternative.length > 0) return alternative
+	}
+	const role = readRole(element)
+	if (role !== undefined && CONTENT_ROLES.includes(role)) {
+		const text = readText(element)
+		if (text.length > 0) return text
+	}
+	return element.getAttribute('title')?.trim() ?? ''
+}
+
+/**
+ * Reads the states one element is announced in.
+ *
+ * @param element - The element to read.
+ * @returns Every state the element declares, in one fixed order.
+ *
+ * @remarks
+ * A state a reader is told about is one this records: what is unavailable, disclosed, pressed,
+ * current, refused, chosen, announcing itself, demanded, uneditable, described, or busy. The order
+ * is fixed, so two descriptions of the same surface are comparable line for line.
+ *
+ * A native disclosure states its expansion on the parent `details` element's own `open` rather than
+ * on an ARIA attribute, so a summary that declares no `aria-expanded` is read from the platform's
+ * one copy of that fact.
+ *
+ * @example
+ * ```ts
+ * readStates(requireValue(container.querySelector('summary'))) // ['collapsed']
+ * ```
+ */
+export function readStates(element: Element): readonly string[] {
+	const states: string[] = []
+	if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') {
+		states.push('disabled')
+	}
+	const expanded = element.getAttribute('aria-expanded')
+	if (expanded === 'true') states.push('expanded')
+	if (expanded === 'false') states.push('collapsed')
+	if (
+		expanded === null &&
+		element.tagName === 'SUMMARY' &&
+		element.parentElement instanceof HTMLDetailsElement
+	) {
+		states.push(element.parentElement.open ? 'expanded' : 'collapsed')
+	}
+	const pressed = element.getAttribute('aria-pressed')
+	if (pressed !== null) states.push(`pressed=${pressed}`)
+	const current = element.getAttribute('aria-current')
+	if (current !== null && current !== 'false') states.push('current')
+	if (element.getAttribute('aria-invalid') === 'true') states.push('invalid')
+	const checked =
+		element instanceof HTMLInputElement
+			? element.checked
+			: element.getAttribute('aria-checked') === 'true'
+	if (checked) states.push('checked')
+	const selected = element.getAttribute('aria-selected')
+	if (selected !== null) states.push(`selected=${selected}`)
+	const live = element.getAttribute('aria-live')
+	if (live !== null) states.push(`live=${live}`)
+	if (element.matches(':required')) states.push('required')
+	if (element instanceof HTMLInputElement && element.readOnly) states.push('readonly')
+	if (element.hasAttribute('aria-describedby')) states.push('described')
+	if (element.getAttribute('aria-busy') === 'true') states.push('busy')
+	return Object.freeze(states)
+}
+
+/**
+ * Describes the accessible tree one rendered element presents.
+ *
+ * @param element - The host to walk, which is described first when it carries a role of its own.
+ * @returns One indented line per element carrying a role, naming its role, its name, and its
+ * states, in document order; an empty string when nothing in the subtree carries one.
+ *
+ * @remarks
+ * The walk is over the real rendered DOM, so what it reports is the tree the shipped markup and the
+ * shipped cascade produce together — a landmark lost to a hidden ancestor is missing here exactly as
+ * it is missing for a reader. An element {@link isRendered} refuses is dropped with its whole
+ * subtree.
+ *
+ * Depth follows the roles rather than the elements, so the indentation reads as the structure a
+ * screen reader announces instead of as the markup's nesting. An element {@link readRole} answers
+ * `undefined` for writes no line and adds no depth, so its children sit where it sat. That is how
+ * a wrapper `div` disappears, and it is also how an element {@link IMPLICIT_ROLES} does not answer
+ * for disappears — visibly, because its roled children stay at the depth it occupied.
+ *
+ * @example
+ * ```ts
+ * describeTree(container)
+ * // main "Board"
+ * //   heading "Totals"
+ * ```
+ */
+export function describeTree(element: Element): string {
+	const lines: string[] = []
+	const pending: Array<{ readonly node: Element; readonly depth: number }> = [
+		{ node: element, depth: 0 },
+	]
+	while (pending.length > 0) {
+		const entry = pending.pop()
+		if (entry === undefined) break
+		if (!isRendered(entry.node)) continue
+		const role = readRole(entry.node)
+		let depth = entry.depth
+		if (role !== undefined) {
+			const name = readName(entry.node)
+			const states = readStates(entry.node)
+			lines.push(
+				`${'  '.repeat(depth)}${role}${name.length > 0 ? ` "${name}"` : ''}${
+					states.length > 0 ? ` [${states.join(', ')}]` : ''
+				}`,
+			)
+			depth += 1
+		}
+		for (let index = entry.node.children.length - 1; index >= 0; index -= 1) {
+			const child = entry.node.children[index]
+			if (child !== undefined) pending.push({ node: child, depth })
+		}
+	}
+	return lines.join('\n')
+}
+
+/**
+ * Describes the order sequential keyboard navigation visits one element's controls in.
+ *
+ * @param element - The host to walk; its own controls are described, and it is not itself one.
+ * @returns One numbered line per reachable control, naming its role and its name.
+ *
+ * @remarks
+ * A positive `tabindex` is honoured, because a browser honours it: those controls come first in
+ * ascending order and everything else follows in document order. A control removed from the
+ * sequence by `tabindex="-1"`, by being disabled, or by not being rendered at all is absent here,
+ * which is the fact a focus-order verdict is about. A control {@link readRole} answers `undefined`
+ * for is named by its lowercased tag, so it is still counted rather than silently dropped.
+ *
+ * @example
+ * ```ts
+ * describeFocus(container)
+ * // 1. button "Save"
+ * // 2. link "Cancel"
+ * ```
+ */
+export function describeFocus(element: Element): string {
+	return [...element.querySelectorAll(FOCUSABLE_SELECTOR)]
+		.filter(
+			(node) =>
+				isRendered(node) && !node.matches(':disabled') && node.getAttribute('tabindex') !== '-1',
+		)
+		.sort((first, second) => {
+			const left = Number.parseInt(first.getAttribute('tabindex') ?? '0', 10)
+			const right = Number.parseInt(second.getAttribute('tabindex') ?? '0', 10)
+			if (left > 0 && right > 0) return left - right
+			if (left > 0) return -1
+			if (right > 0) return 1
+			return 0
+		})
+		.map((node, index) => {
+			const role = readRole(node) ?? node.tagName.toLowerCase()
+			const name = readName(node)
+			return `${String(index + 1)}. ${role}${name.length > 0 ? ` "${name}"` : ''}`
+		})
+		.join('\n')
+}
+
+/**
  * Waits for one animation frame to settle pending browser paint work.
  *
  * @returns A promise resolving after one `requestAnimationFrame`.
@@ -494,11 +825,203 @@ export function render(markup: string): HTMLDivElement {
 }
 
 /**
+ * Clears both browser storage surfaces.
+ *
+ * @remarks
+ * A browser test file shares one page, so a key written by one test is read by the next one that
+ * looks for it. Call this from an `afterEach` hook, which runs after a failed test as well as a
+ * passing one, rather than at the end of each test that happens to write a key.
+ *
+ * @example
+ * ```ts
+ * afterEach(clearStorage)
+ * ```
+ */
+export function clearStorage(): void {
+	localStorage.clear()
+	sessionStorage.clear()
+}
+
+/**
+ * Parses one computed CSS color value into straight sRGB channels.
+ *
+ * @param value - A computed `rgb()`, `rgba()`, or `color(srgb …)` value.
+ * @returns The color's channels, or `undefined` when the value names no color this reader speaks.
+ *
+ * @remarks
+ * A computed color resolves to `rgb()` or `rgba()` for every legacy source, and a `color-mix()`
+ * declaration resolves to `color(srgb r g b [/ a])` with channels on the 0–1 scale. Both forms are
+ * read here and nothing else is: a keyword, a hex triple, an empty string from a detached element,
+ * and a color space the cascade never hands back all return `undefined`. Absence is the answer
+ * rather than a transparent color, so a caller decides what an unreadable value means instead of
+ * measuring a black it never saw.
+ *
+ * @example
+ * ```ts
+ * parseColor('rgba(255, 255, 255, 0.5)') // [255, 255, 255, 0.5]
+ * parseColor('rebeccapurple') // undefined
+ * ```
+ */
+export function parseColor(value: string): Color | undefined {
+	const modern =
+		/^color\(srgb\s+(?<red>[\d.]+)\s+(?<green>[\d.]+)\s+(?<blue>[\d.]+)(?:\s*\/\s*(?<alpha>[\d.]+))?\)$/u.exec(
+			value,
+		)
+	const legacy = /^rgba?\((?<channels>[^)]*)\)$/u.exec(value)
+	const parts =
+		modern?.groups === undefined
+			? (legacy?.groups?.channels ?? '')
+					.split(/[\s,/]+/u)
+					.filter((part) => part.length > 0)
+					.map((part) => Number.parseFloat(part))
+			: [
+					Number.parseFloat(modern.groups.red ?? '') * 255,
+					Number.parseFloat(modern.groups.green ?? '') * 255,
+					Number.parseFloat(modern.groups.blue ?? '') * 255,
+					modern.groups.alpha === undefined ? 1 : Number.parseFloat(modern.groups.alpha),
+				]
+	const [red, green, blue, alpha = 1] = parts
+	if (red === undefined || green === undefined || blue === undefined) return undefined
+	if (![red, green, blue, alpha].every((channel) => Number.isFinite(channel))) return undefined
+	return Object.freeze([red, green, blue, alpha])
+}
+
+/**
+ * Composites one color over another.
+ *
+ * @param front - The color painted on top.
+ * @param back - The color already on the surface.
+ * @returns The opaque result a reader sees, its alpha always `1`.
+ *
+ * @example
+ * ```ts
+ * blendColor([255, 255, 255, 0.5], [0, 0, 0, 1]) // [127.5, 127.5, 127.5, 1]
+ * ```
+ */
+export function blendColor(front: Color, back: Color): Color {
+	const [red, green, blue, alpha] = front
+	const [under, over, beneath] = back
+	return Object.freeze([
+		red * alpha + under * (1 - alpha),
+		green * alpha + over * (1 - alpha),
+		blue * alpha + beneath * (1 - alpha),
+		1,
+	])
+}
+
+/**
+ * Measures one opaque color's WCAG relative luminance.
+ *
+ * @param color - The color to weigh. Its alpha is ignored, so composite before calling.
+ * @returns The relative luminance, from `0` for black to `1` for white.
+ *
+ * @example
+ * ```ts
+ * measureLuminance([255, 255, 255, 1]) // 1
+ * ```
+ */
+export function measureLuminance(color: Color): number {
+	const [red, green, blue] = color
+	const [first = 0, second = 0, third = 0] = [red, green, blue].map((channel) => {
+		const part = channel / 255
+		return part <= 0.040_45 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4
+	})
+	return 0.2126 * first + 0.7152 * second + 0.0722 * third
+}
+
+/**
+ * Measures the WCAG 2.x contrast ratio between two opaque colors.
+ *
+ * @param front - The foreground color, already composited.
+ * @param back - The opaque backdrop.
+ * @returns The ratio, from `1` for two identical colors to `21` for black against white.
+ *
+ * @remarks
+ * The ratio is symmetric: the brighter of the two luminances is always the numerator, so swapping
+ * the arguments returns the same number.
+ *
+ * @example
+ * ```ts
+ * measureContrast([0, 0, 0, 1], [255, 255, 255, 1]) // 21
+ * ```
+ */
+export function measureContrast(front: Color, back: Color): number {
+	const bright = Math.max(measureLuminance(front), measureLuminance(back))
+	const dark = Math.min(measureLuminance(front), measureLuminance(back))
+	return (bright + 0.05) / (dark + 0.05)
+}
+
+/**
+ * Collects the painted layers standing between one element and the surface it sits on.
+ *
+ * @param element - The element to walk up from.
+ * @returns Every layer the walk paints, the element's own first and the deepest last.
+ *
+ * @remarks
+ * A surface token paints one ancestor while every element between it and the text paints nothing,
+ * so a backdrop is found by walking up rather than by reading the element's own `background-color`,
+ * which is almost always transparent. A fully transparent layer paints nothing and is left out, and
+ * the walk stops at the first fully opaque layer, because nothing above that layer is visible.
+ *
+ * The stack is what tells a resolved backdrop from an assumed one: the walk reached an opaque
+ * surface exactly when its last layer's alpha is `1`. {@link contrast} refuses on that reading,
+ * which no comparison of composited colors can replace — 64 half-transparent layers composite to
+ * the same channels over opposite floors, because the floor's remaining share falls below the last
+ * bit a channel carries.
+ *
+ * @example
+ * ```ts
+ * readLayers(requireValue(container.querySelector('p')))
+ * ```
+ */
+export function readLayers(element: Element): readonly Color[] {
+	const layers: Color[] = []
+	for (let node: Element | null = element; node !== null; node = node.parentElement) {
+		const layer = parseColor(getComputedStyle(node).backgroundColor)
+		if (layer === undefined || layer[3] === 0) continue
+		layers.push(layer)
+		if (layer[3] >= 1) break
+	}
+	return Object.freeze(layers)
+}
+
+/**
+ * Resolves the opaque color standing behind one element.
+ *
+ * @param element - The element whose backdrop to resolve.
+ * @param floor - The opaque color the walk ends on when nothing above it paints.
+ * @returns The composited color a reader sees behind the element.
+ *
+ * @remarks
+ * The layers {@link readLayers} collects composite top-over-bottom onto the floor, so a 3% surface
+ * tint reads as a tint over what shows through it rather than as a full-strength paint.
+ *
+ * The floor is required, because this leaf never guesses what a document sits on. Pass
+ * {@link CANVAS_COLOR} for the page a browser paints behind an unstyled document, or the color of
+ * the surface a fragment is really rendered into. When no layer paints, the floor is returned by
+ * identity.
+ *
+ * The composite alone never says whether the floor is part of the answer. A caller that must know
+ * reads the stack instead.
+ *
+ * @example
+ * ```ts
+ * readBackdrop(requireValue(container.querySelector('p')), CANVAS_COLOR)
+ * ```
+ */
+export function readBackdrop(element: Element, floor: Color): Color {
+	return readLayers(element).reduceRight((back, front) => blendColor(front, back), floor)
+}
+
+/**
  * Measures the WCAG 2.x contrast ratio between an element's computed text and background colors.
  *
  * @param element - The element whose rendered text contrast to measure.
+ * @param floor - The opaque color the backdrop walk ends on. Omit it to refuse a stack the floor
+ * would show through instead of assuming one.
  * @returns The relative-luminance contrast ratio.
- * @throws When the browser does not expose parseable computed colors.
+ * @throws Thrown when the element exposes no computed foreground color, and — with `floor` omitted
+ * — when the walk from the element upwards reaches no opaque layer.
  *
  * @remarks
  * A transparent or translucent background resolves through the element's ancestors: every painted
@@ -507,79 +1030,100 @@ export function render(markup: string): HTMLDivElement {
  * full-strength paint. A translucent foreground then resolves against that effective background
  * before luminance is measured.
  *
- * Every element from the target upwards must be reachable, and at least one of them must paint:
- * the measurement throws rather than assuming a white canvas when nothing in the chain declares a
- * background color. The element itself must expose a computed foreground color — a detached
- * element exposes none, and the measurement throws rather than guessing one.
+ * With `floor` omitted, the walk from the target upwards must reach a fully opaque layer: the
+ * measurement throws rather than assuming a white canvas wherever that canvas would still be part
+ * of the answer. The refusal reads the alpha of the deepest layer {@link readLayers} collected, so
+ * a chain that declares no background color at all, a chain painting only translucent layers, and a
+ * chain deep enough for its composite to round to the canvas's own channels are refused alike,
+ * because the number any of them produces is as much a report of the assumption as of the page.
+ * Supply a floor wherever the caller knows what the stack sits on — a fragment mounted into a
+ * painted host, or a document whose canvas is {@link CANVAS_COLOR} — and the composite is taken
+ * over it rather than refused.
+ *
+ * The element itself must expose a computed foreground color either way. A detached element exposes
+ * none, and the measurement throws rather than guessing one.
  *
  * @example
  * ```ts
  * const container = render('<p style="background: #000; color: #fff">Ready</p>')
  * contrast(requireValue(container.firstElementChild)) // 21
+ * contrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21, and never refuses
  * ```
  */
-export function contrast(element: Element): number {
-	const foreground = getComputedStyle(element).color.match(/\d+(?:\.\d+)?/g)
-	if (foreground === null || foreground.length < 3) {
-		throw new Error('Computed foreground color is unavailable')
+export function contrast(element: Element, floor?: Color): number {
+	const foreground = parseColor(getComputedStyle(element).color)
+	if (foreground === undefined) throw new Error('Computed foreground color is unavailable')
+	const layers = readLayers(element)
+	const deepest = layers.at(-1)
+	// The walk reached a real surface exactly when its deepest layer is fully opaque. An empty stack
+	// paints nothing, and a stack ending translucent leaves the floor showing through whatever the
+	// composite reports: 64 half-transparent layers round to identical channels over opposite floors,
+	// so comparing two composited readings admits the stack this refusal exists for.
+	if (floor === undefined && (deepest === undefined || deepest[3] < 1)) {
+		throw new Error('Computed background color is unavailable')
 	}
-	const layers: number[][] = []
-	let current: Element | null = element
-	let opaque = false
-	while (current !== null) {
-		const channels = getComputedStyle(current).backgroundColor.match(/\d+(?:\.\d+)?/g)
-		if (channels !== null && channels.length >= 3) {
-			const layerAlpha = channels[3] === undefined ? 1 : Number(channels[3])
-			if (layerAlpha > 0) {
-				layers.push([...channels.slice(0, 3).map(Number), layerAlpha])
-			}
-			if (layerAlpha >= 1) {
-				opaque = true
-				break
-			}
-		}
-		current = current.parentElement
-	}
-	if (layers.length === 0) throw new Error('Computed background color is unavailable')
-	const base = layers[layers.length - 1]
-	if (base === undefined) throw new Error('Computed background color is unavailable')
-	let composed = base.slice(0, 3).map((channel) => channel / 255)
-	if (!opaque) composed = [1, 1, 1]
-	const start = opaque ? layers.length - 2 : layers.length - 1
-	for (let index = start; index >= 0; index -= 1) {
-		const layer = layers[index]
-		if (layer === undefined) continue
-		const layerAlpha = layer[3] ?? 1
-		composed = composed.map((channel, position) => {
-			const top = (layer[position] ?? 0) / 255
-			return top * layerAlpha + channel * (1 - layerAlpha)
-		})
-	}
+	const backdrop = layers.reduceRight(
+		(back, front) => blendColor(front, back),
+		floor ?? CANVAS_COLOR,
+	)
+	return measureContrast(blendColor(foreground, backdrop), backdrop)
+}
 
-	const alpha = foreground[3] === undefined ? 1 : Number(foreground[3])
-	const backgroundChannels = composed
-	const foregroundChannels = foreground.slice(0, 3).map((channel, index) => {
-		const behind = backgroundChannels[index]
-		if (behind === undefined) throw new Error('Computed background channel is unavailable')
-		return (Number(channel) / 255) * alpha + behind * (1 - alpha)
-	})
-	const foregroundLinear = foregroundChannels.map((channel) =>
-		channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-	)
-	const backgroundLinear = backgroundChannels.map((channel) =>
-		channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-	)
-	const foregroundLuminance =
-		0.2126 * (foregroundLinear[0] ?? 0) +
-		0.7152 * (foregroundLinear[1] ?? 0) +
-		0.0722 * (foregroundLinear[2] ?? 0)
-	const backgroundLuminance =
-		0.2126 * (backgroundLinear[0] ?? 0) +
-		0.7152 * (backgroundLinear[1] ?? 0) +
-		0.0722 * (backgroundLinear[2] ?? 0)
-	const lighter = Math.max(foregroundLuminance, backgroundLuminance)
-	const darker = Math.min(foregroundLuminance, backgroundLuminance)
-	return (lighter + 0.05) / (darker + 0.05)
+/**
+ * Measures the contrast the focus chrome painted on one control reaches against its own backdrop.
+ *
+ * @param control - The control that holds the focus.
+ * @param worn - The element the control's focus chrome is painted onto. Default: `control`.
+ * @returns The strongest ratio the painted focus chrome reaches, or `undefined` when the control is
+ * not showing `:focus-visible` or the cascade paints no chrome of its own.
+ *
+ * @remarks
+ * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
+ * `pressKeys`, a real click — and this measures what the browser painted once it landed. A control
+ * that is not matching `:focus-visible` when the call is made reports nothing, because no
+ * measurement taken then would be about focus.
+ *
+ * Some controls are two elements: one that takes the focus and one a reader can see. A hidden radio
+ * beside the label that carries every pixel of its chrome is the case `worn` exists for, so a
+ * measurement is not taken on a rectangle nobody is looking at. The focus state is still read off
+ * `control`, because that is what holds it.
+ *
+ * The backdrop is the surface behind the element the chrome is worn on, resolved from that element's
+ * parent through {@link readBackdrop} onto {@link CANVAS_COLOR}. A control whose ancestry paints
+ * nothing is therefore measured against the browser's own canvas, which is what a reader looking at
+ * an unstyled document sees.
+ *
+ * Only chrome the cascade paints is measured — an `outline` with a real style and width, and the
+ * first color in a `box-shadow`. A control left the browser's own `outline-style: auto` ring reports
+ * `undefined`, because that ring's two tones are guaranteed against any backdrop and its computed
+ * color names neither. A focus style that only changes the control's own fill reports `undefined`
+ * too: the resting fill is gone by the time focus is on the control, and this never moves focus to
+ * go and read it.
+ *
+ * @example
+ * ```ts
+ * await traverseAccessible('Evaluate')
+ * readRing(resolveRendered('Evaluate')) // the ratio the painted ring reaches
+ * ```
+ */
+export function readRing(control: Element, worn?: Element): number | undefined {
+	if (!control.matches(':focus-visible')) return undefined
+	const target = worn ?? control
+	const declared = getComputedStyle(target)
+	const backdrop = readBackdrop(target.parentElement ?? target, CANVAS_COLOR)
+	const outline =
+		declared.outlineStyle === 'none' ||
+		declared.outlineStyle === 'auto' ||
+		Number.parseFloat(declared.outlineWidth) === 0
+			? undefined
+			: parseColor(declared.outlineColor)
+	const shadow = parseColor(/(?:rgba?|color)\([^)]*\)/u.exec(declared.boxShadow)?.[0] ?? '')
+	const ratios: number[] = []
+	for (const painted of [outline, shadow]) {
+		if (painted === undefined) continue
+		ratios.push(measureContrast(blendColor(painted, backdrop), backdrop))
+	}
+	return ratios.length === 0 ? undefined : Math.max(...ratios)
 }
 
 /**
@@ -643,6 +1187,35 @@ export function readRows(root: ParentNode, selector: string): readonly string[] 
 }
 
 /**
+ * Collects every element carrying a component class rendered outside the container it belongs to.
+ *
+ * @param root - The subtree to sweep.
+ * @param child - The component class whose anatomy requires a container, such as `list-group-item`.
+ * @param parent - The container class that child class must render inside, such as `list-group`.
+ * @returns The markup of every element carrying `child` with no `parent` above it, in document
+ * order; an empty list when every one of them is nested correctly.
+ *
+ * @remarks
+ * A component keeps its padding, borders, and radii on the container, so a child class rendered
+ * outside one is an unstyled box wearing a component's name, and the interface has to hand-roll the
+ * chrome back. The search for the container starts at the element's parent, so an element can never
+ * answer the invariant by carrying both classes itself.
+ *
+ * The class names are arguments, so the check belongs to no framework: name the pair your own
+ * cascade defines.
+ *
+ * @example
+ * ```ts
+ * extractOrphans(container, 'list-group-item', 'list-group') // []
+ * ```
+ */
+export function extractOrphans(root: ParentNode, child: string, parent: string): readonly string[] {
+	return [...root.querySelectorAll(`.${child}`)]
+		.filter((node) => (node.parentElement?.closest(`.${parent}`) ?? null) === null)
+		.map((node) => node.outerHTML)
+}
+
+/**
  * Reads one resolved CSS property from a real browser element.
  *
  * @param element - The element whose resolved style to inspect.
@@ -656,6 +1229,150 @@ export function readRows(root: ParentNode, selector: string): readonly string[] 
  */
 export function style(element: Element, property: string): string {
 	return getComputedStyle(element).getPropertyValue(property)
+}
+
+/**
+ * Sets the tester's viewport and renders the runner's pane at the size that viewport claims.
+ *
+ * @param width - The viewport width in CSS pixels.
+ * @param height - The viewport height in CSS pixels.
+ * @returns A promise resolving after the resized pane has been painted.
+ * @throws Thrown when the tester sits inside no pane a capture can size, and when the staged pane
+ * does not render at the viewport it was given.
+ *
+ * @remarks
+ * This depends on the runner's own tester layout, and that dependency is contract rather than an
+ * accident: `vitest@4.1.11` lays its tester out inside a smaller page, fits it by scaling the pane
+ * the tester sits in, and clips whatever overflows that pane. Layout inside the tester is
+ * unaffected — the tester reports the viewport it was given and every breakpoint answers to it —
+ * but a screenshot is taken off the page the runner painted, so a frame shot through that scale is
+ * a thumbnail of the surface and a frame shot after only unscaling it is a sliver. The tester is
+ * therefore unscaled and lifted to the window's own origin for the shot. The `iframe[data-vitest]`
+ * selector and the `--tester-transform`, `--tester-margin-left`, `--viewport-width`, and
+ * `--viewport-height` custom properties are the runner's, so a Vitest release that renames any of
+ * them reddens the size check below rather than writing a wrong frame.
+ *
+ * Hand the pane straight back with {@link releasePane}. A tester pinned at a viewport taller than
+ * the window puts its lower half beyond what a pointer can reach, so an ordinary press then fails
+ * as a control outside the viewport, in a test that took no picture at all.
+ *
+ * The rule is declared rather than written inline, because the runner writes its own scale onto the
+ * pane as inline custom properties and rewrites them whenever the tester resizes. A declared rule
+ * marked important outranks an inline value and survives every rewrite. It finds the pane by the
+ * tester it contains as well as by {@link CAPTURE_PANE}, because a re-render between the staging and
+ * the shot replaces the node and takes any attribute of ours with it.
+ *
+ * The wait is two frames rather than a delay: the first carries the resize into layout and the
+ * second is the paint a screenshot reads.
+ *
+ * @example
+ * ```ts
+ * await stagePane(390, 844)
+ * ```
+ */
+export async function stagePane(width: number, height: number): Promise<void> {
+	await page.viewport(width, height)
+	const frame = window.frameElement
+	const pane = frame?.parentElement
+	const owner = pane?.ownerDocument
+	if (frame === null || pane === null || pane === undefined || owner === undefined) {
+		throw new Error('Tester pane is unavailable for a capture')
+	}
+	pane.setAttribute(CAPTURE_PANE, '')
+	if (owner.querySelector(`style[${CAPTURE_PANE}]`) === null) {
+		const rule = owner.createElement('style')
+		rule.setAttribute(CAPTURE_PANE, '')
+		rule.textContent = [
+			`[${CAPTURE_PANE}],:has(>iframe[data-vitest])`,
+			'{--tester-transform:none !important;--tester-margin-left:0px !important}',
+			'iframe[data-vitest]',
+			'{position:fixed !important;left:0 !important;top:0 !important;right:auto !important;',
+			'bottom:auto !important;width:var(--viewport-width) !important;',
+			'height:var(--viewport-height) !important;z-index:2147483647 !important}',
+		].join('')
+		owner.head.append(rule)
+	}
+	await waitForFrame()
+	await waitForFrame()
+	const box = frame.getBoundingClientRect()
+	if (Math.round(box.width) !== width || Math.round(box.height) !== height) {
+		throw new Error(
+			`Tester pane rendered ${String(Math.round(box.width))}x${String(Math.round(box.height))} for a ${String(width)}x${String(height)} viewport`,
+		)
+	}
+}
+
+/**
+ * Hands the tester pane back to the runner's own layout.
+ *
+ * @remarks
+ * A staged pane is the runner's fitting scale suppressed, so a pane left staged outlives the capture
+ * that needed it and every later act in the file happens on a surface the runner is no longer
+ * fitting to its window. What that costs is not a wrong picture: it is a control whose page
+ * coordinates fall outside the pane, which the runner's own layout then intercepts, so an ordinary
+ * press fails with the voice of a control that is covered. Calling this on an unstaged pane does
+ * nothing.
+ *
+ * @example
+ * ```ts
+ * releasePane()
+ * ```
+ */
+export function releasePane(): void {
+	const pane = window.frameElement?.parentElement
+	pane?.removeAttribute(CAPTURE_PANE)
+	pane?.ownerDocument.querySelector(`style[${CAPTURE_PANE}]`)?.remove()
+}
+
+/**
+ * Shoots one frame at one viewport size and proves the file on disk holds this run's bytes.
+ *
+ * @param options - The path to write, the viewport to shoot at, and the element to shoot.
+ * @returns The absolute path of the written frame, after it has been read back and matched.
+ * @throws Thrown when the pane cannot be staged, when the provider wrote the frame somewhere else,
+ * and when the bytes on disk are not the ones this shot produced.
+ *
+ * @remarks
+ * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
+ * exists. The file is read back through the runner's built-in `readFile` command and compared with
+ * the shot itself, which is what separates a frame this run wrote from one an earlier run left
+ * behind. The provider resolves `options.path` against the calling test file and returns an absolute
+ * path, so the two are compared by the segments that survive resolving `.` and `..` lexically — the
+ * refusal is what a provider resolving that path against a different base would trip.
+ *
+ * Omit `options.element` to shoot the whole page. The pane is staged for the frame and released
+ * before this returns, on the failing path as well as the passing one.
+ *
+ * @example
+ * ```ts
+ * await captureFrame({ path: '../../tmp/capture/start.png', width: 390, height: 844 })
+ * ```
+ */
+export async function captureFrame(options: FrameOptions): Promise<string> {
+	try {
+		await stagePane(options.width, options.height)
+		const shot =
+			options.element === undefined
+				? await page.screenshot({ path: options.path, base64: true })
+				: await page.screenshot({ element: options.element, path: options.path, base64: true })
+		const segments: string[] = []
+		for (const segment of options.path.replaceAll('\\', '/').split('/')) {
+			if (segment === '' || segment === '.') continue
+			if (segment === '..') segments.pop()
+			else segments.push(segment)
+		}
+		if (!shot.path.replaceAll('\\', '/').endsWith(segments.join('/'))) {
+			throw new Error(
+				`Capture frame was written to ${shot.path} where ${options.path} was asked for`,
+			)
+		}
+		if ((await commands.readFile(shot.path, 'base64')) !== shot.base64) {
+			throw new Error(`Capture frame at ${options.path} is not the one this run shot`)
+		}
+		return shot.path
+	} finally {
+		releasePane()
+	}
 }
 
 /**

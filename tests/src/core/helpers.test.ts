@@ -3,10 +3,14 @@ import {
 	captureError,
 	collect,
 	collectStream,
+	decodeJSONLines,
 	requireValue,
 	resolveRoot,
+	retryUntil,
 	roundTripJSON,
+	waitForCondition,
 	waitForDelay,
+	waitForEvent,
 } from '@src/core'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { createAsyncSource, createStreamSource } from '../../setup.js'
@@ -54,6 +58,356 @@ describe('waitForDelay', () => {
 		await waitForDelay(delay)
 		const elapsed = performance.now() - start
 		expect(elapsed).toBeGreaterThanOrEqual(floor)
+	})
+})
+
+describe('waitForCondition', () => {
+	it('returns after one immediate read with a zero budget', async () => {
+		let reads = 0
+
+		await waitForCondition(
+			'ready immediately',
+			() => {
+				reads += 1
+				return true
+			},
+			{ budget: 0, interval: 50 },
+		)
+
+		expect(reads).toBe(1)
+	})
+
+	it('returns when a later read holds', async () => {
+		let reads = 0
+
+		await waitForCondition(
+			'ready later',
+			() => {
+				reads += 1
+				return reads === 3
+			},
+			{ interval: 0 },
+		)
+
+		expect(reads).toBe(3)
+	})
+
+	it('awaits an asynchronous condition', async () => {
+		await expect(
+			waitForCondition('async ready', async () => {
+				await Promise.resolve()
+				return true
+			}),
+		).resolves.toBeUndefined()
+	})
+
+	it('names the condition and budget when it never holds', async () => {
+		await expect(
+			waitForCondition('database visible', () => false, { budget: 5, interval: 10 }),
+		).rejects.toThrow('Condition "database visible" did not hold within 5ms')
+	})
+
+	it('propagates a condition throw unchanged', async () => {
+		const thrown = new Error('condition failed')
+		let caught: unknown
+		try {
+			await waitForCondition('throwing condition', () => {
+				throw thrown
+			})
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(thrown)
+	})
+
+	it('rejects an aborted wait with the signal reason and stops reading', async () => {
+		const controller = new AbortController()
+		const reason = new Error('wait aborted')
+		let reads = 0
+		setTimeout(() => controller.abort(reason), 0)
+
+		let caught: unknown
+		try {
+			await waitForCondition(
+				'aborted condition',
+				() => {
+					reads += 1
+					return false
+				},
+				{ budget: 100, interval: 20, signal: controller.signal },
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(reason)
+		expect(reads).toBe(1)
+	})
+
+	it('accepts a true reading taken after the final interval', async () => {
+		let reads = 0
+
+		await waitForCondition(
+			'final reading',
+			() => {
+				reads += 1
+				return reads === 2
+			},
+			{ budget: 10, interval: 20 },
+		)
+
+		expect(reads).toBe(2)
+	})
+
+	it('refuses invalid budgets and intervals', async () => {
+		await expect(
+			waitForCondition('invalid budget', () => true, { budget: Number.NaN }),
+		).rejects.toThrow('Wait budget')
+		await expect(
+			waitForCondition('invalid interval', () => true, { interval: -1 }),
+		).rejects.toThrow('Wait interval')
+	})
+})
+
+describe('retryUntil', () => {
+	it('returns after the first satisfying attempt', async () => {
+		let calls = 0
+
+		const value = await retryUntil(
+			'first value',
+			() => {
+				calls += 1
+				return 'ready'
+			},
+			(candidate) => candidate === 'ready',
+		)
+
+		expect(value).toBe('ready')
+		expect(calls).toBe(1)
+	})
+
+	it('returns a value from a later attempt', async () => {
+		let calls = 0
+
+		const value = await retryUntil(
+			'later value',
+			() => {
+				calls += 1
+				return calls
+			},
+			(candidate) => candidate === 3,
+			{ interval: 0 },
+		)
+
+		expect(value).toBe(3)
+		expect(calls).toBe(3)
+	})
+
+	it('rejects when the attempt bound is exhausted', async () => {
+		await expect(
+			retryUntil('attempt limit', () => false, Boolean, {
+				attempts: 2,
+				budget: 100,
+				interval: 0,
+			}),
+		).rejects.toThrow('Retry "attempt limit" did not succeed within 2 attempts')
+	})
+
+	it('rejects when the time budget is exhausted', async () => {
+		let calls = 0
+		await expect(
+			retryUntil(
+				'time limit',
+				() => {
+					calls += 1
+					return false
+				},
+				Boolean,
+				{ budget: 5, interval: 10 },
+			),
+		).rejects.toThrow('Retry "time limit" did not succeed within 5ms')
+		expect(calls).toBe(1)
+	})
+
+	it('returns the exact satisfying value', async () => {
+		const expected = { status: 'ready' }
+		const value = await retryUntil(
+			'object value',
+			() => expected,
+			() => true,
+		)
+
+		expect(value).toBe(expected)
+	})
+
+	it('counts producer throws and uses the last error as the exhaustion cause', async () => {
+		const first = new Error('first failure')
+		const last = new Error('last failure')
+		let calls = 0
+		let caught: unknown
+		try {
+			await retryUntil(
+				'throwing producer',
+				() => {
+					calls += 1
+					throw calls === 1 ? first : last
+				},
+				() => true,
+				{ attempts: 2, budget: 100, interval: 0 },
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(calls).toBe(2)
+		expect(caught).toBeInstanceOf(Error)
+		if (!(caught instanceof Error)) throw new Error('Expected a retry error')
+		expect(caught.cause).toBe(last)
+	})
+
+	it('propagates a predicate throw unchanged', async () => {
+		const thrown = new Error('predicate failed')
+		let caught: unknown
+		try {
+			await retryUntil(
+				'throwing predicate',
+				() => 'value',
+				() => {
+					throw thrown
+				},
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(thrown)
+	})
+
+	it('rejects an aborted retry with the signal reason', async () => {
+		const controller = new AbortController()
+		const reason = new Error('retry aborted')
+		let calls = 0
+		setTimeout(() => controller.abort(reason), 0)
+
+		let caught: unknown
+		try {
+			await retryUntil(
+				'aborted retry',
+				() => {
+					calls += 1
+					return false
+				},
+				Boolean,
+				{ budget: 100, interval: 20, signal: controller.signal },
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(reason)
+		expect(calls).toBe(1)
+	})
+})
+
+describe('waitForEvent', () => {
+	it('resolves with the exact delivered tuple', async () => {
+		let deliver: ((name: string, count: number) => void) | undefined
+		const pending = waitForEvent<[name: string, count: number]>((listener) => {
+			deliver = listener
+		}, 'job completed')
+		if (deliver === undefined) throw new Error('Expected an event listener')
+
+		deliver('ready', 2)
+
+		await expect(pending).resolves.toStrictEqual(['ready', 2])
+	})
+
+	it('names the event and budget on timeout and invokes cleanup', async () => {
+		let cleanups = 0
+		const pending = waitForEvent(
+			() => () => {
+				cleanups += 1
+			},
+			'worker exit',
+			{ budget: 5 },
+		)
+
+		await expect(pending).rejects.toThrow('Event "worker exit" was not delivered within 5ms')
+		expect(cleanups).toBe(1)
+	})
+
+	it('rejects with the abort reason and invokes cleanup', async () => {
+		const controller = new AbortController()
+		const reason = new Error('event aborted')
+		let cleanups = 0
+		const pending = waitForEvent(
+			() => () => {
+				cleanups += 1
+			},
+			'aborted event',
+			{ budget: 100, signal: controller.signal },
+		)
+
+		controller.abort(reason)
+
+		let caught: unknown
+		try {
+			await pending
+		} catch (error) {
+			caught = error
+		}
+		expect(caught).toBe(reason)
+		expect(cleanups).toBe(1)
+	})
+
+	it('ignores a second delivery after settlement', async () => {
+		const pending = waitForEvent<[value: string]>((listener) => {
+			listener('first')
+			listener('second')
+		}, 'first delivery')
+
+		await expect(pending).resolves.toStrictEqual(['first'])
+	})
+})
+
+describe('decodeJSONLines', () => {
+	it('returns an empty array for empty input', () => {
+		expect(decodeJSONLines('')).toStrictEqual([])
+	})
+
+	it('ignores a trailing newline', () => {
+		expect(decodeJSONLines('{"ready":true}\n')).toStrictEqual([{ ready: true }])
+	})
+
+	it('accepts CRLF input', () => {
+		expect(decodeJSONLines('1\r\n2\r\n')).toStrictEqual([1, 2])
+	})
+
+	it('preserves line order', () => {
+		expect(decodeJSONLines('{"position":3}\n{"position":1}\n{"position":2}')).toStrictEqual([
+			{ position: 3 },
+			{ position: 1 },
+			{ position: 2 },
+		])
+	})
+
+	it('decodes primitive lines', () => {
+		expect(decodeJSONLines('"entry"\n7\ntrue\nnull')).toStrictEqual(['entry', 7, true, null])
+	})
+
+	it('names a malformed physical line and keeps the native syntax error as cause', () => {
+		let caught: unknown
+		try {
+			decodeJSONLines('{}\n\n{')
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBeInstanceOf(Error)
+		if (!(caught instanceof Error)) throw new Error('Expected a JSON Lines error')
+		expect(caught.message).toBe('Invalid JSON on line 3')
+		expect(caught.cause).toBeInstanceOf(SyntaxError)
 	})
 })
 

@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/test",
-	"version": "0.0.7",
+	"version": "0.0.8",
 	"description": "The test helpers the Orkestrel fleet repeats — a call recorder, a real delay, JSON and async collectors, an owned scratch directory with a source-file walker, and a browser journey layer that drives real interfaces by role and accessible name. Zero runtime dependencies. Part of the @orkestrel line.",
 	"keywords": [],
 	"homepage": "https://github.com/orkestrel/test#readme",
@@ -76,19 +76,20 @@
 		"build:src:core": "vite build --config configs/src/vite.core.config.ts && npm run copy dist/src/core/index.d.ts dist/src/core/index.d.cts",
 		"build:src:browser": "vite build --config configs/src/vite.browser.config.ts",
 		"build:src:server": "vite build --config configs/src/vite.server.config.ts && npm run copy dist/src/server/index.d.ts dist/src/server/index.d.cts",
+		"prepack": "npm run build",
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"devDependencies": {
-		"@microsoft/api-extractor": "^7.58.12",
+		"@microsoft/api-extractor": "^7.58.13",
 		"@orkestrel/guide": "^0.0.12",
-		"@orkestrel/scaffold": "^0.0.42",
+		"@orkestrel/scaffold": "^0.0.46",
 		"@types/node": "^26.2.0",
 		"@vitest/browser-playwright": "^4.1.11",
 		"oxfmt": "^0.64.0",
 		"oxlint": "^1.79.0",
 		"playwright": "^1.62.1",
 		"typescript": "^6.0.3",
-		"vite": "~8.2.1",
+		"vite": "~8.2.2",
 		"vite-plugin-dts": "^5.0.3",
 		"vitest": "^4.1.11"
 	},
