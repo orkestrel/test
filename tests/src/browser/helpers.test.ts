@@ -1557,6 +1557,21 @@ describe('readCascade', () => {
 		expect(known.has('journey-beta')).toBe(true)
 		expect(known.has('journey-absent')).toBe(false)
 	})
+
+	it('admits a class declared inside a media block', () => {
+		buildStylesheet('@media (min-width: 1px) { .journey-conditional { color: rgb(7, 8, 9) } }')
+		expect(readCascade().has('journey-conditional')).toBe(true)
+	})
+
+	it('inserts a top-level class before a class declared inside an earlier grouping rule', () => {
+		buildStylesheet(
+			'@media (min-width: 1px) { .journey-first-inner { color: rgb(1, 2, 3) } }' +
+				'.journey-second-outer { color: rgb(4, 5, 6) }',
+		)
+		const order = [...readCascade()]
+		expect(order.indexOf('journey-second-outer')).toBeLessThan(order.indexOf('journey-first-inner'))
+		expect(order.indexOf('journey-first-inner')).toBeGreaterThan(-1)
+	})
 })
 
 describe('readRules', () => {

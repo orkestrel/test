@@ -845,10 +845,15 @@ export function build<K extends keyof HTMLElementTagNameMap>(
  * @returns The same element, now appended to `document.body`.
  *
  * @remarks
- * What this buys is the invariant, not the append: after it returns, the element is connected, so
- * `getComputedStyle` resolves against the shipped cascade, custom properties inherit from `:root`,
- * and the element lays out a real box. An unmounted element answers every one of those questions
- * with the initial value instead, which reads as a styling defect rather than as a detached node.
+ * What this buys is the composition, not the attachment: the `append` method returns `void`, and
+ * this hands the element back, so it fits where an expression is expected. The {@link render} helper
+ * returns its fixture through it, and the {@link rgba} helper probes through `mount(build('span'))`.
+ * A bare `append` call breaks each of those call sites.
+ *
+ * Being connected is what the attachment then buys: `getComputedStyle` resolves against the shipped
+ * cascade, custom properties inherit from `:root`, and the element lays out a real box. A detached
+ * element answers each of those questions with the initial value instead, which reads as a styling
+ * defect rather than as a detached node.
  *
  * Taking it back out belongs to the consumer's teardown, because this records nothing: a browser
  * test file shares one page, so a fixture left behind is the next test's resolver ambiguity. Build a
@@ -919,7 +924,9 @@ export function render(first: string, second?: string): HTMLElement {
  * This is the synthetic pair of {@link typeAccessible}, for a component that listens for `input` and
  * a test that has the element already. It sets the value in one write and dispatches one bubbling
  * `input` event, so a delegated listener on an ancestor hears it. It sends no keystrokes, so a
- * component reading `key`, composition, or selection sees nothing; drive that one through
+ * component reading `key`, composition, or selection sees nothing. The dispatched event is a plain
+ * `Event`, never an `InputEvent`, so a component reading `inputType` or testing
+ * `instanceof InputEvent` sees neither. Drive a component that reads any of those through
  * `typeAccessible` instead.
  *
  * No `change` event follows. Use {@link commitInput} where the component waits for the field to be
@@ -1376,11 +1383,23 @@ export function readRing(control: Element, worn?: Element): number | undefined {
 /**
  * Collects every class token the stylesheets loaded into this document actually define.
  *
- * @returns The set of class names reachable in the shipped cascade.
+ * @returns The set of class names reachable in the shipped cascade, in {@link readRules} order.
  *
  * @remarks
  * The set is what an authored-class conformance check measures against, so a class no loaded
  * stylesheet defines — an invented utility, a misspelled framework name — is absent from it.
+ *
+ * The tokens come from the {@link readRules} walk, which decides both the membership and the
+ * insertion order this reader reports, and each answer is a deliberate difference from 0.0.8. A
+ * class declared inside a grouping rule — a media query, a supports block, a layer, a nested style
+ * rule — counts as defined, because a class the cascade defines under a condition is still one the
+ * cascade defines; 0.0.8 read the top-level rules alone. Insertion order is breadth-first, so a
+ * top-level class lands before a class declared inside an earlier grouping rule; 0.0.8 popped a
+ * stack and inserted the deepest rule first. Iterate the set where the order is the subject, and
+ * read `has` where membership is.
+ *
+ * `@keyframes` children are outside that walk, so an animation's own rules define no token here.
+ * Reach the animation itself through {@link findKeyframes}.
  *
  * @example
  * ```ts
@@ -1399,7 +1418,8 @@ export function readCascade(): ReadonlySet<string> {
 }
 
 /**
- * Collects every rule the stylesheets loaded into this document hold, nested rules included.
+ * Collects every rule the stylesheets loaded into this document hold, nested grouping rules
+ * included.
  *
  * @returns Every rule reachable in the shipped cascade: each sheet's own rules in sheet order, then
  * the rules nested inside them, level by level.
@@ -1409,6 +1429,10 @@ export function readCascade(): ReadonlySet<string> {
  * query, a supports block, a layer, and a nested style rule without recursion. Expanding by level
  * rather than by depth is why a top-level rule is always met before a rule nested inside an earlier
  * one; {@link findRule} returns the first match in exactly this order.
+ *
+ * The descent reaches a `CSSGroupingRule` and nothing else, and a `@keyframes` rule is not one. The
+ * `@keyframes` rule itself is collected wherever it sits, and the keyframe rules inside it are not;
+ * {@link findKeyframes} is the door to those.
  *
  * A stylesheet the document cannot read — a cross-origin sheet with no CORS grant — throws from its
  * own `cssRules` getter, and that sheet is skipped rather than ending the walk. What a page loaded
@@ -1558,12 +1582,8 @@ export function extractOrphans(root: ParentNode, child: string, parent: string):
  * none.
  *
  * @remarks
- * The value is trimmed, so what comes back is the value and never the whitespace around it. A
- * registered property computes to a normalized value with nothing around it either way. A custom
- * property computes to its declaration's own token stream, and no rule requires an engine to strip
- * what surrounds that stream, so trimming is what makes one reader answer the same for a token and a
- * length on every engine. Internal whitespace is kept: `--shadow: 0 0 2px` reads back with its
- * spaces.
+ * The value is trimmed, so what comes back is the value and never the whitespace around it. Internal
+ * whitespace is kept: `--shadow: 0 0 2px` reads back with its spaces.
  *
  * @example
  * ```ts

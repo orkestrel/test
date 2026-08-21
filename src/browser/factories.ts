@@ -48,9 +48,12 @@ export function createPointerEvent(name: string, options?: PointerEventInit): Po
  *
  * @remarks
  * A drag event with no `dataTransfer` is the shape that makes a drop handler fail in a test and work
- * in a browser, so one is allocated where the environment defines `DataTransfer` and the member is
- * `null` where it does not. Pass your own to seed it: a `dataTransfer` given in `options` replaces
- * the allocated one, which is how a drop is driven with the payload the drag was supposed to carry.
+ * in a browser, so one is allocated. Pass your own to seed it: a `dataTransfer` given in `options`
+ * replaces the allocated one, which is how a drop is driven with the payload the drag was supposed
+ * to carry.
+ *
+ * The platform declares the `dataTransfer` member on the constructed event as nullable, so calling
+ * code still narrows it even though this always supplies one.
  *
  * `bubbles` and `cancelable` are set, because a drop handler that never prevents the default event
  * is a drop the browser handles itself.
@@ -66,7 +69,7 @@ export function createDragEvent(name: string, options?: DragEventInit): DragEven
 	return new DragEvent(name, {
 		bubbles: true,
 		cancelable: true,
-		dataTransfer: 'DataTransfer' in globalThis ? new DataTransfer() : null,
+		dataTransfer: new DataTransfer(),
 		...options,
 	})
 }
