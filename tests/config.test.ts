@@ -648,8 +648,31 @@ describe('policy plugin', () => {
 				name: 'accepts function syntax inside a class expression',
 				code: 'function projectValue() { return class { read() { const value = () => 1; return value() } } }',
 			},
+			{
+				name: 'accepts class accessors inside a factory',
+				code: 'function createAccessor() { class Accessor { get value() { return 1 } set value(value) { consume(value) } } return Accessor }',
+			},
 		],
 		invalid: [
+			{
+				name: 'accepts object accessors while rejecting nested function expressions',
+				code: [
+					'function createAccessor() {',
+					'  const control = function () { return 1 }',
+					'  return {',
+					'    get value() {',
+					'      const nested = function () { return 2 }',
+					'      return nested()',
+					'    },',
+					'    set value(value) { consume(value) },',
+					'  }',
+					'}',
+				].join('\n'),
+				errors: [
+					{ messageId: 'nested', line: 2, column: 18 },
+					{ messageId: 'nested', line: 5, column: 21 },
+				],
+			},
 			{
 				name: 'rejects a local function declaration',
 				code: 'function projectValue() { function readValue() { return 1 } return readValue() }',
