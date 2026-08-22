@@ -74,6 +74,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
+			return candidate
 		},
 		read(target) {
 			const candidate = resolveContained(path, target)
@@ -126,6 +127,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			createLink(candidate, source)
+			return candidate
 		},
 		remove(target) {
 			const candidate = resolveContained(path, target)

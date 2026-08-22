@@ -59,6 +59,25 @@ describe('createScratch', () => {
 		}
 	})
 
+	it('returns the joined absolute path of a nested write and of an absolute one', () => {
+		const scratch = createScratch()
+		try {
+			const nested = scratch.write('nested/deep/file.txt', 'nested')
+
+			expect(isAbsolute(nested)).toBe(true)
+			expect(nested).toBe(join(scratch.path, 'nested', 'deep', 'file.txt'))
+			expect(readFileSync(nested, 'utf8')).toBe('nested')
+
+			const target = join(scratch.path, 'absolute.txt')
+			const absolute = scratch.write(target, 'absolute')
+
+			expect(absolute).toBe(target)
+			expect(readFileSync(absolute, 'utf8')).toBe('absolute')
+		} finally {
+			scratch.destroy()
+		}
+	})
+
 	it('destroys its directory idempotently', () => {
 		const scratch = createScratch()
 		expect(existsSync(scratch.path)).toBe(true)
@@ -502,6 +521,28 @@ describe('createScratch', () => {
 				}
 			},
 		)
+
+		it('returns the joined absolute path of the link it created', () => {
+			// A directory source, so the row runs on a host that creates a junction instead of a
+			// symbolic link. The returned path is read back through `node:fs` at the destination's
+			// own seeded file, which is what makes it the path of the link rather than a string.
+			const destination = createScratch({
+				files: { 'read.txt': 'destination' },
+				prefix: 'orkestrel-test-link-path-',
+			})
+			const scratch = createScratch()
+			try {
+				const created = scratch.link('nested/gate', destination.path)
+
+				expect(isAbsolute(created)).toBe(true)
+				expect(created).toBe(join(scratch.path, 'nested', 'gate'))
+				expect(scratch.has('nested/gate')).toBe(true)
+				expect(readFileSync(join(created, 'read.txt'), 'utf8')).toBe('destination')
+			} finally {
+				scratch.destroy()
+				destination.destroy()
+			}
+		})
 
 		it.runIf(FILE_LINKS)('points a contained link at a source outside the allocation', () => {
 			const source = createScratch({ prefix: 'orkestrel-test-link-source-' })

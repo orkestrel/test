@@ -9,10 +9,11 @@ export interface ScratchInterface {
 	 *
 	 * @param target - A relative or absolute file path contained by the scratch directory.
 	 * @param text - The file contents.
+	 * @returns The absolute path of the written file.
 	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
 	 * link, or a file, or the host refuses to write the file.
 	 */
-	write(target: string, text: string): void
+	write(target: string, text: string): string
 	/**
 	 * Reads a file.
 	 *
@@ -60,12 +61,13 @@ export interface ScratchInterface {
 	 * @param source - The destination path the link points at. The stored value is a path naming that
 	 * destination, but its exact text is not promised. The path may name a destination outside the
 	 * scratch directory and is not containment-checked.
+	 * @returns The absolute path of the created link, whatever host mechanism created it.
 	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
 	 * link, or a file, or the host refuses to create the link, including a host that creates no
 	 * symbolic link when the source names an existing non-directory.
 	 * @remarks {@link createLink} owns the host-specific link mechanism.
 	 */
-	link(target: string, source: string): void
+	link(target: string, source: string): string
 	/**
 	 * Removes a file, an empty directory, or a directory and its descendants.
 	 *
