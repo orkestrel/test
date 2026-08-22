@@ -102,6 +102,35 @@ const HOST_PROBES: ReadonlyArray<readonly [name: string, probe: () => boolean]> 
 	['supportsBytes', supportsBytes],
 ])
 
+/**
+ * Every environment variable a host's `os.tmpdir()` reads. Each platform reads its own name first —
+ * win32 takes `TEMP`, then `TMP`; POSIX takes `TMPDIR`, then `TMP`, then `TEMP` — so an override
+ * that sets one name steers one platform, and an override that sets the whole set steers either.
+ */
+const TEMPORARY_VARIABLES: readonly string[] = Object.freeze(['TMPDIR', 'TEMP', 'TMP'])
+
+/**
+ * Points every temporary-directory environment variable at one directory.
+ *
+ * @param path - The directory `os.tmpdir()` reports while the override holds.
+ * @returns A function restoring each variable to the value it held before the call.
+ */
+function overrideTemporaryDirectory(path: string): () => void {
+	const saved = new Map<string, string | undefined>()
+	for (const name of TEMPORARY_VARIABLES) {
+		saved.set(name, process.env[name])
+		process.env[name] = path
+	}
+	// Assigning `undefined` writes the string `'undefined'`, so a variable that was unset before the
+	// override is restored by deleting it rather than by assigning its saved value back.
+	return () => {
+		for (const [name, value] of saved) {
+			if (value === undefined) delete process.env[name]
+			else process.env[name] = value
+		}
+	}
+}
+
 describe('resolveContained', () => {
 	it('resolves relative and absolute contained targets and rejects escapes', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
@@ -1259,20 +1288,20 @@ describe('host capability probes', () => {
 
 		it(`${name} allocates below the host temporary directory and leaves nothing there`, () => {
 			const owned = createScratch({ prefix: 'orkestrel-test-residue-' })
-			const restore = process.env.TMPDIR
+			// `os.tmpdir()` resolves against whichever temporary-directory variable its platform reads
+			// first, so pointing the whole set at an owned empty directory is what makes the residue
+			// reading exact rather than a guess about which entry under the real temporary directory
+			// belonged to this call. A scratch path carries no trailing separator and `os.tmpdir()`
+			// strips one, so the equality holds on either platform.
+			const restore = overrideTemporaryDirectory(owned.path)
 			try {
-				// `os.tmpdir()` reads `TMPDIR`, so pointing it at an owned empty directory is what
-				// makes the residue reading exact rather than a guess about which entry under the
-				// real temporary directory belonged to this call.
-				process.env.TMPDIR = owned.path
 				expect(tmpdir()).toBe(owned.path)
 
 				probe()
 
 				expect(owned.names()).toStrictEqual([])
 			} finally {
-				if (restore === undefined) delete process.env.TMPDIR
-				else process.env.TMPDIR = restore
+				restore()
 				owned.destroy()
 			}
 		})
@@ -1280,20 +1309,19 @@ describe('host capability probes', () => {
 		it(`${name} raises a failure to allocate rather than reading it as a refusal`, () => {
 			const owned = createScratch({ prefix: 'orkestrel-test-missing-tmpdir-' })
 			const missing = join(owned.path, 'absent')
-			const restore = process.env.TMPDIR
+			// This is the control for the preceding residue case: with every temporary-directory
+			// variable pointed at a path that does not exist, allocation beneath a missing parent
+			// throws `ENOENT` on win32 and POSIX alike. A probe that ignored `os.tmpdir()` would
+			// answer `false` here, and the residue case would then be reading an empty directory
+			// nothing had ever allocated in.
+			const restore = overrideTemporaryDirectory(missing)
 			try {
-				// This is the control for the residue case: with `TMPDIR` steered at a path that does
-				// not exist, allocation throws. A probe that ignored `os.tmpdir()` would answer
-				// `false` here, and the residue case above would then be reading an empty directory
-				// nothing had ever allocated in.
-				process.env.TMPDIR = missing
 				const failure = captureError(probe)
 
 				expect(failure).toBeInstanceOf(Error)
 				expect(failure).toHaveProperty('code', 'ENOENT')
 			} finally {
-				if (restore === undefined) delete process.env.TMPDIR
-				else process.env.TMPDIR = restore
+				restore()
 				owned.destroy()
 			}
 		})
