@@ -34,6 +34,29 @@ export function createStreamSource<T>(values: readonly T[]): ReadableStream<T> {
 }
 
 /**
+ * Rewrites every backslash in a path to a forward slash.
+ *
+ * @param path - The path to rewrite.
+ * @returns The path written with forward slashes alone.
+ * @remarks A provider returns a path in the separator its host writes, while a tool reporting its
+ * own root normalizes that root to forward slashes on every host. Rewrite each side before
+ * comparing them, so the comparison reads the file the path names rather than the host's
+ * separator. Rewrites separators only for a recognized Windows path form — a drive-letter or UNC
+ * head — because a backslash is a legal character in a POSIX path and an unconditional rewrite
+ * maps distinct POSIX paths onto one spelling.
+ * @example
+ * ```ts
+ * expect(normalizePath(written)).toBe(normalizePath(expected))
+ * ```
+ */
+export function normalizePath(path: string): string {
+	// Rewrites separators only for a recognized Windows path form — a drive-letter
+	// or UNC head — because a backslash is a legal character in a POSIX path and an
+	// unconditional rewrite maps distinct POSIX paths onto one spelling.
+	return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(path) ? path.replaceAll('\\', '/') : path
+}
+
+/**
  * Checks whether a value is a plain record that JSON can serialize.
  *
  * @param value - The value to check.

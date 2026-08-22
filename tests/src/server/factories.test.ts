@@ -17,6 +17,7 @@ import { Agent, createServer as createHTTPServer, get } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { captureError } from '@src/core'
 import { createCookieJar, createLoopback, createScratch } from '@src/server'
 import { describe, expect, it } from 'vitest'
 import {
@@ -207,9 +208,13 @@ describe('createScratch', () => {
 			expect(() => scratch.read('')).toThrow('Scratch path is a directory: ')
 
 			// An empty target names a directory that already exists, so `write` surfaces the host's
-			// own refusal rather than a message from this package. `EISDIR` is what the host reports
-			// for a write onto a directory.
-			expect(() => scratch.write('', 'root')).toThrow('EISDIR')
+			// own refusal rather than a message from this package. Which refusal that is belongs to
+			// the host: POSIX reports `EISDIR`, and a Windows host reports `EPERM` or `EACCES`. So
+			// the probe takes the same write onto the same directory through `node:fs`, and the
+			// assertion reads back exactly what the probe reported.
+			const probed = captureError(() => writeFileSync(scratch.path, 'probe'))
+			expect(probed).toBeInstanceOf(Error)
+			expect(captureError(() => scratch.write('', 'root'))).toStrictEqual(probed)
 			expect(scratch.names()).toStrictEqual(['file.txt'])
 		} finally {
 			scratch.destroy()

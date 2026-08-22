@@ -244,7 +244,10 @@ describe('isExcluded', () => {
 })
 
 describe('createLink', () => {
-	it('links a directory named by an absolute source', () => {
+	// `createLink` links a directory, so a host whose volume creates neither a symbolic link nor the
+	// junction it falls back to has no link for this case to follow. `supportsDirectoryLinks` reads
+	// that capability, which is what `DIRECTORY_LINKS` carries.
+	it.runIf(DIRECTORY_LINKS)('links a directory named by an absolute source', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-link-absolute-'))
 		const source = join(root, 'source')
 		const path = join(root, 'linked')
@@ -261,7 +264,9 @@ describe('createLink', () => {
 		}
 	})
 
-	it("resolves a relative source against the link's own directory", () => {
+	// The link this case resolves is a directory link too, so it takes the same capability gate as
+	// the preceding case.
+	it.runIf(DIRECTORY_LINKS)("resolves a relative source against the link's own directory", () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-link-relative-'))
 		const nested = join(root, 'nested')
 		try {

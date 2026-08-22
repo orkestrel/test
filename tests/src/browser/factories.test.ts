@@ -10,6 +10,7 @@ import {
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
+import { normalizePath } from '../../setup.js'
 import { buildFixture, resetFixtures } from '../../setupBrowser.js'
 
 const STATES: readonly string[] = ['start-empty', 'answer-ideal']
@@ -184,14 +185,19 @@ describe('createPortfolio', () => {
 		})
 		const before = portfolio.states
 		const written = await portfolio.place('start-empty')
-		const expected = `${server.config.root}/tmp/capture/portfolio/start-empty--dark-390.png`
+		// The provider returns the written path in its host's own separator, and the runner reports
+		// its root with forward slashes on every host, so each side is compared through
+		// `normalizePath` and the comparison reads the file rather than the separator.
+		const expected = normalizePath(
+			`${server.config.root}/tmp/capture/portfolio/start-empty--dark-390.png`,
+		)
 		expect(applied.count).toBe(1)
 		expect(window.innerWidth).toBe(390)
 		expect(window.innerHeight).toBe(844)
-		expect(written).toBe(expected)
+		expect(normalizePath(requireValue(written))).toBe(expected)
 		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 		expect(portfolio.states).toStrictEqual(['start-empty'])
-		expect(portfolio.paths).toStrictEqual([expected])
+		expect(portfolio.paths.map(normalizePath)).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
 	})
@@ -209,8 +215,8 @@ describe('createPortfolio', () => {
 			'Capture state "answer-ideal" is already placed',
 		)
 		expect(portfolio.states).toStrictEqual(['answer-ideal'])
-		expect(portfolio.paths).toStrictEqual([
-			`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`,
+		expect(portfolio.paths.map(normalizePath)).toStrictEqual([
+			normalizePath(`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`),
 		])
 	})
 
@@ -236,7 +242,9 @@ describe('createPortfolio', () => {
 		const surface = await whole.place('start-empty')
 		const element = await part.place('start-empty', requireValue(container.firstElementChild))
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
-		expect(element).toBe(`${server.config.root}/tmp/capture/portfolio/start-empty--light-1440.png`)
+		expect(normalizePath(requireValue(element))).toBe(
+			normalizePath(`${server.config.root}/tmp/capture/portfolio/start-empty--light-1440.png`),
+		)
 		const shot = await commands.readFile(requireValue(element), 'base64')
 		expect(shot.length).toBeGreaterThan(0)
 		expect(shot).not.toBe(await commands.readFile(requireValue(surface), 'base64'))

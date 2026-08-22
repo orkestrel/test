@@ -63,6 +63,7 @@ import {
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
+import { normalizePath } from '../../setup.js'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
 const VARIANTS: readonly CaptureVariant[] = [
@@ -1497,7 +1498,12 @@ describe('stagePane', () => {
 describe('captureFrame', () => {
 	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
 		const written = await captureFrame({ path: `${FRAMES}/page.png`, width: 390, height: 844 })
-		expect(written).toBe(`${server.config.root}/tmp/capture/frame/page.png`)
+		// The provider returns the written path in its host's own separator, and the runner reports
+		// its root with forward slashes on every host, so each side is compared through
+		// `normalizePath` and the comparison reads the file rather than the separator.
+		expect(normalizePath(written)).toBe(
+			normalizePath(`${server.config.root}/tmp/capture/frame/page.png`),
+		)
 		const onDisk = await commands.readFile(written, 'base64')
 		expect(onDisk.length).toBeGreaterThan(0)
 		// The negative control for the equality `captureFrame` asserts: bytes that are not this
