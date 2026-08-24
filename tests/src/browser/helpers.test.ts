@@ -1394,20 +1394,46 @@ describe('contrast', () => {
 			'Computed foreground color is unavailable',
 		)
 	})
+
+	// guides/test.md → Patterns → "Measure what a reader sees", the `contrast` fence. A browser fence
+	// carries in this directory because the guides project runs with the browser disabled.
+	it('reads grey on white at 4.54, refuses it unpainted, and measures it on a named floor', () => {
+		const surface = buildFixture(
+			'<main style="background:#fff"><p style="color:#767676">Ready</p></main>',
+		)
+		const text = requireValue(surface.querySelector('p'))
+		expect(contrast(text).toFixed(2)).toBe('4.54')
+		expect(contrast(text) >= 4.5).toBe(true)
+
+		const fragment = buildFixture('<p style="color:#767676">Ready</p>')
+		const orphan = requireValue(fragment.querySelector('p'))
+		expect(() => contrast(orphan)).toThrow('Computed background color is unavailable')
+		expect(contrast(orphan, CANVAS_COLOR).toFixed(2)).toBe('4.54')
+	})
 })
 
 describe('readRing', () => {
-	it('measures the ring the cascade paints once focus has really landed', async () => {
-		buildStylesheet('.journey-ring:focus-visible { outline: 3px solid rgb(0, 0, 0) }')
-		buildFixture(
-			'<div style="background: #fff">' +
-				'<button type="button" class="journey-ring">Evaluate</button></div>',
+	// guides/test.md → Patterns → "Measure what a reader sees", the `readRing` fence. A browser fence
+	// carries in this directory because the guides project runs with the browser disabled.
+	it('measures the ring the cascade paints once focus has landed, and the label it is worn on', async () => {
+		buildStylesheet(
+			'.journey-ring:focus-visible { outline: 3px solid rgb(0, 0, 0) }' +
+				'.journey-ring-label { outline: 3px solid rgb(250, 250, 250) }',
 		)
-		const control = await traverseAccessible('Evaluate')
-		expect(control.matches(':focus-visible')).toBe(true)
+		const container = buildFixture(
+			'<div style="background: #fff">' +
+				'<button type="button" id="evaluate" class="journey-ring">Evaluate</button>' +
+				'<label for="evaluate" class="journey-ring-label">Evaluate</label></div>',
+		)
+		const focused = await traverseAccessible('Evaluate')
+		expect(focused.matches(':focus-visible')).toBe(true)
 		// Black against white is the strongest ratio a ring can reach, so a reading below it means
 		// the measurement found some other paint.
-		expect(readRing(control)).toBeCloseTo(21, 5)
+		expect(readRing(focused)).toBeCloseTo(21, 5)
+		// The label is the second element the control is: it wears a near-white ring that is nearly
+		// invisible on white, so this reading is the worn element's paint rather than the control's.
+		const worn = requireValue(container.querySelector('label[for="evaluate"]'))
+		expect(requireValue(readRing(focused, worn))).toBeLessThan(1.1)
 	})
 
 	it('reports nothing for a control that is not showing focus chrome', () => {
