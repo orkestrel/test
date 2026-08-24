@@ -11,6 +11,7 @@ import {
 	parseManifest,
 	resolveLink,
 } from '@orkestrel/guide'
+import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
 import {
 	createRecorder,
@@ -25,6 +26,7 @@ import {
 	retryUntil,
 	waitForAbort,
 	waitForCondition,
+	waitForEvent,
 } from '@src/core'
 import { createCookieJar, createLoopback, readInventory, requestUpgrade } from '@src/server'
 
@@ -152,11 +154,37 @@ describe('guides parity', () => {
 })
 
 // Parity proves a documented name exists; it never proves a sentence about behaviour is true. Each
-// case below runs one guide fence and asserts the values that fence's own comments claim, so a
-// fence that goes stale reddens here instead of shipping. A fence naming a browser, a spawned
-// process, or a real registry is not transcribed: this project runs in Node with the browser
-// disabled, and a proof that spawns belongs in a project of its own.
+// case that follows runs one guide fence and asserts the values that fence's own comments claim, so
+// a fence that goes stale reddens here instead of shipping.
+//
+// Placement rule: a fence's carrier lives in the project that can run it. A browser carrier lives
+// in `tests/src/browser/`, and each one there names the project it was routed out of. A
+// real-registry carrier lives in the project that owns that subject. Every other carrier lives
+// here, where the guides project runs in Node with the browser disabled. A carrier opens with its
+// `guides/test.md → <section> → "<heading>"` line, and the first case that follows reads that line
+// in each routed-away carrier so the routing cannot rot silently.
 describe('guide fences', () => {
+	it('carries the browser fences in their own suites', () => {
+		const helpers = requireValue(
+			files['tests/src/browser/helpers.test.ts'],
+			'Missing browser carrier: tests/src/browser/helpers.test.ts',
+		)
+		const factories = requireValue(
+			files['tests/src/browser/factories.test.ts'],
+			'Missing browser carrier: tests/src/browser/factories.test.ts',
+		)
+
+		expect(helpers).toContain(
+			'// guides/test.md → Patterns → "Measure what a reader sees", the `contrast` fence.',
+		)
+		expect(helpers).toContain(
+			'// guides/test.md → Patterns → "Measure what a reader sees", the `readRing` fence.',
+		)
+		expect(factories).toContain(
+			'// guides/test.md → Patterns → "Record a browser journal", the `createJournal` fence.',
+		)
+	})
+
 	// guides/test.md → Patterns → "Record calls without a spy".
 	it('truncates a captured calls array in place and stays usable', () => {
 		const recorder = createRecorder<[id: string, size: number]>()
@@ -270,6 +298,28 @@ describe('guide fences', () => {
 			]),
 		).toStrictEqual({ 'x-run': '1, 2' })
 		expect(Object.isFrozen(flattenHeaders(new Headers({ accept: 'text/plain' })))).toBe(true)
+	})
+
+	// guides/test.md → Patterns → "Wait for a named condition", the `waitForEvent` arm. The fence's
+	// `child` is scene, so a real `EventEmitter` stands in its place: it registers the listener the
+	// subscriber hands it and delivers a real `exit` tuple to it. Its own live listener count is how
+	// the cleanup is read — the count can only fall back to zero because `waitForEvent` ran the
+	// cleanup the subscriber returned, and it ran it on delivery rather than on timeout or abort.
+	it('resolves with the delivered tuple and runs the returned cleanup on delivery', async () => {
+		const exits = new EventEmitter()
+
+		const parked = waitForEvent<[code: number, signal: string | null]>((listener) => {
+			exits.on('exit', listener)
+			return () => {
+				exits.off('exit', listener)
+			}
+		}, 'child exits')
+		expect(exits.listenerCount('exit')).toBe(1)
+
+		exits.emit('exit', 0, null)
+
+		expect(await parked).toStrictEqual([0, null])
+		expect(exits.listenerCount('exit')).toBe(0)
 	})
 
 	// guides/test.md → Patterns → "Wait for a named condition", the throw-asymmetry fence.
