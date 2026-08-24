@@ -1,11 +1,13 @@
 import type { CaptureVariant } from '@src/browser'
 import {
 	CAPTURE_PANE,
+	clickAccessible,
 	createChannel,
 	createDragEvent,
 	createJournal,
 	createPointerEvent,
 	createPortfolio,
+	readPerception,
 } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -462,5 +464,49 @@ describe('createJournal', () => {
 		second.stop()
 		expect(first.steps).toHaveLength(1)
 		expect(second.steps).toStrictEqual([])
+	})
+
+	// guides/test.md → Patterns → "Record a browser journal", the `createJournal` fence. A browser
+	// fence carries in this directory because the guides project runs with the browser disabled.
+	it('records what a real click did against a quiet page, and stops through the finally', async () => {
+		const surface = buildFixture(
+			'<button type="button">Evaluate</button>' +
+				'<section aria-label="Run"><p>Not run</p></section>',
+		)
+		const report = requireValue(surface.querySelector('section p'))
+		requireValue(surface.querySelector('button')).addEventListener('click', () => {
+			report.textContent = 'Scored 3 of 3'
+		})
+		const idle = readPerception('Run')
+		const journal = createJournal()
+		const original = console.log
+		let refused = ''
+		try {
+			journal.start()
+			try {
+				await clickAccessible('button', 'Evaluate')
+				const perceived = readPerception('Run')
+				journal.record('click', 'Evaluate', perceived)
+
+				// The page's own wording is scene. What the fence claims is that the step the journal
+				// hands back is the one the scenario recorded, carrying the page's state after the
+				// click rather than the state it was in before.
+				expect(perceived).not.toBe(idle)
+				expect(journal.steps).toStrictEqual([
+					{ action: 'click', trigger: 'Evaluate', result: perceived },
+				])
+				expect(journal.output).toStrictEqual([])
+
+				// The scenario ends by throwing, which is what the guarded `stop` is for: an unguarded
+				// one would leave this journal's console wrappers standing for every later test here.
+				throw new Error('Draft refused')
+			} finally {
+				journal.stop()
+			}
+		} catch (error) {
+			refused = error instanceof Error ? error.message : 'no error'
+		}
+		expect(refused).toBe('Draft refused')
+		expect(console.log).toBe(original)
 	})
 })
