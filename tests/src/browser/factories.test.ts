@@ -7,6 +7,7 @@ import {
 	createJournal,
 	createPointerEvent,
 	createPortfolio,
+	expandCaptures,
 	readPerception,
 } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
@@ -250,6 +251,67 @@ describe('createPortfolio', () => {
 		const shot = await commands.readFile(requireValue(element), 'base64')
 		expect(shot.length).toBeGreaterThan(0)
 		expect(shot).not.toBe(await commands.readFile(requireValue(surface), 'base64'))
+	})
+
+	// guides/test.md → Patterns → "Place a capture portfolio". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('answers what a full portfolio holds and what this run placed', async () => {
+		const states: readonly string[] = ['start-empty', 'answer-ideal']
+		const variants: readonly CaptureVariant[] = [
+			{ name: 'light-1440', width: 1440, height: 1000 },
+			{
+				name: 'dark-390',
+				width: 390,
+				height: 844,
+				apply: () => document.documentElement.setAttribute('data-theme', 'dark'),
+			},
+		]
+		const portfolio = createPortfolio({
+			states,
+			variants,
+			variant: 'dark-390',
+			directory: '../../../tmp/capture/states',
+			// This example is an enabled capture run. A real suite supplies its own gate here.
+			enabled: true,
+		})
+		try {
+			// The registry times the variants, and the portfolio's own list is that same expansion, so
+			// one declaration answers what a full portfolio holds and what this run placed alike.
+			expect(expandCaptures(states, variants)).toHaveLength(4)
+			expect(portfolio.files).toStrictEqual([
+				'start-empty--light-1440.png',
+				'start-empty--dark-390.png',
+				'answer-ideal--light-1440.png',
+				'answer-ideal--dark-390.png',
+			])
+			expect(portfolio.files).toStrictEqual(expandCaptures(states, variants))
+
+			const written = await portfolio.place('start-empty')
+			const expected = normalizePath(
+				`${server.config.root}/tmp/capture/states/start-empty--dark-390.png`,
+			)
+			expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+			expect(normalizePath(requireValue(written))).toBe(expected)
+			expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
+			expect(portfolio.states).toStrictEqual(['start-empty'])
+
+			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
+			const ordinary = createPortfolio({
+				states,
+				variants,
+				variant: 'dark-390',
+				directory: '../../../tmp/capture/states',
+			})
+			await expect(ordinary.place('answer-ideal')).resolves.toBeUndefined()
+			expect(ordinary.states).toStrictEqual([])
+			expect(ordinary.paths).toStrictEqual([])
+
+			await expect(portfolio.place('answer-partial')).rejects.toThrow(
+				'Capture state "answer-partial" is not registered',
+			)
+		} finally {
+			document.documentElement.removeAttribute('data-theme')
+		}
 	})
 })
 

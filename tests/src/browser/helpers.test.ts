@@ -60,7 +60,7 @@ import {
 	typeInput,
 	waitForFrame,
 } from '@src/browser'
-import { createRecorder, requireValue } from '@src/core'
+import { createRecorder, createTeardown, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { normalizePath } from '../../setup.js'
@@ -368,6 +368,56 @@ describe('clickAccessible', () => {
 		)
 		await clickAccessible('tab', 'Drafts')
 		expect(recorder.count).toBe(1)
+	})
+
+	// guides/test.md → Patterns → "Drive an interface the way a person does". A browser fence
+	// carries in this directory because the guides project runs with the browser disabled.
+	it('runs one journey by role and name alone, touching no element', async () => {
+		const container = buildFixture(
+			'<label for="runs">Runs</label><input id="runs" type="text" value="9">' +
+				'<div role="tablist">' +
+				'<button type="button" role="tab" id="tab-drafts">Drafts</button></div>' +
+				'<div role="tabpanel" tabindex="0" aria-labelledby="tab-drafts">Two drafts waiting</div>' +
+				'<section aria-label="Ledger">' +
+				'<button type="button">Monthly income · ready</button></section>' +
+				'<section aria-label="Vault">' +
+				'<button type="button">Monthly income · ready</button></section>' +
+				'<button type="button" id="evaluate">Evaluate</button>' +
+				'<section aria-label="Run"><p>Scored   3 of 3</p>' +
+				'<span style="position: absolute; width: 1px; height: 1px; overflow: hidden; ' +
+				'clip-path: inset(50%)">on the first pass</span></section>',
+		)
+		const drafts = createRecorder<[event: Event]>()
+		const ledger = createRecorder<[event: Event]>()
+		const vault = createRecorder<[event: Event]>()
+		requireValue(container.querySelector('[role="tab"]')).addEventListener('click', drafts.handler)
+		const twins = container.querySelectorAll('section button')
+		requireValue(twins[0]).addEventListener('click', ledger.handler)
+		requireValue(twins[1]).addEventListener('click', vault.handler)
+
+		await typeAccessible('Runs', '3')
+		expect(readValue('textbox', 'Runs')).toBe('3')
+
+		// The tab and its own panel collide by construction, because the panel is labelled by the tab.
+		// The bare name is refused, and the role is what separates them.
+		await expect(clickAccessible('Drafts')).rejects.toThrow(
+			'Interactive target "Drafts" is ambiguous across 2 elements',
+		)
+		await clickAccessible('tab', 'Drafts')
+		expect(drafts.count).toBe(1)
+
+		// The region completes a name a rendered status finishes, so the Ledger's own control is the
+		// one that hears the click and its twin next door hears nothing.
+		await clickAccessibleWithin('Ledger', 'button', 'Monthly income')
+		expect(ledger.count).toBe(1)
+		expect(vault.count).toBe(0)
+
+		// Focus arrives the way the interface offers it. Nothing here calls element.focus().
+		const reached = await traverseAccessible('Evaluate')
+		expect(reached).toBe(container.querySelector('#evaluate'))
+		expect(document.activeElement).toBe(reached)
+
+		expect(readPerception('Run')).toBe('Scored 3 of 3 on the first pass')
 	})
 })
 
@@ -941,6 +991,49 @@ describe('mount', () => {
 			mounted.remove()
 		}
 	})
+
+	// guides/test.md → Patterns → "Build and mount a fixture". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('mounts a built fixture and takes every one back out on one hook', async () => {
+		buildStylesheet('.primary { padding-left: 12px }')
+		const teardown = createTeardown()
+		const panel = mount(
+			build('section', { classes: 'surface', attributes: { 'aria-label': 'Ledger' } }),
+		)
+		teardown.add(() => panel.remove())
+		expect(panel.tagName).toBe('SECTION')
+		expect(panel.className).toBe('surface')
+		expect(panel.getAttribute('aria-label')).toBe('Ledger')
+		expect(panel.isConnected).toBe(true)
+
+		// Built and appended inside the mounted panel, so it resolves against the cascade: the
+		// declared padding is what an unmounted element would have read as the initial value.
+		panel.append(
+			build('button', { classes: 'primary', text: 'Save', attributes: { type: 'button' } }),
+		)
+		const save = requireValue(panel.querySelector('button'))
+		expect(save.textContent).toBe('Save')
+		expect(save.getAttribute('type')).toBe('button')
+		expect(pixels(save, 'padding-left')).toBe(12)
+
+		const markup = render('<button type="button">Save</button>')
+		const heading = render('h2', 'title')
+		teardown.add(() => markup.remove())
+		teardown.add(() => heading.remove())
+		// `render` hands back the attached container for markup and the attached element itself for a
+		// tag, which is the pair the fence's two comments claim.
+		expect(markup.tagName).toBe('DIV')
+		expect(requireValue(markup.querySelector('button')).textContent).toBe('Save')
+		expect(heading).toBeInstanceOf(HTMLHeadingElement)
+		expect(heading.className).toBe('title')
+
+		// The fence registers each removal as it goes, so one hook takes every fixture back out and
+		// leaves the next test no resolver ambiguity.
+		await teardown.destroy()
+		expect(panel.isConnected).toBe(false)
+		expect(markup.isConnected).toBe(false)
+		expect(heading.isConnected).toBe(false)
+	})
 })
 
 describe('render', () => {
@@ -1013,6 +1106,42 @@ describe('typeInput', () => {
 		container.addEventListener('change', (event) => heard.handler(event.type))
 		typeInput(field, 'Ada')
 		expect(heard.count).toBe(0)
+	})
+
+	// guides/test.md → Patterns → "Drive a field the component listens to". A browser fence carries
+	// in this directory because the guides project runs with the browser disabled.
+	it('sends one input for a keystroke and an input then a change for a commit', () => {
+		const container = render('<input aria-label="Runs" value="0">')
+		try {
+			const field = requireValue(container.querySelector('input'))
+			// Each call records what a listener of the component's own would read: the event name, that
+			// it bubbles, the value already on the field, and whether it is a plain `Event`.
+			const heard = createRecorder<[string, boolean, string, boolean]>()
+			for (const name of ['input', 'change']) {
+				container.addEventListener(name, (event) =>
+					heard.handler(
+						event.type,
+						event.bubbles,
+						field.value,
+						event.constructor === Event && !(event instanceof InputEvent),
+					),
+				)
+			}
+
+			typeInput(field, '3')
+			expect(field.value).toBe('3')
+			expect(heard.calls).toStrictEqual([['input', true, '3', true]])
+
+			heard.clear()
+			commitInput(field, '4')
+			expect(field.value).toBe('4')
+			expect(heard.calls).toStrictEqual([
+				['input', true, '4', true],
+				['change', true, '4', true],
+			])
+		} finally {
+			container.remove()
+		}
 	})
 })
 
@@ -1087,6 +1216,32 @@ describe('removeDatabase', () => {
 			opened.close()
 			await removeDatabase('journey-blocked')
 		}
+	})
+
+	// guides/test.md → Patterns → "Remove an IndexedDB database". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('deletes an absent database, refuses a held one, and deletes it after the close', async () => {
+		// The fence's `afterEach` hook runs whether or not the test opened anything, which is this
+		// call: deleting a database nothing created succeeds.
+		await expect(removeDatabase('never-created')).resolves.toBeUndefined()
+
+		const connection = await new Promise<IDBDatabase>((resolve, reject) => {
+			const request = globalThis.indexedDB.open('ledger', 1)
+			request.addEventListener('success', () => resolve(request.result))
+			request.addEventListener('error', () => reject(new Error('Ledger database did not open')))
+		})
+		try {
+			// With that connection still open the call rejects rather than waiting, so the suite cannot
+			// leave the next test reading records through a database that reports itself deleted.
+			await expect(removeDatabase('ledger')).rejects.toThrow(
+				'IndexedDB database "ledger" is blocked by an open connection',
+			)
+		} finally {
+			connection.close()
+		}
+		await expect(removeDatabase('ledger')).resolves.toBeUndefined()
+		const registered = await globalThis.indexedDB.databases()
+		expect(registered.map((entry) => entry.name)).not.toContain('ledger')
 	})
 })
 
@@ -1657,6 +1812,26 @@ describe('findRule', () => {
 	it('reports undefined for a selector no loaded sheet declares', () => {
 		expect(findRule('.journey-never-declared')).toBeUndefined()
 	})
+
+	// guides/test.md → Patterns → "Find a rule in the cascade". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('finds a grouped rule and a named animation, and reports nothing for either miss', () => {
+		buildStylesheet(
+			'@media (min-width: 1px) { .card { padding: 8px } }' +
+				'@keyframes slide { from { opacity: 0 } to { opacity: 1 } }',
+		)
+		expect(requireValue(findRule('.card')).style.getPropertyValue('padding')).toBe('8px')
+		expect(findRule('.never-declared')).toBeUndefined()
+
+		expect(requireValue(findKeyframes('slide')).cssRules).toHaveLength(2)
+		expect(findKeyframes('slid')).toBeUndefined()
+
+		// The descent collects the `@keyframes` rule where it sits and never its stops, so the
+		// animation is in this list and the `from` and `to` inside it are not.
+		const animations = readRules().filter((rule) => rule instanceof CSSKeyframesRule)
+		expect(animations.map((rule) => rule.name)).toContain('slide')
+		expect(readRules().some((rule) => rule instanceof CSSKeyframeRule)).toBe(false)
+	})
 })
 
 describe('findKeyframes', () => {
@@ -1784,6 +1959,31 @@ describe('token', () => {
 		const subject = requireValue(container.querySelector('p'))
 		expect(token(subject, 'journey-undeclared')).toBe('')
 		expect(token(subject, '--journey-undeclared')).toBe('')
+	})
+
+	// guides/test.md → Patterns → "Read the tokens and colors a theme declares". A browser fence
+	// carries in this directory because the guides project runs with the browser disabled.
+	it('reads the theme through the cascade, resolves its colors, and measures its lengths', () => {
+		buildStylesheet(':root { --ink: rgb(1, 2, 3) } .card { padding-left: 12px }')
+		// The card is an inline box, which is the case the fence's `width` comment names: an inline
+		// non-replaced element resolves `width` to `auto` and so carries no number.
+		const container = buildFixture('<span class="card">Ledger</span>')
+		const card = requireValue(container.querySelector('span'))
+
+		expect(rootToken('ink')).toBe('rgb(1, 2, 3)')
+		expect(rootToken('--ink')).toBe('rgb(1, 2, 3)')
+		expect(token(card, 'ink')).toBe('rgb(1, 2, 3)')
+		expect(token(card, 'absent')).toBe('')
+
+		expect(rgba('var(--ink)')).toStrictEqual([1, 2, 3, 1])
+		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(rgba('not-a-color')).toBeUndefined()
+		expect(colorEqual('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
+		expect(colorEqual(token(card, 'ink'), 'rgb(1, 2, 3)')).toBe(true)
+
+		expect(pixels(card, 'padding-left')).toBe(12)
+		expect(style(card, 'width')).toBe('auto')
+		expect(pixels(card, 'width')).toBe(0)
 	})
 })
 
