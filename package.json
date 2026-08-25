@@ -62,7 +62,7 @@
 		"check:src:core": "tsc --noEmit -p configs/src/tsconfig.core.json",
 		"check:src:browser": "tsc --noEmit -p configs/src/tsconfig.browser.json",
 		"check:src:server": "tsc --noEmit -p configs/src/tsconfig.server.json",
-		"test": "npm run test:src && npm run test:policy && npm run test:config && npm run test:guides",
+		"test": "npm run test:src && npm run test:policy && npm run test:config && npm run test:setup && npm run test:guides",
 		"test:src": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:core --project src:browser --project src:server",
 		"test:src:core": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:core",
 		"test:src:browser": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:browser",
@@ -79,13 +79,14 @@
 		"prepack": "npm run build",
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test && npm run test:distribution -- --mode release",
 		"test:distribution": "vitest run --config vite.config.ts --no-cache --reporter=dot --project distribution",
-		"test:bench": "vitest bench --config vite.config.ts --no-cache --project probe"
+		"test:bench": "vitest bench --config vite.config.ts --no-cache --project probe",
+		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.59.0",
 		"@orkestrel/guide": "^0.0.13",
 		"@orkestrel/probe": "^0.0.4",
-		"@orkestrel/scaffold": "^0.0.51",
+		"@orkestrel/scaffold": "^0.0.52",
 		"@types/node": "^26.3.0",
 		"@vitest/browser-playwright": "^4.1.11",
 		"oxfmt": "^0.65.0",
