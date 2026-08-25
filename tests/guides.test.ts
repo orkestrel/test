@@ -91,11 +91,27 @@ class ScriptedLoader implements EventSourceInterface<LoaderEvents> {
 // symbols the reflected source can confirm. Everything else in a fence belongs to another package.
 const specifier = '@orkestrel/test'
 
+// A fence opens on a run of three or more backticks indented no more than three spaces, and closes
+// on a run at least as long carrying nothing after it. That pair is CommonMark's, and the indented
+// form is the one a bare `startsWith` on the delimiter walks straight past. An opening run's info
+// string carries no backtick, which is what keeps prose about a delimiter out of the walk.
+const FENCE_OPEN = /^ {0,3}(`{3,})[^`]*$/
+const FENCE_CLOSE = /^ {0,3}(`{3,})[ \t]*$/
+
+const HEADING = /^(#{1,6}) (.+)$/
+
 // A carrier opens with this line, and the totality guard builds it from the guide's own headings.
 // Reading the marker back out of a file is what makes a transcription and a routed carrier the same
 // kind of evidence, so neither can go missing without the guard naming the heading it belonged to.
 function buildMarker(section: string, heading: string): string {
 	return `// guides/test.md → ${section} → "${heading}"`
+}
+
+// A marker opens its own line, so a file carries one only when some line begins with it after its
+// indentation. Reading the whole file for the substring accepts the same text quoted inside a
+// sentence, and prose about a fence is not the comment that carries it.
+function carriesMarker(text: string, marker: string): boolean {
+	return text.split('\n').some((line) => line.trim().startsWith(marker))
 }
 
 // The "Copy a JSON value" fence copies an interface-typed value, so its `Snapshot` stands here.
@@ -235,28 +251,44 @@ describe('guide fences', () => {
 		const markers = new Map<string, string>()
 		let section = ''
 		let heading: string | undefined
-		let fenced = false
+		let open: string | undefined
 
 		for (const line of text.split('\n')) {
-			if (line.startsWith('```')) {
-				fenced = !fenced
-				if (fenced && heading !== undefined) markers.set(heading, buildMarker(section, heading))
+			if (open !== undefined) {
+				const close = FENCE_CLOSE.exec(line)
+				if (close !== null && requireValue(close[1]).length >= open.length) open = undefined
 				continue
 			}
-			if (fenced) continue
 
-			const head = /^(#{1,6}) (.+)$/.exec(line)
+			const fence = FENCE_OPEN.exec(line)
+			if (fence !== null) {
+				open = requireValue(fence[1])
+				if (heading !== undefined) markers.set(heading, buildMarker(section, heading))
+				continue
+			}
+
+			const head = HEADING.exec(line)
 			if (head === null) continue
 			const depth = requireValue(head[1])
 			const title = requireValue(head[2])
+			if (depth === '###') {
+				heading = title
+				continue
+			}
+			// A deeper heading is part of what the `###` above it owns, so it leaves that heading
+			// standing and a fence under it still belongs to the carrier that names it. A `##` opens a
+			// section that owns no `###` yet.
+			if (depth.length > 3) continue
 			if (depth === '##') section = title
-			heading = depth === '###' ? title : undefined
+			heading = undefined
 		}
 
 		const discovered = [...markers.keys()]
 		const routed = Object.keys(ROUTED_FENCES)
 		const own = requireValue(files['tests/guides.test.ts'], 'Missing carrier: tests/guides.test.ts')
-		const transcribed = discovered.filter((name) => own.includes(requireValue(markers.get(name))))
+		const transcribed = discovered.filter((name) =>
+			carriesMarker(own, requireValue(markers.get(name))),
+		)
 
 		expect(discovered.length).toBeGreaterThan(0)
 		expect(findMissing(routed, discovered)).toEqual([])
@@ -266,7 +298,8 @@ describe('guide fences', () => {
 
 		const unmarked = Object.entries(ROUTED_FENCES).filter(
 			([name, path]) =>
-				!requireValue(files[path], `Missing routed carrier: ${path}`).includes(
+				!carriesMarker(
+					requireValue(files[path], `Missing routed carrier: ${path}`),
 					requireValue(markers.get(name)),
 				),
 		)

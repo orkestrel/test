@@ -296,6 +296,14 @@ describe('createPortfolio', () => {
 			expect(portfolio.states).toStrictEqual(['start-empty'])
 
 			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
+			// The placement above left the viewport and the theme at what `dark-390` selects, so a
+			// viewport and a theme that variant does not produce are staged before the disabled call.
+			// The readings after it then answer for that call rather than for the one before it.
+			await page.viewport(320, 480)
+			document.documentElement.removeAttribute('data-theme')
+			expect(window.innerWidth).toBe(320)
+			expect(window.innerHeight).toBe(480)
+
 			const ordinary = createPortfolio({
 				states,
 				variants,
@@ -303,6 +311,9 @@ describe('createPortfolio', () => {
 				directory: '../../../tmp/capture/states',
 			})
 			await expect(ordinary.place('answer-ideal')).resolves.toBeUndefined()
+			expect(window.innerWidth).toBe(320)
+			expect(window.innerHeight).toBe(480)
+			expect(document.documentElement.getAttribute('data-theme')).toBeNull()
 			expect(ordinary.states).toStrictEqual([])
 			expect(ordinary.paths).toStrictEqual([])
 
