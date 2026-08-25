@@ -1086,7 +1086,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
 ### Threat model
 
 The filesystem helpers make different promises, because they work on different directories.
-Read rule 7 against the `createScratch` paragraphs below and rule 6 against the `readInventory` one.
+Read rule 7 against the `createScratch` paragraphs later and rule 6 against the `readInventory` one.
 
 `createScratch` allocates its own directory with `mkdtempSync` at POSIX mode `0700`, and the suite
 asserts that mode on POSIX, the only host CI runs. The mode keeps another uid out. It does not keep
@@ -1647,13 +1647,14 @@ import { readInventory } from '@orkestrel/test/server'
 const root = resolveRoot(import.meta)
 
 Object.keys(readInventory(root, ['src/core'], { extensions: ['.ts'] }))
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts']
+// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
+//  'src/core/validators.ts']
 
 // A named file is included whatever `extensions` says, so one call takes the root files a suite
 // needs and the source tree it walks.
 Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] }))
 // ['package.json', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts']
+//  'src/core/types.ts', 'src/core/validators.ts']
 
 Object.keys(
 	readInventory(root, ['src/core'], {
@@ -1661,11 +1662,13 @@ Object.keys(
 		exclude: ['src/core/index.ts'],
 	}),
 )
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts']
+// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 // A directory key takes every key below it.
 Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts']
+// ['src/browser/constants.ts', 'src/browser/factories.ts', 'src/browser/helpers.ts',
+//  'src/browser/index.ts', 'src/browser/types.ts', 'src/core/factories.ts',
+//  'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 // An exclusion also applies to a target you name, so naming one file below an excluded directory
 // does not reinstate it.
@@ -2102,7 +2105,8 @@ readRing(focused, requireValue(document.querySelector('label[for="evaluate"]')))
 
 `token` and `rootToken` read what the cascade resolved, and `rgba` resolves any color expression by
 asking the same browser. In the following fence the document declares `--ink: rgb(1, 2, 3)` on `:root`,
-`.card` sets `padding-left: 12px`, and `card` is a mounted element carrying that class.
+`.card` sets `padding-left: 12px`, and `card` is a mounted inline element carrying that class, so
+its `width` resolves to `auto`.
 
 ```ts
 import { colorEqual, pixels, rgba, rootToken, token } from '@orkestrel/test/browser'

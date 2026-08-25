@@ -1,6 +1,6 @@
 import type { Duplex } from 'node:stream'
 import type { EventSourceInterface } from '@src/core'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
 	createGuide,
 	createSource,
@@ -12,23 +12,47 @@ import {
 	resolveLink,
 } from '@orkestrel/guide'
 import { EventEmitter } from 'node:events'
+import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { join } from 'node:path'
 import {
+	captureError,
+	collect,
+	collectStream,
+	createHostileValues,
 	createRecorder,
 	createRecorders,
 	createResourceFactory,
 	createSignal,
+	createTeardown,
 	flattenHeaders,
 	invokeUnchecked,
 	readProperty,
 	requireValue,
 	resolveRoot,
 	retryUntil,
+	roundTripJSON,
 	waitForAbort,
 	waitForCondition,
 	waitForEvent,
 } from '@src/core'
-import { createCookieJar, createLoopback, readInventory, requestUpgrade } from '@src/server'
+import {
+	createCookieJar,
+	createLoopback,
+	createScratch,
+	destroyScratch,
+	readInventory,
+	requestUpgrade,
+	resolveContained,
+	supportsDirectoryLinks,
+	supportsFileLinks,
+} from '@src/server'
+import {
+	createAsyncSource,
+	createStreamSource,
+	isSerializableRecord,
+	ROUTED_FENCES,
+} from './setup.js'
 
 // The inventory comes from this package's own walker rather than a local one: `readInventory` is
 // proved against raw `node:fs` fixtures in tests/src/server/helpers.test.ts, so here it is a
@@ -66,6 +90,42 @@ class ScriptedLoader implements EventSourceInterface<LoaderEvents> {
 // A guide fence imports through the published specifier, so only this package's own specifiers name
 // symbols the reflected source can confirm. Everything else in a fence belongs to another package.
 const specifier = '@orkestrel/test'
+
+// A carrier opens with this line, and the totality guard builds it from the guide's own headings.
+// Reading the marker back out of a file is what makes a transcription and a routed carrier the same
+// kind of evidence, so neither can go missing without the guard naming the heading it belonged to.
+function buildMarker(section: string, heading: string): string {
+	return `// guides/test.md → ${section} → "${heading}"`
+}
+
+// The "Copy a JSON value" fence copies an interface-typed value, so its `Snapshot` stands here.
+interface Snapshot {
+	readonly name: string
+	readonly tags: readonly string[]
+}
+
+// The "Prove a wire fixpoint" fence takes `schema`, `parseSchema`, and `serializeSchema` from the
+// consumer, because the comparison is the consumer's own. This is that consumer's part: a fixture
+// schema, a serializer that puts the wire in canonical order, and a parser that refuses anything
+// else. The serializer sorts, so a fixpoint that held only by echoing bytes back would not hold.
+interface Schema {
+	readonly name: string
+	readonly fields: readonly string[]
+}
+
+function serializeSchema(schema: Schema): Readonly<Record<string, unknown>> {
+	return { name: schema.name, fields: [...schema.fields].sort() }
+}
+
+function parseSchema(value: unknown): Schema | undefined {
+	if (!isSerializableRecord(value)) return undefined
+	const name = value.name
+	const fields: unknown = value.fields
+	if (typeof name !== 'string' || !Array.isArray(fields)) return undefined
+	const members: readonly unknown[] = fields
+	if (!members.every((field): field is string => typeof field === 'string')) return undefined
+	return { name, fields: members }
+}
 
 describe('guides parity', () => {
 	it('parses a non-empty manifest', () => {
@@ -162,27 +222,55 @@ describe('guides parity', () => {
 // real-registry carrier lives in the project that owns that subject. Every other carrier lives
 // here, where the guides project runs in Node with the browser disabled. A carrier opens with its
 // `guides/test.md → <section> → "<heading>"` line, and the first case that follows reads that line
-// in each routed-away carrier so the routing cannot rot silently.
+// in this file and in each routed-away carrier so no fence can be added or moved unnoticed.
 describe('guide fences', () => {
-	it('carries the browser fences in their own suites', () => {
-		const helpers = requireValue(
-			files['tests/src/browser/helpers.test.ts'],
-			'Missing browser carrier: tests/src/browser/helpers.test.ts',
-		)
-		const factories = requireValue(
-			files['tests/src/browser/factories.test.ts'],
-			'Missing browser carrier: tests/src/browser/factories.test.ts',
-		)
+	// A presence check over a named few passes while the guide grows past them, so the population is
+	// discovered from the guide instead: every `###` heading with a fence under it. That population
+	// must equal the headings transcribed here plus the headings routed away in `ROUTED_FENCES`, and
+	// no heading may be in both. A fence-bearing heading nobody carries fails by name, an entry
+	// naming a heading the guide does not carry a fence under fails by name, and a carrier that lost
+	// its marker line fails on that file.
+	it('carries every fence-bearing guide heading in exactly one place', () => {
+		const text = requireValue(files['guides/test.md'], 'Missing guide: guides/test.md')
+		const markers = new Map<string, string>()
+		let section = ''
+		let heading: string | undefined
+		let fenced = false
 
-		expect(helpers).toContain(
-			'// guides/test.md → Patterns → "Measure what a reader sees", the `contrast` fence.',
+		for (const line of text.split('\n')) {
+			if (line.startsWith('```')) {
+				fenced = !fenced
+				if (fenced && heading !== undefined) markers.set(heading, buildMarker(section, heading))
+				continue
+			}
+			if (fenced) continue
+
+			const head = /^(#{1,6}) (.+)$/.exec(line)
+			if (head === null) continue
+			const depth = requireValue(head[1])
+			const title = requireValue(head[2])
+			if (depth === '##') section = title
+			heading = depth === '###' ? title : undefined
+		}
+
+		const discovered = [...markers.keys()]
+		const routed = Object.keys(ROUTED_FENCES)
+		const own = requireValue(files['tests/guides.test.ts'], 'Missing carrier: tests/guides.test.ts')
+		const transcribed = discovered.filter((name) => own.includes(requireValue(markers.get(name))))
+
+		expect(discovered.length).toBeGreaterThan(0)
+		expect(findMissing(routed, discovered)).toEqual([])
+		expect(transcribed.filter((name) => routed.includes(name))).toEqual([])
+		expect(findMissing(discovered, [...transcribed, ...routed])).toEqual([])
+		expect(findMissing([...transcribed, ...routed], discovered)).toEqual([])
+
+		const unmarked = Object.entries(ROUTED_FENCES).filter(
+			([name, path]) =>
+				!requireValue(files[path], `Missing routed carrier: ${path}`).includes(
+					requireValue(markers.get(name)),
+				),
 		)
-		expect(helpers).toContain(
-			'// guides/test.md → Patterns → "Measure what a reader sees", the `readRing` fence.',
-		)
-		expect(factories).toContain(
-			'// guides/test.md → Patterns → "Record a browser journal", the `createJournal` fence.',
-		)
+		expect(unmarked).toEqual([])
 	})
 
 	// guides/test.md → Patterns → "Record calls without a spy".
@@ -265,6 +353,28 @@ describe('guide fences', () => {
 		expect(resources.created.count - resources.destroyed.count).toBe(1)
 	})
 
+	// guides/test.md → Patterns → "Capture a throw, then assert on it".
+	it('captures a real throw and answers undefined for both a return and a thrown undefined', () => {
+		const thrown = captureError(() => JSON.parse('{'))
+		expect(thrown).toBeInstanceOf(SyntaxError)
+
+		expect(captureError(() => 'fine')).toBeUndefined()
+		expect(
+			captureError(() => {
+				throw undefined
+			}),
+		).toBeUndefined()
+	})
+
+	// guides/test.md → Patterns → "Narrow without `!` or `as`".
+	it('passes a falsy value through and refuses absence with the message it was given', () => {
+		expect(requireValue(0)).toBe(0)
+		expect(requireValue('')).toBe('')
+		expect(requireValue(false)).toBe(false)
+		expect(() => requireValue(undefined)).toThrow(new Error('Value is required'))
+		expect(() => requireValue(null, 'port is required')).toThrow(new Error('port is required'))
+	})
+
 	// guides/test.md → Patterns → "Cross an unchecked boundary".
 	it('reads an absent key as undefined and refuses an uncallable method and a null target', () => {
 		const closed = createRecorder<[]>()
@@ -298,6 +408,66 @@ describe('guide fences', () => {
 			]),
 		).toStrictEqual({ 'x-run': '1, 2' })
 		expect(Object.isFrozen(flattenHeaders(new Headers({ accept: 'text/plain' })))).toBe(true)
+	})
+
+	// guides/test.md → Patterns → "Drain an async source". The fence declares its generator and its
+	// stream inline; `createAsyncSource` and `createStreamSource` are the same two sources, already
+	// standing in tests/setup.ts because every project's suites drain them.
+	it('drains an async iterable and a readable stream into arrays in yield order', async () => {
+		expect(await collect(createAsyncSource(['a', 'b']))).toStrictEqual(['a', 'b'])
+		expect(await collectStream(createStreamSource([1, 2]))).toStrictEqual([1, 2])
+	})
+
+	// guides/test.md → Patterns → "Wait for a named condition", the `waitForCondition` arm. The
+	// fence's `isBuilt` reads for an artifact a build outside the test produces, so a real scratch
+	// directory takes that place and a real file appears in it while the wait is reading.
+	it('reads until the artifact is on disk, then resolves', async () => {
+		const scratch = createScratch({ prefix: 'guide-build-' })
+		try {
+			const artifact = join(scratch.path, 'dist/index.js')
+			const pending = setTimeout(() => {
+				scratch.write('dist/index.js', 'export {}\n')
+			}, 20)
+			try {
+				await waitForCondition('artifact is on disk', () => existsSync(artifact), {
+					budget: 2000,
+					interval: 25,
+				})
+			} finally {
+				clearTimeout(pending)
+			}
+			expect(scratch.read('dist/index.js')).toBe('export {}\n')
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	// guides/test.md → Patterns → "Wait for a named condition", the `retryUntil` arm. The fence's
+	// `origin` is a server the test started, so a real one answers here: its health route reports
+	// `starting` once and `ok` after that, which is the reading the predicate is there to reject.
+	it('returns the first produced value the predicate accepts', async () => {
+		let started = false
+		const server = createServer((_request, response) => {
+			if (started) {
+				response.end('ok')
+				return
+			}
+			started = true
+			response.statusCode = 503
+			response.end('starting')
+		})
+		const loopback = await createLoopback(server)
+		try {
+			const body = await retryUntil(
+				'health endpoint answers',
+				async () => (await fetch(`${loopback.url}/health`)).text(),
+				(text) => text === 'ok',
+				{ budget: 2000, attempts: 20 },
+			)
+			expect(body).toBe('ok')
+		} finally {
+			await loopback.destroy()
+		}
 	})
 
 	// guides/test.md → Patterns → "Wait for a named condition", the `waitForEvent` arm. The fence's
@@ -347,6 +517,242 @@ describe('guide fences', () => {
 		expect(error.cause === unreachable).toBe(true)
 	})
 
+	// guides/test.md → Patterns → "Copy a JSON value".
+	it('copies an interface-typed value to fresh references and refuses a non-finite member', () => {
+		const original: Snapshot = { name: 'a', tags: ['x'] }
+		const copy: Snapshot = roundTripJSON(original)
+		expect(copy).toStrictEqual({ name: 'a', tags: ['x'] })
+		expect(copy.tags === original.tags).toBe(false)
+
+		expect(roundTripJSON(-0)).toBe(0)
+		const refusal = captureError(() => roundTripJSON({ a: [{ b: NaN }] }))
+		expect(requireValue(refusal instanceof Error ? refusal : undefined).message).toBe(
+			'JSON values must contain finite numbers',
+		)
+	})
+
+	// guides/test.md → Patterns → "Prove a guard is total". The fence is a consumer's parameterized
+	// body, so a real total guard fills `guard`: `isSerializableRecord`, which tests/setup.ts already
+	// runs the workspace's serializable-record decisions through. Its contract refuses every member
+	// of the corpus, and `expected` names the reading each refusal rests on rather than repeating a
+	// literal the loop could have derived from the corpus itself.
+	it('survives every hostile value and answers what the guard contract requires', () => {
+		const guard = isSerializableRecord
+		const expected: readonly boolean[] = [
+			false, // the self-referential record — serialization throws on the cycle
+			false, // the revoked proxy — the prototype read throws
+			false, // the property proxy — serialization's property read throws
+			false, // the key proxy — serialization's key enumeration throws
+			false, // the prototype proxy — the prototype read throws
+			false, // the null-prototype record — its prototype is not the default one
+			false, // the array-target proxy — its prototype is Array's
+			false, // the self-referential array — its prototype is Array's
+			false, // the sparse array — its prototype is Array's
+			false, // the hidden-key record — its enumerable self-reference cycles serialization
+			false, // the named getter — serialization's property read throws
+		]
+
+		const values = createHostileValues()
+		expect(expected.length).toBe(values.length)
+
+		for (const [index, value] of values.entries()) {
+			let accepted: boolean | undefined
+			expect(() => {
+				accepted = guard(value)
+			}, `hostile value ${index}`).not.toThrow()
+			expect(accepted, `hostile value ${index}`).toBe(expected[index])
+		}
+	})
+
+	// guides/test.md → Patterns → "Prove a wire fixpoint".
+	it('reproduces the canonical wire after a parse across an untrusted JSON boundary', () => {
+		const schema: Schema = { name: 'ledger', fields: ['id', 'amount'] }
+
+		const wire = JSON.stringify(serializeSchema(schema))
+		const received = requireValue(parseSchema(JSON.parse(wire)))
+
+		expect(JSON.stringify(serializeSchema(received))).toBe(wire)
+	})
+
+	// guides/test.md → Patterns → "Read a source inventory". The root is this workspace, as the
+	// fence's own comment says it is, so the keys are this package's real files.
+	it('keys a walk root-relative, takes a named file whatever the filter says, and excludes below a directory', () => {
+		const root = resolveRoot(import.meta)
+
+		expect(Object.keys(readInventory(root, ['src/core'], { extensions: ['.ts'] }))).toStrictEqual([
+			'src/core/factories.ts',
+			'src/core/helpers.ts',
+			'src/core/index.ts',
+			'src/core/types.ts',
+			'src/core/validators.ts',
+		])
+
+		expect(
+			Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] })),
+		).toStrictEqual([
+			'package.json',
+			'src/core/factories.ts',
+			'src/core/helpers.ts',
+			'src/core/index.ts',
+			'src/core/types.ts',
+			'src/core/validators.ts',
+		])
+
+		expect(
+			Object.keys(
+				readInventory(root, ['src/core'], {
+					extensions: ['.ts'],
+					exclude: ['src/core/index.ts'],
+				}),
+			),
+		).toStrictEqual([
+			'src/core/factories.ts',
+			'src/core/helpers.ts',
+			'src/core/types.ts',
+			'src/core/validators.ts',
+		])
+
+		expect(
+			Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] })),
+		).toStrictEqual([
+			'src/browser/constants.ts',
+			'src/browser/factories.ts',
+			'src/browser/helpers.ts',
+			'src/browser/index.ts',
+			'src/browser/types.ts',
+			'src/core/factories.ts',
+			'src/core/helpers.ts',
+			'src/core/index.ts',
+			'src/core/types.ts',
+			'src/core/validators.ts',
+		])
+
+		expect(
+			readInventory(root, ['src/core/index.ts'], { extensions: ['.ts'], exclude: ['src/core'] }),
+		).toStrictEqual({})
+	})
+
+	// guides/test.md → Patterns → "Own a temporary directory", the allocation half.
+	it('reads back what it wrote, refuses an escape, and nests one allocation in another', () => {
+		const scratch = createScratch({ prefix: 'guide-', files: { 'src/index.ts': 'export {}\n' } })
+		try {
+			expect(scratch.read('src/index.ts')).toBe('export {}\n')
+			expect(scratch.has('src')).toBe(true)
+			expect(() => scratch.read('src')).toThrow('Scratch path is a directory: src')
+			expect(scratch.read('missing.ts')).toBeUndefined()
+			expect(() => scratch.write('../escape.ts', '')).toThrow(
+				'Path outside scratch directory: ../escape.ts',
+			)
+
+			expect(scratch.write('src/notes.ts', 'export {}\n')).toBe(join(scratch.path, 'src/notes.ts'))
+
+			scratch.ensure('empty')
+			expect(scratch.names()).toStrictEqual(['empty', 'src'])
+			expect(scratch.names('empty')).toStrictEqual([])
+
+			const child = createScratch({ parent: scratch.path, prefix: 'child-' })
+			expect(scratch.names().length).toBe(3)
+			child.destroy()
+			expect(scratch.names().length).toBe(2)
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	// guides/test.md → Patterns → "Own a temporary directory", the link half. The fence links a
+	// directory, so it runs where the host makes one: `supportsDirectoryLinks` reads that host as it
+	// stands rather than naming a platform.
+	it.skipIf(!supportsDirectoryLinks())(
+		'acts at a link rather than through it, and leaves what a removed link pointed at',
+		() => {
+			const scratch = createScratch({ prefix: 'guide-', files: { 'src/index.ts': 'export {}\n' } })
+			const outside = createScratch({ prefix: 'outside-', files: { 'read.ts': 'export {}\n' } })
+			try {
+				scratch.ensure('empty')
+
+				expect(scratch.link('gate', outside.path)).toBe(join(scratch.path, 'gate'))
+				expect(scratch.read('gate/read.ts')).toBe('export {}\n')
+
+				expect(scratch.ensure('gate/made')).toBe(join(scratch.path, 'gate/made'))
+				expect(outside.names()).toStrictEqual(['made', 'read.ts'])
+				expect(scratch.names('gate')).toStrictEqual(['made', 'read.ts'])
+
+				expect(() => scratch.link('gate', outside.path)).toThrow('EEXIST')
+
+				scratch.link('dangling', 'missing.ts')
+				expect(scratch.has('dangling')).toBe(true)
+				expect(scratch.read('dangling')).toBeUndefined()
+
+				scratch.remove('dangling')
+				expect(scratch.has('dangling')).toBe(false)
+				expect(() => scratch.remove('missing.ts')).not.toThrow()
+				scratch.remove('src')
+				expect(scratch.names()).toStrictEqual(['empty', 'gate'])
+
+				scratch.destroy()
+				expect(() => scratch.destroy()).not.toThrow()
+				expect(outside.has('made')).toBe(true)
+			} finally {
+				scratch.destroy()
+				outside.destroy()
+			}
+		},
+	)
+
+	// guides/test.md → Patterns → "Own a temporary directory", the `destroyScratch` fence. Nothing
+	// holds this allocation, so the retry resolves on its first attempt.
+	it('awaits the removal of an allocation a holder may still be releasing', async () => {
+		const workspace = createScratch({ prefix: 'build-' })
+
+		await destroyScratch(workspace)
+
+		expect(existsSync(workspace.path)).toBe(false)
+	})
+
+	// guides/test.md → Patterns → "Give everything back in one hook". The fence's consumer registers
+	// the hook beside the list, so the transcription does too and the hook really runs.
+	describe('one cleanup hook', () => {
+		const teardown = createTeardown()
+
+		// This package registers no hook of its own, so the consumer writes this line once.
+		afterEach(() => teardown.destroy())
+
+		it('runs its cleanup newest-first and empties the list', async () => {
+			const order: string[] = []
+			teardown.add(() => {
+				order.push('opened first')
+			})
+			teardown.add(async () => {
+				await Promise.resolve()
+				order.push('opened second')
+			})
+			expect(teardown.count).toBe(2)
+
+			await teardown.destroy()
+			expect(order).toStrictEqual(['opened second', 'opened first'])
+			expect(teardown.count).toBe(0)
+		})
+	})
+
+	// guides/test.md → Patterns → "Answer a real request on a loopback port".
+	it('answers on an IPv4 loopback port the host picked, then closes idempotently', async () => {
+		const server = createServer((_request, response) => {
+			response.end('ok')
+		})
+
+		const loopback = await createLoopback(server)
+
+		expect(loopback.url).toBe(`http://127.0.0.1:${loopback.port}`)
+		expect(loopback.port).toBeGreaterThan(0)
+
+		const response = await fetch(loopback.url)
+		expect(await response.text()).toBe('ok')
+
+		await loopback.destroy()
+		expect(await loopback.destroy()).toBeUndefined()
+		expect(server.listening).toBe(false)
+	})
+
 	// guides/test.md → Patterns → "Request an HTTP upgrade". The server is a real one on a real
 	// loopback port, so each arm is what a client read off the wire rather than a literal.
 	it('reports the refused arm, the claimed arm, and the budget a silent server runs out', async () => {
@@ -388,6 +794,18 @@ describe('guide fences', () => {
 		} finally {
 			for (const socket of detached) socket.destroy()
 			await loopback.destroy()
+		}
+	})
+
+	// guides/test.md → Patterns → "Probe what the host supports". The fence is itself a gated case,
+	// so it transcribes as one: the skip cites the mechanism the proof rests on rather than a host.
+	it.skipIf(!supportsFileLinks())('reads a file through a link', () => {
+		const scratch = createScratch({ files: { 'source.txt': 'linked' } })
+		try {
+			scratch.link('gate.txt', 'source.txt')
+			expect(scratch.read('gate.txt')).toBe('linked')
+		} finally {
+			scratch.destroy()
 		}
 	})
 
@@ -433,6 +851,21 @@ describe('guide fences', () => {
 			expect(jar.header).toBe('theme=dark')
 		} finally {
 			await loopback.destroy()
+		}
+	})
+
+	// guides/test.md → Patterns → "Refuse an escaping path in your own fixture".
+	it('resolves a contained path and refuses a relative and an absolute escape', () => {
+		const scratch = createScratch({ files: { 'src/index.ts': 'export {}\n' } })
+		const root = scratch.path
+		try {
+			expect(resolveContained(root, 'src/index.ts')).toBe(join(root, 'src/index.ts'))
+			expect(resolveContained(root, join(root, 'src/index.ts'))).toBe(join(root, 'src/index.ts'))
+			expect(resolveContained(root, '../escape.ts')).toBeUndefined()
+			expect(resolveContained(root, join(root, '../escape.ts'))).toBeUndefined()
+			expect(resolveContained(root, '/etc/passwd')).toBeUndefined()
+		} finally {
+			scratch.destroy()
 		}
 	})
 })

@@ -57,6 +57,28 @@ export function normalizePath(path: string): string {
 }
 
 /**
+ * The `guides/test.md` fences carried outside `tests/guides.test.ts`, keyed by the `###` heading
+ * that owns the fence and valued by the test file that runs it.
+ *
+ * @remarks A browser fence needs a document, and the guides project runs in Node with the browser
+ * disabled, so each one is carried in the browser suite that owns its subject. The totality guard in
+ * `tests/guides.test.ts` reads this table: it fails on a fence-bearing heading that appears neither
+ * in a transcription there nor here, on an entry naming a heading the guide does not carry a fence
+ * under, and on a carrier file missing its `guides/test.md → <section> → "<heading>"` marker line.
+ */
+export const ROUTED_FENCES: Readonly<Record<string, string>> = Object.freeze({
+	'Build and mount a fixture': 'tests/src/browser/helpers.test.ts',
+	'Drive an interface the way a person does': 'tests/src/browser/helpers.test.ts',
+	'Drive a field the component listens to': 'tests/src/browser/helpers.test.ts',
+	'Measure what a reader sees': 'tests/src/browser/helpers.test.ts',
+	'Read the tokens and colors a theme declares': 'tests/src/browser/helpers.test.ts',
+	'Find a rule in the cascade': 'tests/src/browser/helpers.test.ts',
+	'Remove an IndexedDB database': 'tests/src/browser/helpers.test.ts',
+	'Record a browser journal': 'tests/src/browser/factories.test.ts',
+	'Place a capture portfolio': 'tests/src/browser/factories.test.ts',
+})
+
+/**
  * Checks whether a value is a plain record that JSON can serialize.
  *
  * @param value - The value to check.
