@@ -64,6 +64,12 @@ neither `node:*` nor the DOM, so a browser test project imports it unchanged.
 The browser face ships ES only. It is built on `vitest/browser`, which is an ES-only module, so no
 CommonJS consumer can reach it and no `.d.cts` is emitted for it.
 
+`@orkestrel/test/browser` loads only inside Vitest Browser Mode. It imports `vitest/browser` at
+module scope, so importing it from a Node host throws at module load rather than deferring the
+failure into the first helper call. A module that must load under Node as well reaches it through a
+dynamic import behind a DOM guard — a setup file that a Node project and a browser project both
+register is the case that needs it.
+
 ## Surface
 
 The values and types that follow are everything this package exports, from its core, browser, and
