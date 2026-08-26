@@ -41,8 +41,9 @@ import {
 export function resolveContained(root: string, target: string): string | undefined {
 	const candidate = resolve(root, target)
 	const contained = relative(root, candidate)
-	// Cross-drive containment is unproven because POSIX `relative` never returns an absolute path;
-	// a Windows gate would drive this branch.
+	// `relative` answers with an absolute path where the target carries a root of its own — a second
+	// drive letter or a UNC share on Windows — and that spelling names no ancestor, so the `..` tests
+	// miss it and containment turns on `isAbsolute`.
 	if (contained === '..' || contained.startsWith(`..${sep}`) || isAbsolute(contained)) {
 		return undefined
 	}

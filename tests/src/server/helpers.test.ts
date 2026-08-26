@@ -17,7 +17,7 @@ import {
 import { createServer as createHTTPServer } from 'node:http'
 import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { captureError, createRecorder, requireValue, waitForCondition } from '@src/core'
 import {
@@ -131,6 +131,31 @@ function overrideTemporaryDirectory(path: string): () => void {
 	}
 }
 
+/**
+ * Absolute target spellings that carry a root of their own. `relative` compares spellings and reads
+ * no filesystem, so neither the drive nor the share has to exist for the comparison to answer.
+ */
+const FOREIGN_ROOT_SPELLINGS: readonly string[] = Object.freeze([
+	'Z:\\orkestrel-test-outside',
+	'\\\\orkestrel-test-host\\share\\outside',
+])
+
+// `resolveContained` refuses a target whose root-relative spelling is itself absolute, and `relative`
+// answers that way only where the two paths carry roots that differ. The mechanism is asked of this
+// host rather than read off its name: a host placing every absolute path under one root always
+// answers relatively, so the selection is empty there and the case keyed to it does not apply.
+const HOST_ROOT = resolve(tmpdir())
+const FOREIGN_ROOTS = FOREIGN_ROOT_SPELLINGS.filter((target) =>
+	isAbsolute(relative(HOST_ROOT, resolve(HOST_ROOT, target))),
+)
+
+// `readInventory` builds a key from `relative`'s spelling, which separates segments with the host's
+// own separator, and converts that separator to `/`. Where the host already spells a nested path with
+// `/` the conversion is a no-op and proves nothing, so the gate is that reading rather than a
+// platform name.
+const NESTED_SPELLING = relative('root', join('root', 'nested', 'file.txt'))
+const NATIVE_SEPARATOR_DIFFERS = NESTED_SPELLING.includes(sep) && !NESTED_SPELLING.includes('/')
+
 describe('resolveContained', () => {
 	it('resolves relative and absolute contained targets and rejects escapes', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-'))
@@ -139,6 +164,26 @@ describe('resolveContained', () => {
 			expect(resolveContained(root, join(root, 'nested'))).toBe(join(root, 'nested'))
 			expect(resolveContained(root, '../outside')).toBeUndefined()
 			expect(resolveContained(root, join(root, '..', 'outside'))).toBeUndefined()
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it.runIf(FOREIGN_ROOTS.length > 0)('refuses a target carrying a root of its own', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-foreign-'))
+		try {
+			for (const target of FOREIGN_ROOTS) {
+				// The escape branch keyed to `..` is provably not the one answering: the spelling
+				// `relative` returns for this pair is absolute and names no ancestor segment.
+				const spelling = relative(root, resolve(root, target))
+				expect(isAbsolute(spelling)).toBe(true)
+				expect(spelling.startsWith('..')).toBe(false)
+				expect(resolveContained(root, target)).toBeUndefined()
+			}
+
+			// The same root still resolves a contained target, so the refusals above are the foreign
+			// root's doing rather than a helper refusing everything it is handed.
+			expect(resolveContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}
@@ -422,6 +467,30 @@ describe('readInventory', () => {
 			rmSync(parent, { force: true, recursive: true })
 		}
 	})
+
+	it.runIf(NATIVE_SEPARATOR_DIFFERS)(
+		'keys a named target and a walked entry with forward slashes, never the host separator',
+		() => {
+			const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-separator-'))
+			try {
+				mkdirSync(join(root, 'alpha', 'beta'), { recursive: true })
+				writeFileSync(join(root, 'alpha', 'beta', 'deep.txt'), 'deep')
+				writeFileSync(join(root, 'alpha', 'near.txt'), 'near')
+
+				// The walked door keys an entry the directory scan reached; the named door keys a
+				// target the caller spelled with the host separator. Both convert.
+				const walked = Object.keys(readInventory(root, ['.']))
+				expect(walked).toStrictEqual(['alpha/beta/deep.txt', 'alpha/near.txt'])
+
+				const named = Object.keys(readInventory(root, [join('alpha', 'beta', 'deep.txt')]))
+				expect(named).toStrictEqual(['alpha/beta/deep.txt'])
+
+				for (const key of [...walked, ...named]) expect(key).not.toContain(sep)
+			} finally {
+				rmSync(root, { force: true, recursive: true })
+			}
+		},
+	)
 
 	it('keeps a root-level __proto__ file as an own property', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-inventory-prototype-'))

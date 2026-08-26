@@ -892,23 +892,29 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
    second call that names the kept file and passes no exclusion, and merge the maps. An
    exclusion is normalized before the rule applies: a leading `./` and a trailing `/` are stripped,
    and `''` and `'.'` both name the root, so either drops every key. Keys are root-relative and
-   separated by `/` whatever the host separator is. The suite runs on POSIX, where `/` is already
-   the separator, so it proves the key shape and not the conversion. The map is built by inserting
-   the keys in sorted order. Read back, non-integer keys hold that order. Integer-like keys do not,
-   because a plain object enumerates them numerically first: files named `0`, `2`, `10`, and
-   `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`. Returning a
-   `ReadonlyMap` would keep the order and break the structural match with `@orkestrel/guide`'s
-   `SourceOptions.files` that the whole helper is shaped for, so the guarantee narrows instead. Case
-   is the host's decision, not this package's: whether names differing only in case are the same
-   file varies by filesystem, so the suite probes the running host and asserts what the probe
-   returned instead of assuming either answer.
+   separated by `/` whatever the host separator is: `readInventory` takes the spelling `relative`
+   returns and rejoins its segments split on `sep` with `/`. The suite gates that proof on a host
+   reading rather than on a platform name. It spells a nested path with `join`, and where that
+   spelling carries `sep` and no `/` it asserts that a walked key and a named key both read
+   `alpha/beta/deep.txt` and carry no `sep`. A host that already spells the path with `/` skips the
+   case, because the conversion is a no-op there and discriminates nothing. The map is built by
+   inserting the keys in sorted order. Read back, non-integer keys hold that order. Integer-like
+   keys do not, because a plain object enumerates them numerically first: files named `0`, `2`,
+   `10`, and `a.txt` insert as `0`, `10`, `2`, `a.txt` and enumerate as `0`, `2`, `10`, `a.txt`.
+   Returning a `ReadonlyMap` would keep the order and break the structural match with
+   `@orkestrel/guide`'s `SourceOptions.files` that the whole helper is shaped for, so the guarantee
+   narrows instead. Case is the host's decision, not this package's: whether names differing only in
+   case are the same file varies by filesystem, so the suite probes the running host and asserts
+   what the probe returned instead of assuming either answer.
 
 7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
-   `mkdtempSync` below `parent`, which creates the directory at POSIX mode `0700`. The suite asserts
-   that mode unguarded, so it is proven on POSIX and unproven on a host that emulates permission
-   bits. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, `link`, and
-   `remove` — throws when that target lexically escapes the allocated directory, and a failed seed
-   removes the directory before rethrowing. `remove` adds a refusal the others do not need: a
+   `mkdtempSync` below `parent`, which creates the directory at mode `0700` on a host that applies
+   POSIX permission bits. The suite gates that assertion on `supportsMode`, so the mode is proven
+   where the probe answers `true` and the case is skipped where it answers `false`. A Windows host
+   answers `false` and reads the same allocation back as `0666`, so the bits describe nothing it
+   applies. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, `link`,
+   and `remove` — throws when that target lexically escapes the allocated directory, and a failed
+   seed removes the directory before rethrowing. `remove` adds a refusal the others do not need: a
    target naming the allocation itself, lexically or through an intermediate symbolic link. The
    lexical half compares paths. The physical half reads only the final entry with `lstat` and
    compares it with `matchesIdentity`; it walks no path segments and follows no final link. That is
@@ -1094,13 +1100,16 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
 The filesystem helpers make different promises, because they work on different directories.
 Read rule 7 against the `createScratch` paragraphs later and rule 6 against the `readInventory` one.
 
-`createScratch` allocates its own directory with `mkdtempSync` at POSIX mode `0700`, and the suite
-asserts that mode on POSIX, the only host CI runs. The mode keeps another uid out. It does not keep
-out a sibling test worker or the code under test, because both run as the same uid, and they are the
-population that would create a link here. Its containment check is lexical: it refuses a relative
-path that escapes the allocated directory, which is the accident that actually happens — a test
-writing `../foo`. It does not walk the path's segments for symbolic links, because per-segment
-walking is sandbox behavior and this is not a sandbox.
+`createScratch` allocates its own directory with `mkdtempSync`, which sets mode `0700` on a host
+that applies POSIX permission bits, and the suite asserts that mode where `supportsMode` answers
+`true`. Where the host applies those bits, the mode keeps another uid out; where `supportsMode`
+answers `false` the mode protects nothing, and the allocation carries only the access its parent
+directory already gives. The mode does not keep out a sibling test worker or the code under test on
+any host, because both run as the same uid, and they are the population that would create a link
+here. Its containment check is lexical: it refuses a relative path that escapes the allocated
+directory, which is the accident that actually happens — a test writing `../foo`. It does not walk
+the path's segments for symbolic links, because per-segment walking is sandbox behavior and this is
+not a sandbox.
 
 So a link inside the allocation was created by the test process or by the code the test drives, and
 handing `scratch.path` to the code under test is the ordinary use of this helper. `link` is this
