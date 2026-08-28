@@ -111,7 +111,11 @@ Imported from `@orkestrel/test`.
 | `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear` — the recorded calls of one callback.                                                                                                                                                                                                           |
 | `EventSourceInterface`     | interface | `on` alone — the subscribe half of a typed event source; it carries no data members.                                                                                                                                                                                                     |
 | `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }` — one recorder per requested event name.                                                                                                                                                                                         |
+| `Success`                  | interface | `{ success: true, value }` — the produced arm of one outcome.                                                                                                                                                                                                                            |
+| `Failure`                  | interface | `{ success: false, error }` — the failed arm of one outcome.                                                                                                                                                                                                                             |
+| `Result`                   | type      | `Success<T> \| Failure<E>` — one operation's outcome, discriminated on `success`; `E` defaults to `Error`.                                                                                                                                                                               |
 | `SignalInterface`          | interface | `{ controller, signal, count }` — a real abort controller, its instrumented signal, and that signal's live abort-listener tally.                                                                                                                                                         |
+| `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]` — one abort listener an instrumented signal installed, as its tally holds it.                                                                                                                                                         |
 | `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy` — numbered resources, with a recorder for the ids created and one for the ids destroyed.                                                                                                                                              |
 | `TeardownInterface`        | interface | `{ count }` plus `add` / `destroy` — the cleanup one test registers as it goes.                                                                                                                                                                                                          |
 | `TeardownHandler`          | type      | `() => void \| Promise<void>` — the work one registered entry performs.                                                                                                                                                                                                                  |
@@ -140,23 +144,26 @@ instead of propagating.
 
 #### Helpers
 
-| API                | Kind     | Signature                                                              | Summary                                                        |
-| ------------------ | -------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `waitForCondition` | function | `(description, condition, options?) => Promise<void>`                  | Reads until a condition holds within a monotonic budget.       |
-| `retryUntil`       | function | `(description, produce, satisfied, options?) => Promise<T>`            | Produces until a value satisfies a predicate or a bound.       |
-| `waitForEvent`     | function | `(subscribe, description, options?) => Promise<TArgs>`                 | Parks until the first event delivery, timeout, or abort.       |
-| `decodeJSONLines`  | function | `(text: string) => readonly unknown[]`                                 | Decodes non-empty JSON Lines in physical-line order.           |
-| `waitForDelay`     | function | `(ms?: number) => Promise<void>`                                       | Waits for a real host timer; defaults to `0`.                  |
-| `waitForAbort`     | function | `(signal: AbortSignal) => Promise<void>`                               | Parks on a signal's abort; an aborted signal resolves at once. |
-| `captureError`     | function | `(thunk: () => unknown) => unknown`                                    | Runs a synchronous thunk and returns whatever it threw.        |
-| `requireValue`     | function | `<T>(value: T \| null \| undefined, message?: string) => T`            | Narrows away `null` and `undefined` by throwing.               |
-| `collect`          | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`               | Drains an async iterable into an array, in iteration order.    |
-| `collectStream`    | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`              | Drains a readable stream into an array, in read order.         |
-| `roundTripJSON`    | function | `<T>(value: T & JSONSafe<T>) => T`                                     | Copies a JSON value; throws on a non-finite number.            |
-| `invokeUnchecked`  | function | `<T>(target: unknown, method: unknown, args: readonly unknown[]) => T` | Calls an unknown method under a return type the caller claims. |
-| `readProperty`     | function | `<T>(target: unknown, key: PropertyKey) => T`                          | Reads a property off an unknown value under the same claim.    |
-| `flattenHeaders`   | function | `(init: HeadersSource) => Readonly<Record<string, string>>`            | Normalizes any header initializer into a frozen plain record.  |
-| `resolveRoot`      | function | `(meta: ImportMeta) => URL`                                            | The URL one directory above the calling module's own file.     |
+| API                   | Kind     | Signature                                                                             | Summary                                                           |
+| --------------------- | -------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `waitForCondition`    | function | `(description, condition, options?) => Promise<void>`                                 | Reads until a condition holds within a monotonic budget.          |
+| `retryUntil`          | function | `(description, produce, satisfied, options?) => Promise<T>`                           | Produces until a value satisfies a predicate or a bound.          |
+| `waitForEvent`        | function | `(subscribe, description, options?) => Promise<TArgs>`                                | Parks until the first event delivery, timeout, or abort.          |
+| `checkBounds`         | function | `(subject: string, budget: number, interval: number) => void`                         | Refuses a resolved bound that is not finite and non-negative.     |
+| `buildRetryExhausted` | function | `(description, budget, elapsed, last, cause) => Error`                                | The exhaustion error `retryUntil` raises, built unthrown.         |
+| `dropRegistration`    | function | `(registrations: SignalRegistration[], installed) => SignalRegistration \| undefined` | Drops one instrumented abort registration and aborts its cleanup. |
+| `decodeJSONLines`     | function | `(text: string) => readonly unknown[]`                                                | Decodes non-empty JSON Lines in physical-line order.              |
+| `waitForDelay`        | function | `(ms?: number) => Promise<void>`                                                      | Waits for a real host timer; defaults to `0`.                     |
+| `waitForAbort`        | function | `(signal: AbortSignal) => Promise<void>`                                              | Parks on a signal's abort; an aborted signal resolves at once.    |
+| `captureError`        | function | `(thunk: () => unknown) => unknown`                                                   | Runs a synchronous thunk and returns whatever it threw.           |
+| `requireValue`        | function | `<T>(value: T \| null \| undefined, message?: string) => T`                           | Narrows away `null` and `undefined` by throwing.                  |
+| `collect`             | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`                              | Drains an async iterable into an array, in iteration order.       |
+| `collectStream`       | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`                             | Drains a readable stream into an array, in read order.            |
+| `roundTripJSON`       | function | `<T>(value: T & JSONSafe<T>) => T`                                                    | Copies a JSON value; throws on a non-finite number.               |
+| `invokeUnchecked`     | function | `<T>(target: unknown, method: unknown, args: readonly unknown[]) => T`                | Calls an unknown method under a return type the caller claims.    |
+| `readProperty`        | function | `<T>(target: unknown, key: PropertyKey) => T`                                         | Reads a property off an unknown value under the same claim.       |
+| `flattenHeaders`      | function | `(init: HeadersSource) => Readonly<Record<string, string>>`                           | Normalizes any header initializer into a frozen plain record.     |
+| `resolveRoot`         | function | `(meta: ImportMeta) => URL`                                                           | The URL one directory above the calling module's own file.        |
 
 #### Factories
 
@@ -484,23 +491,26 @@ Imported from `@orkestrel/test/server`.
 
 #### Helpers
 
-| API                      | Kind     | Signature                                                                                                           | Summary                                                                                |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `readInventory`          | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Named files and walked directories, keyed by root-relative path in sorted order.       |
-| `resolveContained`       | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                      |
-| `isExcluded`             | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                            |
-| `matchesIdentity`        | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                       |
-| `createLink`             | function | `(path: string, source: string) => void`                                                                            | Create a symbolic link, or a directory junction where the host refuses one.            |
-| `removeTree`             | function | `(path: string) => void`                                                                                            | Remove a directory tree, retrying a briefly-held handle before rethrowing.             |
-| `isRunning`              | function | `(pid: number) => boolean`                                                                                          | Whether a process id names a live process at the moment of the call.                   |
-| `waitForSocketClose`     | function | `(socket: Socket, options?: WaitOptions) => Promise<void>`                                                          | Wait for a socket's `close`, waiting past a peer reset.                                |
-| `destroyScratch`         | function | `(scratch: ScratchInterface, options?: WaitOptions) => Promise<void>`                                               | Destroy a scratch directory, retrying until the host releases it.                      |
-| `requestUpgrade`         | function | `(port: number, options?: UpgradeOptions) => Promise<UpgradeResult>`                                                | Drives one client upgrade request within a budget and reports what the server did.     |
-| `supportsDirectoryLinks` | function | `() => boolean`                                                                                                     | Whether this host links a directory and reads through the link.                        |
-| `supportsFileLinks`      | function | `() => boolean`                                                                                                     | Whether this host links a file and reads the file through the link.                    |
-| `supportsMode`           | function | `() => boolean`                                                                                                     | Whether POSIX permission bits round-trip through this host's `chmod` and `stat` calls. |
-| `supportsCase`           | function | `() => boolean`                                                                                                     | Whether names differing only by case are distinct files on this host.                  |
-| `supportsBytes`          | function | `() => boolean`                                                                                                     | Whether a filename carrying a raw non-UTF-8 byte is written and read back.             |
+| API                      | Kind     | Signature                                                                                                           | Summary                                                                                 |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `readInventory`          | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Named files and walked directories, keyed by root-relative path in sorted order.        |
+| `resolveContained`       | function | `(root: string, target: string) => string \| undefined`                                                             | The absolute target below `root`, or `undefined` when it escapes.                       |
+| `requireContained`       | function | `(root: string, target: string) => string`                                                                          | The same resolution, refusing an escape with the message every scratch member spells.   |
+| `isExcluded`             | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Whether an exclusion names the key or one of its ancestors.                             |
+| `readIdentity`           | function | `(status: Stats) => ScratchIdentity`                                                                                | The device, index node, and creation time read off one host status.                     |
+| `matchesIdentity`        | function | `(current: ScratchIdentity, allocation: ScratchIdentity) => boolean`                                                | Whether two identities name the same allocation.                                        |
+| `readErrorCode`          | function | `(error: unknown) => string \| undefined`                                                                           | The string `code` an unknown thrown value carries, or `undefined` when it carries none. |
+| `createLink`             | function | `(path: string, source: string) => void`                                                                            | Create a symbolic link, or a directory junction where the host refuses one.             |
+| `removeTree`             | function | `(path: string) => void`                                                                                            | Remove a directory tree, retrying a briefly-held handle before rethrowing.              |
+| `isRunning`              | function | `(pid: number) => boolean`                                                                                          | Whether a process id names a live process at the moment of the call.                    |
+| `waitForSocketClose`     | function | `(socket: Socket, options?: WaitOptions) => Promise<void>`                                                          | Wait for a socket's `close`, waiting past a peer reset.                                 |
+| `destroyScratch`         | function | `(scratch: ScratchInterface, options?: WaitOptions) => Promise<void>`                                               | Destroy a scratch directory, retrying until the host releases it.                       |
+| `requestUpgrade`         | function | `(port: number, options?: UpgradeOptions) => Promise<UpgradeResult>`                                                | Drives one client upgrade request within a budget and reports what the server did.      |
+| `supportsDirectoryLinks` | function | `() => boolean`                                                                                                     | Whether this host links a directory and reads through the link.                         |
+| `supportsFileLinks`      | function | `() => boolean`                                                                                                     | Whether this host links a file and reads the file through the link.                     |
+| `supportsMode`           | function | `() => boolean`                                                                                                     | Whether POSIX permission bits round-trip through this host's `chmod` and `stat` calls.  |
+| `supportsCase`           | function | `() => boolean`                                                                                                     | Whether names differing only by case are distinct files on this host.                   |
+| `supportsBytes`          | function | `() => boolean`                                                                                                     | Whether a filename carrying a raw non-UTF-8 byte is written and read back.              |
 
 `resolveContained` is the one lexical containment check, and `readInventory` and `createScratch`
 both call it. It resolves the target against the root — relative or absolute — and returns
@@ -517,6 +527,12 @@ dependency on the scaffolding tool to obtain a path predicate. If that differenc
 delete `resolveContained` and import `resolveContainedPath` from `@orkestrel/scaffold`, which this
 package already carries as a `devDependency`, rather than adding a third variant.
 
+`requireContained` is that same resolution with the refusal every contained scratch operation makes
+of an escape: it throws `Path outside scratch directory: <target>` where `resolveContained` answers
+`undefined`. Every `ScratchInterface` member and the `files` seeding pass through it, so the check
+and its one message are stated once rather than at each member. Read `resolveContained` where an
+escape is an answer the caller handles rather than a refusal it wants raised.
+
 `isExcluded` is the exclusion rule itself, and `readInventory` applies it to a named target and a
 walked entry alike. An exclusion matches whole segments of a root-relative key, so it drops the key
 it names and every key below it, and it leaves a sibling whose name merely starts the same way. It
@@ -530,7 +546,16 @@ identity read from the allocated path now is the identity recorded when the dire
 All three fields are compared because none of them alone identifies an allocation. A device is
 shared by every directory on one filesystem, an index node is reused once its directory is removed,
 and a creation time repeats within the host's timestamp resolution. It is exported so a fixture that
-manages its own directory can make the same check rather than trusting a path.
+manages its own directory can make the same check rather than trusting a path. `readIdentity` reads
+that triple off a `node:fs` `Stats`, and it is the one reading `createScratch` takes at allocation,
+before a `remove`, and before a `destroy`, so the three sites cannot drift on which fields name an
+allocation.
+
+`readErrorCode` reads the `code` off an unknown thrown value, which is what a host refusal is at a
+`catch`. It answers `undefined` for a value that is not an object, one carrying no `code`, and one
+carrying a `code` that is not a string, so a caller compares against the code it cares about rather
+than narrowing an unknown first. `createLink` and `removeTree` both classify their refusals through
+it, and it is exported because a fixture catching its own host refusal wants the same contained read.
 
 `waitForSocketClose` and `destroyScratch` are the bounded waits on this entry, and both take the
 core entry's `WaitOptions`. Import that type from `@orkestrel/test` beside the helpers themselves
@@ -2320,7 +2345,12 @@ Each entry names the rules its file proves. The test names carry the cases.
   at an opaque `object` member and at a symbol-keyed one, `undefined`, a function, and a symbol
   refused at depth under an `unknown` member, a `Date` under one copied as its serialized string, the
   non-finite refusal at every depth and through `JSON.rawJSON`, the `-0` normalization, and a large
-  array and object copied without exceeding the host's argument limit.
+  array and object copied without exceeding the host's argument limit. The leaves the wait family
+  shares take their own inputs: `checkBounds` takes a zero and a positive bound, each refused budget
+  and interval named for the subject it was given, and the budget named first where both are invalid;
+  `buildRetryExhausted` takes the message with and without a rendered last value and the cause kept
+  by identity; `dropRegistration` takes a scoped registration dropped with its cleanup aborted, an
+  unscoped one carrying no cleanup, and a listener the list does not hold, which changes nothing.
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — rules 2, 10, and 12.
   `createRecorder` records typed tuples in call order, and truncates a `calls` array the test
   captured before the `clear()`. `createTeardown` takes newest-first order across synchronous and
@@ -2414,8 +2444,13 @@ Each entry names the rules its file proves. The test names carry the cases.
   one journal's recording kept out of another's.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — rules 6 and 14, and
   each pure leaf against its own inputs. `resolveContained` takes contained relative and absolute
-  targets and both spellings of an escape. `matchesIdentity` takes a triple matching in every field
-  and one differing in each. `isExcluded` takes a key, an ancestor, the root, and a sibling that only
+  targets and both spellings of an escape, and `requireContained` takes the same contained pair and
+  each escape refused with the message naming the target it was given. `readIdentity` takes a real
+  allocation's three fields, that allocation matching itself across a `stat` and an `lstat`, and a
+  second allocation reading as a different identity. `readErrorCode` takes a real `ENOENT` off the
+  host, a plain object, an `Error` carrying a non-string `code` and one carrying none, a
+  null-prototype record, and the values that are not objects at all. `matchesIdentity` takes a triple
+  matching in every field and one differing in each. `isExcluded` takes a key, an ancestor, the root, and a sibling that only
   looks like a match. `readInventory` takes key order, extension filtering, exclusion at the named
   door and at the walked one with its spellings normalized to one rule, each of its link refusals
   with a contained intermediate link as the control on the intermediate-link one, a root-level

@@ -1,3 +1,4 @@
+import type { Stats } from 'node:fs'
 import type { Socket } from 'node:net'
 import type { WaitOptions } from '@src/core'
 import type {
@@ -24,7 +25,7 @@ import { request as requestHTTP } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { waitForDelay } from '@src/core'
+import { checkBounds, waitForDelay } from '@src/core'
 import {
 	REMOVE_TREE_MAX_ATTEMPTS,
 	REMOVE_TREE_RETRY_DELAY_MS,
@@ -48,6 +49,53 @@ export function resolveContained(root: string, target: string): string | undefin
 		return undefined
 	}
 	return candidate
+}
+
+/**
+ * Resolves a target that stays below a root directory, refusing an escape.
+ *
+ * @param root - The absolute root directory.
+ * @param target - The relative or absolute target to resolve.
+ * @returns The absolute target below the root.
+ * @throws An `Error` reading `Path outside scratch directory: <target>` when the target escapes the
+ * root.
+ * @remarks This is {@link resolveContained} with the refusal every contained scratch operation makes
+ * of an escape, so the check and its one message are stated once. Read `resolveContained` where an
+ * escape is an answer rather than a refusal.
+ */
+export function requireContained(root: string, target: string): string {
+	const candidate = resolveContained(root, target)
+	if (candidate === undefined) throw new Error(`Path outside scratch directory: ${target}`)
+	return candidate
+}
+
+/**
+ * Reads the identity of one allocated directory off a host status.
+ *
+ * @param status - The status read from the directory's path.
+ * @returns The device, index node, and creation time that together name the allocation.
+ */
+export function readIdentity(status: Stats): ScratchIdentity {
+	return { birth: status.birthtimeMs, device: status.dev, inode: status.ino }
+}
+
+/**
+ * Reads the `code` an unknown thrown value carries.
+ *
+ * @param error - The thrown value to read.
+ * @returns The string `code` the value carries, or `undefined` when it carries none.
+ * @remarks The read is contained on its own terms: a value that is not an object, one carrying no
+ * `code`, and one carrying a `code` that is not a string all answer `undefined`. A null-prototype
+ * object is read the same way, because the key is tested with `in` rather than through
+ * `hasOwnProperty`.
+ */
+export function readErrorCode(error: unknown): string | undefined {
+	return typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		typeof error.code === 'string'
+		? error.code
+		: undefined
 }
 
 /**
@@ -96,14 +144,7 @@ export function createLink(path: string, source: string): void {
 	try {
 		symlinkSync(source, path)
 	} catch (error) {
-		const code =
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			typeof error.code === 'string'
-				? error.code
-				: undefined
-		if (code !== 'EPERM') throw error
+		if (readErrorCode(error) !== 'EPERM') throw error
 
 		const resolved = resolve(dirname(path), source)
 		const status = statSync(resolved, { throwIfNoEntry: false })
@@ -132,13 +173,7 @@ export function removeTree(path: string): void {
 			rmSync(path, { force: true, recursive: true })
 			return
 		} catch (error) {
-			const code =
-				typeof error === 'object' &&
-				error !== null &&
-				'code' in error &&
-				typeof error.code === 'string'
-					? error.code
-					: undefined
+			const code = readErrorCode(error)
 			if (
 				code === undefined ||
 				!REMOVE_TREE_RETRYABLE_CODES.includes(code) ||
@@ -309,12 +344,7 @@ export function isRunning(pid: number): boolean {
 export async function waitForSocketClose(socket: Socket, options?: WaitOptions): Promise<void> {
 	const budget = options?.budget ?? 1000
 	const interval = options?.interval ?? 10
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Socket budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Socket interval must be finite and non-negative')
-	}
+	checkBounds('Socket', budget, interval)
 
 	const signal = options?.signal
 	signal?.throwIfAborted()
@@ -385,12 +415,7 @@ export async function destroyScratch(
 ): Promise<void> {
 	const budget = options?.budget ?? 10_000
 	const interval = options?.interval ?? 25
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Scratch budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Scratch interval must be finite and non-negative')
-	}
+	checkBounds('Scratch', budget, interval)
 
 	const start = performance.now()
 	let refusal: unknown
@@ -449,12 +474,7 @@ export async function requestUpgrade(
 ): Promise<UpgradeResult> {
 	const budget = options?.budget ?? 1000
 	const interval = options?.interval ?? 10
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Upgrade budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Upgrade interval must be finite and non-negative')
-	}
+	checkBounds('Upgrade', budget, interval)
 
 	const signal = options?.signal
 	signal?.throwIfAborted()

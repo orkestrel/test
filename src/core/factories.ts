@@ -4,9 +4,11 @@ import type {
 	RecorderMap,
 	ResourceFactoryInterface,
 	SignalInterface,
+	SignalRegistration,
 	TeardownHandler,
 	TeardownInterface,
 } from './types.js'
+import { dropRegistration } from './helpers.js'
 import { isRecorderMapComplete } from './validators.js'
 
 /**
@@ -185,14 +187,7 @@ export function createSignal(): SignalInterface {
 	const signal = controller.signal
 	const add = signal.addEventListener.bind(signal)
 	const remove = signal.removeEventListener.bind(signal)
-	const registrations: Array<
-		readonly [
-			listener: EventListener | EventListenerObject,
-			installed: EventListener | EventListenerObject,
-			capture: boolean,
-			cleanup: AbortController | undefined,
-		]
-	> = []
+	const registrations: SignalRegistration[] = []
 
 	Object.defineProperty(signal, 'addEventListener', {
 		configurable: true,
@@ -220,14 +215,7 @@ export function createSignal(): SignalInterface {
 			const cleanup = scope === undefined ? undefined : new AbortController()
 			const installed: EventListenerObject = {
 				handleEvent(event) {
-					if (once) {
-						const index = registrations.findIndex((registration) => registration[1] === installed)
-						const registration = registrations[index]
-						if (registration !== undefined) {
-							registrations.splice(index, 1)
-							registration[3]?.abort()
-						}
-					}
+					if (once) dropRegistration(registrations, installed)
 					if (typeof listener === 'function') listener.call(signal, event)
 					else listener.handleEvent(event)
 				},
@@ -246,11 +234,8 @@ export function createSignal(): SignalInterface {
 				scope.addEventListener(
 					'abort',
 					() => {
-						const index = registrations.findIndex((registration) => registration[1] === installed)
-						const registration = registrations[index]
+						const registration = dropRegistration(registrations, installed)
 						if (registration === undefined) return
-						registrations.splice(index, 1)
-						registration[3]?.abort()
 						remove(type, registration[1], { capture })
 					},
 					{ once: true, signal: cleanup.signal },

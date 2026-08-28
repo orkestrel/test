@@ -40,6 +40,41 @@ export type RecorderMap<
 	TName extends keyof TMap,
 > = { readonly [K in TName]: RecorderInterface<TMap[K]> }
 
+/**
+ * One operation that produced a value.
+ *
+ * @typeParam T - The produced value type.
+ */
+export interface Success<T> {
+	/** The discriminant that names the produced arm. */
+	readonly success: true
+	/** The value the operation produced. */
+	readonly value: T
+}
+
+/**
+ * One operation that raised a failure instead of producing a value.
+ *
+ * @typeParam E - The failure type.
+ */
+export interface Failure<E> {
+	/** The discriminant that names the failed arm. */
+	readonly success: false
+	/** The failure the operation raised. */
+	readonly error: E
+}
+
+/**
+ * The outcome of one operation: the value it produced, or the failure it raised.
+ *
+ * @typeParam T - The produced value type.
+ * @typeParam E - The failure type. Defaults to `Error`.
+ * @remarks `success` is the discriminant, so a caller narrows on it before reading `value` or
+ * `error`. This package declares no runtime dependency, so this is the one outcome contract its own
+ * members read rather than an anonymous union written at each call site.
+ */
+export type Result<T, E = Error> = Success<T> | Failure<E>
+
 /** A real abort signal and controller instrumented with its live abort-listener tally. */
 export interface SignalInterface {
 	/** The controller that owns the signal. */
@@ -49,6 +84,21 @@ export interface SignalInterface {
 	/** The live abort-listener tally. */
 	readonly count: number
 }
+
+/**
+ * One abort listener an instrumented signal installed, as its tally holds it.
+ *
+ * @remarks The members are the listener the caller supplied, the listener installed in its place,
+ * the capture flag the pair was registered under, and the controller that removes the scope
+ * subscription installed beside it, which is `undefined` where no other signal scopes the
+ * registration.
+ */
+export type SignalRegistration = readonly [
+	listener: EventListener | EventListenerObject,
+	installed: EventListener | EventListenerObject,
+	capture: boolean,
+	cleanup: AbortController | undefined,
+]
 
 /** A numbered resource factory with records of every creation and destruction. */
 export interface ResourceFactoryInterface {

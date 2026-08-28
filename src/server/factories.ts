@@ -2,7 +2,6 @@ import type { Server } from 'node:net'
 import type {
 	CookieJarInterface,
 	LoopbackInterface,
-	ScratchIdentity,
 	ScratchInterface,
 	ScratchOptions,
 } from './types.js'
@@ -18,7 +17,13 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
-import { createLink, matchesIdentity, removeTree, resolveContained } from './helpers.js'
+import {
+	createLink,
+	matchesIdentity,
+	readIdentity,
+	removeTree,
+	requireContained,
+} from './helpers.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -43,19 +48,11 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	}
 
 	const path = mkdtempSync(`${parent}${sep}${prefix}`)
-	const allocated = statSync(path)
-	const allocation: ScratchIdentity = {
-		birth: allocated.birthtimeMs,
-		device: allocated.dev,
-		inode: allocated.ino,
-	}
-	const outside = 'Path outside scratch directory'
+	const allocation = readIdentity(statSync(path))
 	const unremovable = 'Scratch directory is not a removable target'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
-
+			const candidate = requireContained(path, target)
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
 		}
@@ -67,9 +64,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	const scratch: ScratchInterface = {
 		path,
 		write(target, text) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
-
+			const candidate = requireContained(path, target)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			mkdirSync(dirname(candidate), { recursive: true })
@@ -77,8 +72,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return candidate
 		},
 		read(target) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			const candidate = requireContained(path, target)
 			if (!scratch.has(target)) return undefined
 			const status = statSync(candidate, { throwIfNoEntry: false })
 			if (status === undefined) return undefined
@@ -88,9 +82,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return readFileSync(candidate, 'utf8')
 		},
 		has(target) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
-
+			const candidate = requireContained(path, target)
 			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
 			if (rootStatus === undefined) return false
 			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
@@ -99,8 +91,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined
 		},
 		names(target = '.') {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			const candidate = requireContained(path, target)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			const status = statSync(candidate, { throwIfNoEntry: false })
@@ -109,8 +100,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return readdirSync(candidate).sort()
 		},
 		ensure(target) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			const candidate = requireContained(path, target)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			const status = statSync(candidate, { throwIfNoEntry: false })
@@ -121,8 +111,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return candidate
 		},
 		link(target, source) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			const candidate = requireContained(path, target)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			mkdirSync(dirname(candidate), { recursive: true })
@@ -130,33 +119,20 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			return candidate
 		},
 		remove(target) {
-			const candidate = resolveContained(path, target)
-			if (candidate === undefined) throw new Error(`${outside}: ${target}`)
+			const candidate = requireContained(path, target)
 			if (candidate === path) throw new Error(`${unremovable}: ${target}`)
 			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
 
 			const status = lstatSync(candidate, { throwIfNoEntry: false })
-			if (status !== undefined) {
-				const identity: ScratchIdentity = {
-					birth: status.birthtimeMs,
-					device: status.dev,
-					inode: status.ino,
-				}
-				if (matchesIdentity(identity, allocation)) {
-					throw new Error(`${unremovable}: ${target}`)
-				}
+			if (status !== undefined && matchesIdentity(readIdentity(status), allocation)) {
+				throw new Error(`${unremovable}: ${target}`)
 			}
 			removeTree(candidate)
 		},
 		destroy() {
 			const status = lstatSync(path, { throwIfNoEntry: false })
 			if (status === undefined) return
-			const identity: ScratchIdentity = {
-				birth: status.birthtimeMs,
-				device: status.dev,
-				inode: status.ino,
-			}
-			if (!matchesIdentity(identity, allocation)) return
+			if (!matchesIdentity(readIdentity(status), allocation)) return
 			removeTree(path)
 		},
 	}

@@ -2,9 +2,78 @@ import type {
 	EventSubscriber,
 	HeadersSource,
 	JSONSafe,
+	Result,
 	RetryOptions,
+	SignalRegistration,
 	WaitOptions,
 } from './types.js'
+
+/**
+ * Checks the resolved bounds one bounded wait runs under.
+ *
+ * @param subject - The bound's owner, which opens each refusal message.
+ * @param budget - The resolved elapsed-time limit in milliseconds.
+ * @param interval - The resolved delay between readings in milliseconds.
+ * @throws An `Error` reading `<subject> budget must be finite and non-negative` or
+ * `<subject> interval must be finite and non-negative`.
+ * @remarks Every member of the wait family resolves its own defaults first and passes the resolved
+ * numbers here, so each keeps its own defaults while one contract states what a bound must be.
+ */
+export function checkBounds(subject: string, budget: number, interval: number): void {
+	if (!Number.isFinite(budget) || budget < 0) {
+		throw new Error(`${subject} budget must be finite and non-negative`)
+	}
+	if (!Number.isFinite(interval) || interval < 0) {
+		throw new Error(`${subject} interval must be finite and non-negative`)
+	}
+}
+
+/**
+ * Builds the error {@link retryUntil} raises when its elapsed-time budget runs out.
+ *
+ * @param description - The operation the retry was named for.
+ * @param budget - The elapsed-time limit in milliseconds.
+ * @param elapsed - The milliseconds the retry actually spent.
+ * @param last - The rendered last unsatisfying value, or `undefined` when the retry produced none.
+ * @param cause - The last producer error, which becomes the returned error's `cause`.
+ * @returns The exhaustion error, unthrown.
+ * @remarks Both of `retryUntil`'s elapsed checks raise this one message, so an edit to it lands in
+ * one place. The rendered value is appended only when the retry produced one.
+ */
+export function buildRetryExhausted(
+	description: string,
+	budget: number,
+	elapsed: number,
+	last: string | undefined,
+	cause: unknown,
+): Error {
+	return new Error(
+		`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)${last === undefined ? '' : ` (last value: ${last})`}`,
+		{ cause },
+	)
+}
+
+/**
+ * Drops the registration an instrumented signal installed for one listener.
+ *
+ * @param registrations - The live registration list, spliced in place.
+ * @param installed - The installed listener naming the registration to drop.
+ * @returns The dropped registration, or `undefined` when the list holds none for that listener.
+ * @remarks The dropped registration's cleanup controller is aborted as it leaves, so the scope
+ * subscription installed beside it leaves with it. Removing the installed listener from the signal
+ * stays with the caller, because only the scope-abort path has one to remove.
+ */
+export function dropRegistration(
+	registrations: SignalRegistration[],
+	installed: EventListener | EventListenerObject,
+): SignalRegistration | undefined {
+	const index = registrations.findIndex((registration) => registration[1] === installed)
+	const registration = registrations[index]
+	if (registration === undefined) return undefined
+	registrations.splice(index, 1)
+	registration[3]?.abort()
+	return registration
+}
 
 /**
  * Waits for a host timer to elapse.
@@ -48,12 +117,7 @@ export async function waitForCondition(
 ): Promise<void> {
 	const budget = options?.budget ?? 1000
 	const interval = options?.interval ?? 10
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Wait budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Wait interval must be finite and non-negative')
-	}
+	checkBounds('Wait', budget, interval)
 
 	const start = performance.now()
 	while (true) {
@@ -96,12 +160,7 @@ export async function retryUntil<T>(
 	const budget = options?.budget ?? 1000
 	const interval = options?.interval ?? 10
 	const attempts = options?.attempts
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Retry budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Retry interval must be finite and non-negative')
-	}
+	checkBounds('Retry', budget, interval)
 	if (attempts !== undefined && (!Number.isInteger(attempts) || attempts < 1)) {
 		throw new Error('Retry attempts must be a positive integer')
 	}
@@ -115,15 +174,10 @@ export async function retryUntil<T>(
 		if (count > 0) {
 			const elapsed = performance.now() - start
 			if (elapsed >= budget) {
-				throw new Error(
-					`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)${last === undefined ? '' : ` (last value: ${last})`}`,
-					{ cause },
-				)
+				throw buildRetryExhausted(description, budget, elapsed, last, cause)
 			}
 		}
-		let produced:
-			| { readonly success: false; readonly error: unknown }
-			| { readonly success: true; readonly value: T }
+		let produced: Result<T, unknown>
 		try {
 			produced = { success: true, value: await produce() }
 		} catch (error) {
@@ -152,10 +206,7 @@ export async function retryUntil<T>(
 
 		const elapsed = performance.now() - start
 		if (elapsed >= budget) {
-			throw new Error(
-				`Retry "${description}" did not succeed within ${budget}ms (waited ${elapsed}ms)${last === undefined ? '' : ` (last value: ${last})`}`,
-				{ cause },
-			)
+			throw buildRetryExhausted(description, budget, elapsed, last, cause)
 		}
 		if (attempts !== undefined && count >= attempts) {
 			throw new Error(
@@ -236,12 +287,7 @@ export async function waitForEvent<TArgs extends readonly unknown[]>(
 ): Promise<TArgs> {
 	const budget = options?.budget ?? 1000
 	const interval = options?.interval ?? 10
-	if (!Number.isFinite(budget) || budget < 0) {
-		throw new Error('Event budget must be finite and non-negative')
-	}
-	if (!Number.isFinite(interval) || interval < 0) {
-		throw new Error('Event interval must be finite and non-negative')
-	}
+	checkBounds('Event', budget, interval)
 
 	const signal = options?.signal
 	signal?.throwIfAborted()
