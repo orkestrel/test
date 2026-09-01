@@ -78,7 +78,7 @@ export interface PortfolioInterface {
 	/** The name of the variant this run renders. */
 	readonly variant: string
 	/** Every state placed so far, in placement order. */
-	readonly states: readonly string[]
+	readonly placements: readonly string[]
 	/** Every path written so far, in write order. */
 	readonly paths: readonly string[]
 	/** The registry expanded across every variant: the filenames a complete portfolio holds. */

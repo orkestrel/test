@@ -116,7 +116,7 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 	return {
 		variant: options.variant,
 		files,
-		get states() {
+		get placements() {
 			return [...placed]
 		},
 		get paths() {

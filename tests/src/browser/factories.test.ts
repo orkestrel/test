@@ -159,7 +159,7 @@ describe('createPortfolio', () => {
 		})
 		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
 		expect(applied.count).toBe(0)
-		expect(portfolio.states).toStrictEqual([])
+		expect(portfolio.placements).toStrictEqual([])
 		expect(portfolio.paths).toStrictEqual([])
 	})
 
@@ -174,7 +174,7 @@ describe('createPortfolio', () => {
 		await expect(portfolio.place('answer-partial')).rejects.toThrow(
 			'Capture state "answer-partial" is not registered',
 		)
-		expect(portfolio.states).toStrictEqual([])
+		expect(portfolio.placements).toStrictEqual([])
 	})
 
 	it('applies the variant, resizes the viewport, writes the file, and records it', async () => {
@@ -186,7 +186,7 @@ describe('createPortfolio', () => {
 			directory: DIRECTORY,
 			enabled: true,
 		})
-		const before = portfolio.states
+		const before = portfolio.placements
 		const written = await portfolio.place('start-empty')
 		// The provider returns the written path in its host's own separator, and the runner reports
 		// its root with forward slashes on every host, so each side is compared through
@@ -199,7 +199,7 @@ describe('createPortfolio', () => {
 		expect(window.innerHeight).toBe(844)
 		expect(normalizePath(requireValue(written))).toBe(expected)
 		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
-		expect(portfolio.states).toStrictEqual(['start-empty'])
+		expect(portfolio.placements).toStrictEqual(['start-empty'])
 		expect(portfolio.paths.map(normalizePath)).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
@@ -217,7 +217,7 @@ describe('createPortfolio', () => {
 		await expect(portfolio.place('answer-ideal')).rejects.toThrow(
 			'Capture state "answer-ideal" is already placed',
 		)
-		expect(portfolio.states).toStrictEqual(['answer-ideal'])
+		expect(portfolio.placements).toStrictEqual(['answer-ideal'])
 		expect(portfolio.paths.map(normalizePath)).toStrictEqual([
 			normalizePath(`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`),
 		])
@@ -293,7 +293,7 @@ describe('createPortfolio', () => {
 			expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
 			expect(normalizePath(requireValue(written))).toBe(expected)
 			expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
-			expect(portfolio.states).toStrictEqual(['start-empty'])
+			expect(portfolio.placements).toStrictEqual(['start-empty'])
 
 			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
 			// The placement above left the viewport and the theme at what `dark-390` selects, so a
@@ -314,7 +314,7 @@ describe('createPortfolio', () => {
 			expect(window.innerWidth).toBe(320)
 			expect(window.innerHeight).toBe(480)
 			expect(document.documentElement.getAttribute('data-theme')).toBeNull()
-			expect(ordinary.states).toStrictEqual([])
+			expect(ordinary.placements).toStrictEqual([])
 			expect(ordinary.paths).toStrictEqual([])
 
 			await expect(portfolio.place('answer-partial')).rejects.toThrow(

@@ -10,9 +10,7 @@ import {
 	clickAccessible,
 	clickAccessibleWithin,
 	clickDisclosure,
-	colorEqual,
 	commitInput,
-	contrast,
 	describeFocus,
 	describeTree,
 	expandCaptures,
@@ -25,36 +23,38 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	matchesColor,
 	measureContrast,
 	measureLuminance,
 	mount,
 	parseColor,
-	pixels,
 	pressKeys,
 	readBackdrop,
 	readCascade,
+	readContrast,
 	readFocus,
 	readLayers,
 	readName,
 	readPage,
 	readPerception,
+	readPixels,
 	readRing,
 	readRole,
+	readRootToken,
 	readRows,
 	readRules,
 	readStates,
+	readStyle,
 	readText,
+	readToken,
 	readValue,
 	releasePane,
 	removeDatabase,
 	render,
 	resolveAccessible,
+	resolveColor,
 	resolveRendered,
-	rgba,
-	rootToken,
 	stagePane,
-	style,
-	token,
 	traverseAccessible,
 	typeAccessible,
 	typeInput,
@@ -981,11 +981,11 @@ describe('mount', () => {
 		const built = build('div', { classes: 'journey-mounted' })
 		// Unmounted, the element resolves the initial value for every property and has no box. This
 		// pair is the whole contract: the append is what changes both answers.
-		expect(style(built, 'padding-left')).toBe('')
+		expect(readStyle(built, 'padding-left')).toBe('')
 		expect(built.getBoundingClientRect().width).toBe(0)
 		const mounted = mount(built)
 		try {
-			expect(style(mounted, 'padding-left')).toBe('12px')
+			expect(readStyle(mounted, 'padding-left')).toBe('12px')
 			expect(mounted.getBoundingClientRect().width).toBe(40)
 		} finally {
 			mounted.remove()
@@ -1014,7 +1014,7 @@ describe('mount', () => {
 		const save = requireValue(panel.querySelector('button'))
 		expect(save.textContent).toBe('Save')
 		expect(save.getAttribute('type')).toBe('button')
-		expect(pixels(save, 'padding-left')).toBe(12)
+		expect(readPixels(save, 'padding-left')).toBe(12)
 
 		const markup = render('<button type="button">Save</button>')
 		const heading = render('h2', 'title')
@@ -1285,61 +1285,61 @@ describe('parseColor', () => {
 	})
 })
 
-describe('rgba', () => {
+describe('resolveColor', () => {
 	it('resolves the syntaxes parseColor refuses, by asking the browser', () => {
 		// Each of these returns `undefined` from `parseColor`, which is what the live resolver is for.
 		expect(parseColor('rebeccapurple')).toBeUndefined()
 		expect(parseColor('#ff0000')).toBeUndefined()
-		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(rgba('#ff0000')).toStrictEqual([255, 0, 0, 1])
-		expect(rgba('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
+		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(resolveColor('#ff0000')).toStrictEqual([255, 0, 0, 1])
+		expect(resolveColor('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
 	})
 
 	it('resolves a var() reference against the tokens the document declares', () => {
 		buildStylesheet(':root { --journey-ink: rgb(10, 20, 30) }')
-		expect(rgba('var(--journey-ink)')).toStrictEqual([10, 20, 30, 1])
+		expect(resolveColor('var(--journey-ink)')).toStrictEqual([10, 20, 30, 1])
 	})
 
 	it('refuses an expression the CSSOM will not parse', () => {
-		expect(rgba('not-a-color')).toBeUndefined()
-		expect(rgba('')).toBeUndefined()
-		expect(rgba('12px')).toBeUndefined()
+		expect(resolveColor('not-a-color')).toBeUndefined()
+		expect(resolveColor('')).toBeUndefined()
+		expect(resolveColor('12px')).toBeUndefined()
 	})
 
 	it('leaves no probe element behind, on the refusing path as well as the reading one', () => {
 		const before = document.body.childElementCount
-		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(rgba('not-a-color')).toBeUndefined()
+		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(resolveColor('not-a-color')).toBeUndefined()
 		expect(document.body.childElementCount).toBe(before)
 		expect(document.body.querySelector(':scope > span')).toBeNull()
 	})
 })
 
-describe('colorEqual', () => {
+describe('matchesColor', () => {
 	it('reads two spellings of one color as equal', () => {
-		expect(colorEqual('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
-		expect(colorEqual('#ff0000', [255, 0, 0, 1])).toBe(true)
-		expect(colorEqual([1, 2, 3, 1], [1, 2, 3, 1])).toBe(true)
+		expect(matchesColor('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
+		expect(matchesColor('#ff0000', [255, 0, 0, 1])).toBe(true)
+		expect(matchesColor([1, 2, 3, 1], [1, 2, 3, 1])).toBe(true)
 	})
 
 	it('reads different colors as unequal, including on alpha alone', () => {
-		expect(colorEqual('red', [0, 0, 255, 1])).toBe(false)
-		expect(colorEqual([1, 2, 3, 1], [1, 2, 3, 0.5])).toBe(false)
+		expect(matchesColor('red', [0, 0, 255, 1])).toBe(false)
+		expect(matchesColor([1, 2, 3, 1], [1, 2, 3, 0.5])).toBe(false)
 	})
 
 	it('holds at the tolerance and parts one step past it', () => {
-		expect(colorEqual([10, 20, 30, 1], [10.5, 20, 30, 1])).toBe(true)
-		expect(colorEqual([10, 20, 30, 1], [10.6, 20, 30, 1])).toBe(false)
+		expect(matchesColor([10, 20, 30, 1], [10.5, 20, 30, 1])).toBe(true)
+		expect(matchesColor([10, 20, 30, 1], [10.6, 20, 30, 1])).toBe(false)
 		// The alpha is scaled onto the same 0-255 range before it is compared, so half a channel step
 		// on the 0-1 scale is `0.5 / 255`.
-		expect(colorEqual([10, 20, 30, 1], [10, 20, 30, 1 - 0.5 / 255])).toBe(true)
-		expect(colorEqual([10, 20, 30, 1], [10, 20, 30, 1 - 0.6 / 255])).toBe(false)
+		expect(matchesColor([10, 20, 30, 1], [10, 20, 30, 1 - 0.5 / 255])).toBe(true)
+		expect(matchesColor([10, 20, 30, 1], [10, 20, 30, 1 - 0.6 / 255])).toBe(false)
 	})
 
 	it('reports false when either side names no readable color', () => {
-		expect(colorEqual('not-a-color', 'red')).toBe(false)
-		expect(colorEqual('red', 'not-a-color')).toBe(false)
-		expect(colorEqual('not-a-color', 'not-a-color')).toBe(false)
+		expect(matchesColor('not-a-color', 'red')).toBe(false)
+		expect(matchesColor('red', 'not-a-color')).toBe(false)
+		expect(matchesColor('not-a-color', 'not-a-color')).toBe(false)
 	})
 })
 
@@ -1463,10 +1463,10 @@ describe('readBackdrop', () => {
 	})
 })
 
-describe('contrast', () => {
+describe('readContrast', () => {
 	it('refuses a detached element whose foreground has no computed channels', () => {
 		const detached = document.createElement('p')
-		expect(() => contrast(detached)).toThrow('Computed foreground color is unavailable')
+		expect(() => readContrast(detached)).toThrow('Computed foreground color is unavailable')
 	})
 
 	it('measures a fully opaque stack from the element that paints, ignoring its ancestors', () => {
@@ -1475,8 +1475,8 @@ describe('contrast', () => {
 				'<div style="background: #000"><p style="background: #000; color: #fff">Ready</p></div>',
 		)
 		const [over, under] = container.querySelectorAll('p')
-		expect(contrast(requireValue(over))).toBeCloseTo(21, 5)
-		expect(contrast(requireValue(under))).toBeCloseTo(21, 5)
+		expect(readContrast(requireValue(over))).toBeCloseTo(21, 5)
+		expect(readContrast(requireValue(under))).toBeCloseTo(21, 5)
 	})
 
 	it('composites a translucent surface onto the opaque layer beneath it', () => {
@@ -1484,7 +1484,7 @@ describe('contrast', () => {
 			'<div style="background: #000">' +
 				'<p style="background: rgba(255, 255, 255, 0.5); color: #000">Ready</p></div>',
 		)
-		const composited = contrast(requireValue(container.querySelector('p')))
+		const composited = readContrast(requireValue(container.querySelector('p')))
 		// A 50% white tint over black paints mid-grey, so black text on it reads far below the 21
 		// an uncomposited reading of the same declaration would report.
 		expect(composited).toBeCloseTo(5.28, 1)
@@ -1493,7 +1493,7 @@ describe('contrast', () => {
 
 	it('refuses a stack where nothing from the element upwards paints a background', () => {
 		const container = buildFixture('<p style="color: #000">Ready</p>')
-		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
+		expect(() => readContrast(requireValue(container.querySelector('p')))).toThrow(
 			'Computed background color is unavailable',
 		)
 	})
@@ -1503,7 +1503,7 @@ describe('contrast', () => {
 			'<div style="background: rgba(255, 255, 255, 0.5)">' +
 				'<p style="color: #000">Ready</p></div>',
 		)
-		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
+		expect(() => readContrast(requireValue(container.querySelector('p')))).toThrow(
 			'Computed background color is unavailable',
 		)
 	})
@@ -1520,7 +1520,7 @@ describe('contrast', () => {
 				'<p style="color: #000">Ready</p>' +
 				'</div>'.repeat(depth),
 		)
-		expect(() => contrast(requireValue(container.querySelector('p')))).toThrow(
+		expect(() => readContrast(requireValue(container.querySelector('p')))).toThrow(
 			'Computed background color is unavailable',
 		)
 	})
@@ -1528,8 +1528,8 @@ describe('contrast', () => {
 	it('measures the same unpainted stack against a supplied floor instead of refusing it', () => {
 		const container = buildFixture('<p style="color: #000">Ready</p>')
 		const paragraph = requireValue(container.querySelector('p'))
-		expect(contrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
-		expect(contrast(paragraph, [0, 0, 0, 1])).toBe(1)
+		expect(readContrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
+		expect(readContrast(paragraph, [0, 0, 0, 1])).toBe(1)
 	})
 
 	it('composites a translucent stack onto the supplied floor', () => {
@@ -1540,30 +1540,30 @@ describe('contrast', () => {
 		const paragraph = requireValue(container.querySelector('p'))
 		// The same half-white tint resolves to white over the canvas and to mid grey over black, so
 		// the floor is what the answer turns on rather than an argument the measurement ignores.
-		expect(contrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
-		expect(contrast(paragraph, [0, 0, 0, 1])).toBeCloseTo(5.28, 1)
+		expect(readContrast(paragraph, CANVAS_COLOR)).toBeCloseTo(21, 5)
+		expect(readContrast(paragraph, [0, 0, 0, 1])).toBeCloseTo(5.28, 1)
 	})
 
 	it('refuses a detached element whichever floor it is handed', () => {
-		expect(() => contrast(document.createElement('p'), CANVAS_COLOR)).toThrow(
+		expect(() => readContrast(document.createElement('p'), CANVAS_COLOR)).toThrow(
 			'Computed foreground color is unavailable',
 		)
 	})
 
-	// guides/test.md → Patterns → "Measure what a reader sees", the `contrast` fence. A browser fence
+	// guides/test.md → Patterns → "Measure what a reader sees", the `readContrast` fence. A browser fence
 	// carries in this directory because the guides project runs with the browser disabled.
 	it('reads grey on white at 4.54, refuses it unpainted, and measures it on a named floor', () => {
 		const surface = buildFixture(
 			'<main style="background:#fff"><p style="color:#767676">Ready</p></main>',
 		)
 		const text = requireValue(surface.querySelector('p'))
-		expect(contrast(text).toFixed(2)).toBe('4.54')
-		expect(contrast(text) >= 4.5).toBe(true)
+		expect(readContrast(text).toFixed(2)).toBe('4.54')
+		expect(readContrast(text) >= 4.5).toBe(true)
 
 		const fragment = buildFixture('<p style="color:#767676">Ready</p>')
 		const orphan = requireValue(fragment.querySelector('p'))
-		expect(() => contrast(orphan)).toThrow('Computed background color is unavailable')
-		expect(contrast(orphan, CANVAS_COLOR).toFixed(2)).toBe('4.54')
+		expect(() => readContrast(orphan)).toThrow('Computed background color is unavailable')
+		expect(readContrast(orphan, CANVAS_COLOR).toFixed(2)).toBe('4.54')
 	})
 })
 
@@ -1600,7 +1600,7 @@ describe('readRing', () => {
 		buildFixture('<button type="button">Bare</button>')
 		const control = await traverseAccessible('Bare')
 		expect(control.matches(':focus-visible')).toBe(true)
-		expect(style(control, 'outline-style')).toBe('auto')
+		expect(readStyle(control, 'outline-style')).toBe('auto')
 		expect(readRing(control)).toBeUndefined()
 	})
 
@@ -1632,7 +1632,7 @@ describe('readRing', () => {
 				'<button type="button" class="journey-fill">Filled</button></div>',
 		)
 		const control = await traverseAccessible('Filled')
-		expect(style(control, 'background-color')).toBe('rgb(0, 0, 0)')
+		expect(readStyle(control, 'background-color')).toBe('rgb(0, 0, 0)')
 		// The resting fill is gone by the time focus is on the control, so nothing here is a reading
 		// about focus and the measurement says so rather than scoring the control's ordinary chrome.
 		expect(readRing(control)).toBeUndefined()
@@ -1900,10 +1900,10 @@ describe('extractOrphans', () => {
 	})
 })
 
-describe('style', () => {
+describe('readStyle', () => {
 	it('reads the browser resolved value of one property', () => {
 		const container = buildFixture('<p style="padding-left: 12px">Ready</p>')
-		expect(style(requireValue(container.querySelector('p')), 'padding-left')).toBe('12px')
+		expect(readStyle(requireValue(container.querySelector('p')), 'padding-left')).toBe('12px')
 	})
 
 	it('returns a custom property with no surrounding whitespace, however it was declared', () => {
@@ -1916,10 +1916,10 @@ describe('style', () => {
 			'<p class="journey-gapped" style="--journey-inline:  8px  ">Ready</p>',
 		)
 		const subject = requireValue(container.querySelector('p'))
-		expect(style(subject, '--journey-padded')).toBe('8px')
-		expect(style(subject, '--journey-substituted')).toBe('8px')
-		expect(style(subject, '--journey-fallback')).toBe('8px')
-		expect(style(subject, '--journey-inline')).toBe('8px')
+		expect(readStyle(subject, '--journey-padded')).toBe('8px')
+		expect(readStyle(subject, '--journey-substituted')).toBe('8px')
+		expect(readStyle(subject, '--journey-fallback')).toBe('8px')
+		expect(readStyle(subject, '--journey-inline')).toBe('8px')
 		// This assertion does not discriminate the trim on the engine the suite runs against. Chromium
 		// 1194 returns every one of these already trimmed — a padded declaration, a `var()`
 		// substitution, a fallback, and an inline style alike — so the same values come back with the
@@ -1932,33 +1932,37 @@ describe('style', () => {
 
 	it('keeps the whitespace inside a value', () => {
 		const container = buildFixture('<p style="--journey-shadow: 0 0 2px">Ready</p>')
-		expect(style(requireValue(container.querySelector('p')), '--journey-shadow')).toBe('0 0 2px')
+		expect(readStyle(requireValue(container.querySelector('p')), '--journey-shadow')).toBe(
+			'0 0 2px',
+		)
 	})
 
 	it('reads a property the element resolves none of as an empty string', () => {
 		const container = buildFixture('<p>Ready</p>')
-		expect(style(requireValue(container.querySelector('p')), '--journey-absent')).toBe('')
+		expect(readStyle(requireValue(container.querySelector('p')), '--journey-absent')).toBe('')
 	})
 })
 
-describe('token', () => {
+describe('readToken', () => {
 	it('reads a custom property with and without its leading dashes', () => {
 		const container = buildFixture('<p style="--journey-ink: rgb(1, 2, 3)">Ready</p>')
 		const subject = requireValue(container.querySelector('p'))
-		expect(token(subject, 'journey-ink')).toBe('rgb(1, 2, 3)')
-		expect(token(subject, '--journey-ink')).toBe('rgb(1, 2, 3)')
+		expect(readToken(subject, 'journey-ink')).toBe('rgb(1, 2, 3)')
+		expect(readToken(subject, '--journey-ink')).toBe('rgb(1, 2, 3)')
 	})
 
 	it('reads a token declared on an ancestor', () => {
 		const container = buildFixture('<div style="--journey-ink: rgb(4, 5, 6)"><p>Ready</p></div>')
-		expect(token(requireValue(container.querySelector('p')), 'journey-ink')).toBe('rgb(4, 5, 6)')
+		expect(readToken(requireValue(container.querySelector('p')), 'journey-ink')).toBe(
+			'rgb(4, 5, 6)',
+		)
 	})
 
 	it('reads a token nothing declares as an empty string', () => {
 		const container = buildFixture('<p>Ready</p>')
 		const subject = requireValue(container.querySelector('p'))
-		expect(token(subject, 'journey-undeclared')).toBe('')
-		expect(token(subject, '--journey-undeclared')).toBe('')
+		expect(readToken(subject, 'journey-undeclared')).toBe('')
+		expect(readToken(subject, '--journey-undeclared')).toBe('')
 	})
 
 	// guides/test.md → Patterns → "Read the tokens and colors a theme declares". A browser fence
@@ -1970,55 +1974,57 @@ describe('token', () => {
 		const container = buildFixture('<span class="card">Ledger</span>')
 		const card = requireValue(container.querySelector('span'))
 
-		expect(rootToken('ink')).toBe('rgb(1, 2, 3)')
-		expect(rootToken('--ink')).toBe('rgb(1, 2, 3)')
-		expect(token(card, 'ink')).toBe('rgb(1, 2, 3)')
-		expect(token(card, 'absent')).toBe('')
+		expect(readRootToken('ink')).toBe('rgb(1, 2, 3)')
+		expect(readRootToken('--ink')).toBe('rgb(1, 2, 3)')
+		expect(readToken(card, 'ink')).toBe('rgb(1, 2, 3)')
+		expect(readToken(card, 'absent')).toBe('')
 
-		expect(rgba('var(--ink)')).toStrictEqual([1, 2, 3, 1])
-		expect(rgba('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(rgba('not-a-color')).toBeUndefined()
-		expect(colorEqual('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
-		expect(colorEqual(token(card, 'ink'), 'rgb(1, 2, 3)')).toBe(true)
+		expect(resolveColor('var(--ink)')).toStrictEqual([1, 2, 3, 1])
+		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(resolveColor('not-a-color')).toBeUndefined()
+		expect(matchesColor('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
+		expect(matchesColor(readToken(card, 'ink'), 'rgb(1, 2, 3)')).toBe(true)
 
-		expect(pixels(card, 'padding-left')).toBe(12)
-		expect(style(card, 'width')).toBe('auto')
-		expect(pixels(card, 'width')).toBe(0)
+		expect(readPixels(card, 'padding-left')).toBe(12)
+		expect(readStyle(card, 'width')).toBe('auto')
+		expect(readPixels(card, 'width')).toBe(0)
 	})
 })
 
-describe('rootToken', () => {
+describe('readRootToken', () => {
 	it('reads a token the document declares, with and without its leading dashes', () => {
 		buildStylesheet(':root { --journey-surface: rgb(7, 8, 9) }')
-		expect(rootToken('journey-surface')).toBe('rgb(7, 8, 9)')
-		expect(rootToken('--journey-surface')).toBe('rgb(7, 8, 9)')
-		expect(rootToken('journey-surface')).toBe(token(document.documentElement, 'journey-surface'))
+		expect(readRootToken('journey-surface')).toBe('rgb(7, 8, 9)')
+		expect(readRootToken('--journey-surface')).toBe('rgb(7, 8, 9)')
+		expect(readRootToken('journey-surface')).toBe(
+			readToken(document.documentElement, 'journey-surface'),
+		)
 	})
 
 	it('reads a token the document does not declare as an empty string', () => {
-		expect(rootToken('journey-unthemed')).toBe('')
+		expect(readRootToken('journey-unthemed')).toBe('')
 	})
 })
 
-describe('pixels', () => {
+describe('readPixels', () => {
 	it('reads a resolved length as its number of pixels', () => {
 		const container = buildFixture('<p style="padding-left: 12px; margin-top: 0.5px">Ready</p>')
 		const subject = requireValue(container.querySelector('p'))
-		expect(pixels(subject, 'padding-left')).toBe(12)
-		expect(pixels(subject, 'margin-top')).toBe(0.5)
+		expect(readPixels(subject, 'padding-left')).toBe(12)
+		expect(readPixels(subject, 'margin-top')).toBe(0.5)
 	})
 
 	it('reads a custom property carrying a length', () => {
 		const container = buildFixture('<p style="--journey-gap: 8px">Ready</p>')
-		expect(pixels(requireValue(container.querySelector('p')), '--journey-gap')).toBe(8)
+		expect(readPixels(requireValue(container.querySelector('p')), '--journey-gap')).toBe(8)
 	})
 
 	it('reads an unparsable value as zero', () => {
 		const container = buildFixture('<p style="--journey-label: wide">Ready</p>')
 		const subject = requireValue(container.querySelector('p'))
-		expect(style(subject, '--journey-label')).toBe('wide')
-		expect(pixels(subject, '--journey-label')).toBe(0)
-		expect(pixels(subject, '--journey-absent')).toBe(0)
+		expect(readStyle(subject, '--journey-label')).toBe('wide')
+		expect(readPixels(subject, '--journey-label')).toBe(0)
+		expect(readPixels(subject, '--journey-absent')).toBe(0)
 	})
 })
 

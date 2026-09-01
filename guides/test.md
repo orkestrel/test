@@ -113,7 +113,7 @@ Imported from `@orkestrel/test`.
 | `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }` — one recorder per requested event name.                                                                                                                                                                                         |
 | `Success`                  | interface | `{ success: true, value }` — the produced arm of one outcome.                                                                                                                                                                                                                            |
 | `Failure`                  | interface | `{ success: false, error }` — the failed arm of one outcome.                                                                                                                                                                                                                             |
-| `Result`                   | type      | `Success<T> \| Failure<E>` — one operation's outcome, discriminated on `success`; `E` defaults to `Error`.                                                                                                                                                                               |
+| `Result`                   | type      | `Success<T> \| Failure<E>` — one operation's outcome, discriminated on `success`; `E` defaults to `Error`, where `@orkestrel/contract` publishes the same name defaulting to `unknown`; [Limits](#limits) rules that divergence.                                                         |
 | `SignalInterface`          | interface | `{ controller, signal, count }` — a real abort controller, its instrumented signal, and that signal's live abort-listener tally.                                                                                                                                                         |
 | `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]` — one abort listener an instrumented signal installed, as its tally holds it.                                                                                                                                                         |
 | `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy` — numbered resources, with a recorder for the ids created and one for the ids destroyed.                                                                                                                                              |
@@ -165,6 +165,11 @@ instead of propagating.
 | `flattenHeaders`      | function | `(init: HeadersSource) => Readonly<Record<string, string>>`                           | Normalizes any header initializer into a frozen plain record.     |
 | `resolveRoot`         | function | `(meta: ImportMeta) => URL`                                                           | The URL one directory above the calling module's own file.        |
 
+`dropRegistration` is the mechanic `createSignal`'s one-shot and scope-abort paths share, exported
+because both of them call it rather than because a consumer was expected to. Reaching it takes a
+`SignalRegistration` list of your own: `createSignal` hands back `SignalInterface`, whose members are
+`controller`, `signal`, and `count`, so nothing this package returns carries the list to pass.
+
 #### Factories
 
 | API                     | Kind     | Signature                                                                                                 | Summary                                                          |
@@ -188,13 +193,13 @@ journey verb. `build` creates a node, `mount` attaches one, and `render` does bo
 markup or from a tag and its classes; `clearStorage` takes nothing at all, and `removeDatabase`
 takes a database name. The predicates, the element readers, and the describers name a node the
 caller already has — `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`,
-`describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `style`, `token`, `pixels`,
-`contrast`, `readLayers`, `readBackdrop`, and `readRing` — and each reads that node rather than
-acting on a target it was handed. `captureFrame` and `place` take an element as well, and
-photographing one is a reading too: neither moves focus, dispatches an event, or changes what the
-element renders. `typeInput` and `commitInput` are the exception, and it stays narrow: they write
-into the field they are given, as the synthetic counterpart of `typeAccessible` for a component
-that listens for `input`. The color leaves, the cascade readers, the pane verbs, and the
+`describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`, `readToken`,
+`readPixels`, `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each reads that
+node rather than acting on a target it was handed. `captureFrame` and `place` take an element as
+well, and photographing one is a reading too: neither moves focus, dispatches an event, or changes
+what the element renders. `typeInput` and `commitInput` are the exception, and it stays narrow: they
+write into the field they are given, as the synthetic counterpart of `typeAccessible` for a
+component that listens for `input`. The color leaves, the cascade readers, the pane verbs, and the
 whole-document readers take a value or nothing at all, so they name no target either.
 
 #### Types
@@ -206,7 +211,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `FrameOptions`       | interface | `{ path, width, height, element? }` — where one frame is written, the viewport it is shot at, and what it shoots.                                   |
 | `CaptureVariant`     | interface | `{ name, width, height, apply? }` — one theme-and-viewport pair, and the document change it needs first.                                            |
 | `PortfolioOptions`   | interface | `{ states, variants, variant, directory, enabled? }` — the registry, the matrix, this run's variant, where it writes, and whether it writes at all. |
-| `PortfolioInterface` | interface | `{ variant, states, paths, files }` plus `place` — one run's registry and what it placed.                                                           |
+| `PortfolioInterface` | interface | `{ variant, placements, paths, files }` plus `place` — one run's registry and what it placed.                                                       |
 | `JournalStep`        | interface | `{ action, trigger, result }` — one scripted step and what the surface did about it.                                                                |
 | `JournalInterface`   | interface | `{ steps, output }` plus `start` / `stop` / `record` — one scenario's steps and the page's own output.                                              |
 
@@ -258,14 +263,14 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `clearStorage`          | function | `() => void`                                                                                            | Empties local and session storage together, for an `afterEach` hook that runs after a failed test too.                                             |
 | `removeDatabase`        | function | `(name: string) => Promise<void>`                                                                       | Deletes one IndexedDB database; rejects on an error and on a block.                                                                                |
 | `parseColor`            | function | `(value: string) => Color \| undefined`                                                                 | One computed `rgb()`, `rgba()`, or `color(srgb …)` value as straight channels; `undefined` for anything else.                                      |
-| `rgba`                  | function | `(value: string) => Color \| undefined`                                                                 | Any CSS color expression resolved to channels by the real cascade; `undefined` when the CSSOM refuses it.                                          |
-| `colorEqual`            | function | `(first: string \| Color, second: string \| Color) => boolean`                                          | Whether two colors render the same, within half a channel step.                                                                                    |
+| `resolveColor`          | function | `(value: string) => Color \| undefined`                                                                 | Any CSS color expression resolved to channels by the real cascade; `undefined` when the CSSOM refuses it.                                          |
+| `matchesColor`          | function | `(first: string \| Color, second: string \| Color) => boolean`                                          | Whether two colors render the same, within half a channel step.                                                                                    |
 | `blendColor`            | function | `(front: Color, back: Color) => Color`                                                                  | One color composited over another, always opaque.                                                                                                  |
 | `measureLuminance`      | function | `(color: Color) => number`                                                                              | One opaque color's WCAG relative luminance, from `0` to `1`.                                                                                       |
 | `measureContrast`       | function | `(front: Color, back: Color) => number`                                                                 | The WCAG 2.x ratio between two opaque colors, from `1` to `21`.                                                                                    |
 | `readLayers`            | function | `(element: Element) => readonly Color[]`                                                                | Every painted layer between the element and its first opaque ancestor, that ancestor last; an unpainted stack is empty.                            |
 | `readBackdrop`          | function | `(element: Element, floor: Color) => Color`                                                             | The opaque color behind an element, every translucent layer composited onto the required floor.                                                    |
-| `contrast`              | function | `(element: Element, floor?: Color) => number`                                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.                      |
+| `readContrast`          | function | `(element: Element, floor?: Color) => number`                                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.                      |
 | `readRing`              | function | `(control: Element, worn?: Element) => number \| undefined`                                             | The ratio the painted focus chrome reaches against its backdrop; `undefined` off `:focus-visible` or with no painted chrome.                       |
 | `stagePane`             | function | `(width: number, height: number) => Promise<void>`                                                      | Sets the viewport and renders the runner's tester pane at that size, unscaled.                                                                     |
 | `releasePane`           | function | `() => void`                                                                                            | Hands the staged pane back to the runner's own layout.                                                                                             |
@@ -276,10 +281,10 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `findKeyframes`         | function | `(name: string) => CSSKeyframesRule \| undefined`                                                       | The animation the cascade declares under an exact name.                                                                                            |
 | `readRows`              | function | `(root: ParentNode, selector: string) => readonly string[]`                                             | One line per matched element, built from its text nodes rather than from `textContent`.                                                            |
 | `extractOrphans`        | function | `(root: ParentNode, child: string, parent: string) => readonly string[]`                                | The markup of every element carrying the `child` class with no `parent` class above it.                                                            |
-| `style`                 | function | `(element: Element, property: string) => string`                                                        | One resolved CSS property, trimmed, read from the real browser.                                                                                    |
-| `token`                 | function | `(element: Element, name: string) => string`                                                            | One custom property off an element's resolved style, its dashes optional.                                                                          |
-| `rootToken`             | function | `(name: string) => string`                                                                              | The same reading taken against the document element.                                                                                               |
-| `pixels`                | function | `(element: Element, property: string) => number`                                                        | One resolved length as a number of pixels; `0` when it carries none.                                                                               |
+| `readStyle`             | function | `(element: Element, property: string) => string`                                                        | One resolved CSS property, trimmed, read from the real browser.                                                                                    |
+| `readToken`             | function | `(element: Element, name: string) => string`                                                            | One custom property off an element's resolved style, its dashes optional.                                                                          |
+| `readRootToken`         | function | `(name: string) => string`                                                                              | The same reading taken against the document element.                                                                                               |
+| `readPixels`            | function | `(element: Element, property: string) => number`                                                        | One resolved length as a number of pixels; `0` when it carries none.                                                                               |
 | `expandCaptures`        | function | `(states: readonly string[], variants: readonly CaptureVariant[]) => readonly string[]`                 | The registry times the variants, as `<state>--<variant>.png` names.                                                                                |
 
 #### Factories
@@ -347,23 +352,23 @@ another connection is still open, and a suite that swallowed it would leave the 
 the previous test's records through a database that reports itself deleted. The connection holding
 it open is the caller's to close, and [Voices](#voices) carries the message each refusal spells.
 
-`rgba` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks only the
-computed syntaxes a cascade hands back; `rgba` stages a probe element, hands the expression to the
-real cascade, and reads back what the engine computed — which is the only way a keyword, a hex
-triple, a `var()` reference, or a `color-mix()` becomes channels at all. The probe is mounted, so a
-`var()` reference resolves against the tokens `:root` declares, and it is removed in a `finally`.
-Refusal is the CSSOM's: an expression it will not parse returns `undefined`. A `var()` naming an
-undeclared custom property is not refused, and [Limits](#limits) states what that costs.
+`resolveColor` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks
+only the computed syntaxes a cascade hands back; `resolveColor` stages a probe element, hands the
+expression to the real cascade, and reads back what the engine computed — which is the only way a
+keyword, a hex triple, a `var()` reference, or a `color-mix()` becomes channels at all. The probe is
+mounted, so a `var()` reference resolves against the tokens `:root` declares, and it is removed in a
+`finally`. Refusal is the CSSOM's: an expression it will not parse returns `undefined`. A `var()`
+naming an undeclared custom property is not refused, and [Limits](#limits) states what that costs.
 
-`colorEqual` compares two colors as a browser renders them. Each string side resolves through
-`rgba`, so a keyword, a token reference, and the `rgb()` an engine computes for either compare equal
-without a test converting anything first. The tolerance is half a channel step on the 0–255 scale,
-and the alpha is scaled onto that same range before it is compared, so one number covers every
-channel. A side that resolves to nothing makes the answer `false` rather than a throw, because this
-is a predicate.
+`matchesColor` compares two colors as a browser renders them. Each string side resolves through
+`resolveColor`, so a keyword, a token reference, and the `rgb()` an engine computes for either
+compare equal without a test converting anything first. The tolerance is half a channel step on the
+0–255 scale, and the alpha is scaled onto that same range before it is compared, so one number
+covers every channel. A side that resolves to nothing makes the answer `false` rather than a throw,
+because this is a predicate.
 
-`contrast` resolves a transparent or translucent background through the element's ancestors: every
-painted layer from the element up to the first opaque one composites top-over-bottom onto that
+`readContrast` resolves a transparent or translucent background through the element's ancestors:
+every painted layer from the element up to the first opaque one composites top-over-bottom onto that
 opaque base, so a 3% surface tint reads as a tint over what shows through it rather than as a
 full-strength paint. A translucent foreground then resolves against that effective background before
 luminance is measured. With `floor` omitted it refuses every stack whose walk reaches no fully
@@ -414,19 +419,19 @@ selector is compound, so `findRule` matches its argument as a substring of the w
 `findRule('.card')` finds `.card`, `.card:hover`, and `.panel > .card` alike, and more of the
 selector narrows it. An animation name is one atom, so `findKeyframes` matches it exactly. Each
 answers what a stylesheet declares rather than what an element resolves to, and a rule either one
-finds may be overridden by another — assert on `style` where the rendered result is the subject.
+finds may be overridden by another — assert on `readStyle` where the rendered result is the subject.
 
-`token`, `rootToken`, and `pixels` are `style` with the question narrowed. `token` reads a custom
-property and accepts the name with or without its leading dashes, because a token is spoken about
-both ways — `--surface` in a stylesheet and `surface` in prose. An absent token reads as `''`, which
-is what the CSSOM returns and is indistinguishable from a token declared empty, so assert on the
-value you expect rather than on presence. Resolution is inheritance: a token declared on `:root`
-reads from any mounted descendant, and from an unmounted element it reads as `''`. `rootToken` is
-that reading taken against `document.documentElement`, which is where a theme declares its tokens
-and where a `[data-theme]` switch retunes them. `pixels` reads the leading number of a resolved
-length and answers `0` for a value carrying none, because `'auto'`, `'none'`, and `''` each
-contribute no pixels to what a reader sees; read the text with `style` where that distinction
-matters.
+`readToken`, `readRootToken`, and `readPixels` are `readStyle` with the question narrowed.
+`readToken` reads a custom property and accepts the name with or without its leading dashes, because
+a token is spoken about both ways — `--surface` in a stylesheet and `surface` in prose. An absent
+token reads as `''`, which is what the CSSOM returns and is indistinguishable from a token declared
+empty, so assert on the value you expect rather than on presence. Resolution is inheritance: a token
+declared on `:root` reads from any mounted descendant, and from an unmounted element it reads as
+`''`. `readRootToken` is that reading taken against `document.documentElement`, which is where a
+theme declares its tokens and where a `[data-theme]` switch retunes them. `readPixels` reads the
+leading number of a resolved length and answers `0` for a value carrying none, because `'auto'`,
+`'none'`, and `''` each contribute no pixels to what a reader sees; read the text with `readStyle`
+where that distinction matters.
 
 `stagePane` unscales the runner's tester and lifts it to the window's origin, because a frame shot
 through the runner's fitting scale is a thumbnail of the surface. That couples it to Vitest's own
@@ -802,8 +807,8 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Named region "<name>" is ambiguous across <n> elements`                              | `readPerception`        |
 | `Named region "<name>" could not be resolved`                                         | `readPerception`        |
 | `Interactive target "<name>" does not carry a value`                                  | `readValue`             |
-| `Computed foreground color is unavailable`                                            | `contrast`              |
-| `Computed background color is unavailable`                                            | `contrast`              |
+| `Computed foreground color is unavailable`                                            | `readContrast`          |
+| `Computed background color is unavailable`                                            | `readContrast`          |
 | `Tester pane is unavailable for a capture`                                            | `stagePane`             |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                 | `stagePane`             |
 | `Capture frame was written to <path> where <path> was asked for`                      | `captureFrame`          |
@@ -1036,23 +1041,22 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     both, `clearStorage` takes nothing at all, and `removeDatabase` takes a database name. The
     predicates, the element readers, and the describers do take a node —
     `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`, `describeTree`,
-    `describeFocus`, `extractOrphans`, `readRows`, `style`, `token`, `pixels`, `contrast`,
-    `readLayers`, `readBackdrop`, and `readRing` — and each is a reader of a node the caller already
-    has rather than a verb that acts on a target. `captureFrame` and `place` take one as the subject
-    of a photograph, which is a reading too: neither moves focus, dispatches an event, nor changes
-    what the element renders. `typeInput` and `commitInput` are the one pair that acts on the
-    element it is handed, and the exception is deliberately narrow: they are the synthetic
-    counterpart of `typeAccessible`, for a component that listens for `input` and a test that
-    already holds the field. Drive the field by name wherever the keystrokes are part of what the
-    journey claims.
-    `readRing` is the case that makes the split explicit. It measures the focus chrome a browser
-    painted and never brings the focus about, so a journey reaches the control through
-    `traverseAccessible` or `pressKeys` and then measures what landed.
-    The whole environment imports `vitest/browser` and DOM globals and nothing else — no `src/core`
-    import, no framework, no `node:*`, and no `import.meta.env`, so whether a run writes captures is
-    the consumer's decision through `PortfolioOptions.enabled` rather than an environment variable
-    this package reads. `vitest` is a peer dependency, so the provider the layer drives is the one
-    the consumer already installed, and rule 9's empty `dependencies` is untouched.
+    `describeFocus`, `extractOrphans`, `readRows`, `readStyle`, `readToken`, `readPixels`,
+    `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each is a reader of a node
+    the caller already has rather than a verb that acts on a target. `captureFrame` and `place` take
+    one as the subject of a photograph, which is a reading too: neither moves focus, dispatches an
+    event, nor changes what the element renders. `typeInput` and `commitInput` are the one pair that
+    acts on the element it is handed, and the exception is deliberately narrow: they are the
+    synthetic counterpart of `typeAccessible`, for a component that listens for `input` and a test
+    that already holds the field. Drive the field by name wherever the keystrokes are part of what
+    the journey claims. `readRing` is the case that makes the split explicit. It measures the focus
+    chrome a browser painted and never brings the focus about, so a journey reaches the control
+    through `traverseAccessible` or `pressKeys` and then measures what landed. The whole environment
+    imports `vitest/browser` and DOM globals and nothing else — no `src/core` import, no framework,
+    no `node:*`, and no `import.meta.env`, so whether a run writes captures is the consumer's
+    decision through `PortfolioOptions.enabled` rather than an environment variable this package
+    reads. `vitest` is a peer dependency, so the provider the layer drives is the one the consumer
+    already installed, and rule 9's empty `dependencies` is untouched.
 14. **The wait family polls only where nothing publishes an event.** The no-polling architecture law
     governs a product's idle wakeup: a running system parks on the event or the abort signal that
     fires. A test instrument is the other case. It waits on a fact another process produces — a file
@@ -1212,6 +1216,7 @@ or when a consumer appears the ruling did not consider.
 | A reserve-then-release port picker                                                               | Refused | It binds a port, closes it, and hands the number to a child that binds it again, and the window between that close and that rebind is a race another process on the host can win. Have the child bind `0` and report back the port it was given; `createLoopback` does exactly that for a server the test owns itself.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | An abort-signal wait — `waitForAbort`                                                            | Ships   | It ships as `waitForAbort`. Every bounded member still takes `WaitOptions.signal` and rejects with the signal's own reason, so a bounded wait needs nothing here; this answers the other case, where the abort is itself the fact the test waits for. It parks on a one-shot listener with no timer and no budget, so a signal that never aborts is the caller's own deadlock rather than a timeout this could name.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Abort-signal instrumentation                                                                     | Ships   | It ships as `createSignal`. A recorder handed to `addEventListener('abort', …)` still records what one listener heard; what no recorder can answer is how many listeners stand on the signal at this moment, which is the question a leak asks. The instrumented signal counts its own abort registrations, keyed by the original callback and the capture mode, so a helper that removes what it added proves the removal. A registration leaves the tally on removal, on a one-shot delivery, and when a signal scoping it aborts, which is what makes the reading a live tally rather than an install count.                                                                                                                                                                                                                                                   |
+| An outcome triple — a produced arm, a failed arm, and their union                                | Ships   | It ships as `Success`, `Failure`, and `Result`. The rule governing it permits a local declaration only where no declared dependency already carries one, and this package declares no runtime dependency at all, so it cannot import `@orkestrel/contract`'s. That buys a divergence a consumer holding both packages meets: the two `Success<T>` declarations carry identical members and so do the two `Failure<E>` declarations, while `@orkestrel/test`'s `Result<T, E = Error>` defaults its failure type to `Error` and `@orkestrel/contract`'s `Result<T, E = unknown>` leaves it `unknown`. No signature published here returns one — `retryUntil` reads the type internally — so a workspace holding both packages takes its outcome from `@orkestrel/contract` and reaches for this one only where the value came from this package.                    |
 
 `ScratchInterface`'s own members were ruled the same way, and coherence rather than demand decided
 them. `ensure` ships because it is the one member that produces an empty directory — `write` always
@@ -1235,10 +1240,10 @@ peer, protocol fixture, and domain builder stays in the package that owns it.
 A shipped helper can still decline the question it looks like it answers. Each bound here belongs to
 the helper rather than to the host, and each names what to reach for instead.
 
-- **`rgba` resolves an undeclared token to the inherited color.** A `var()` naming a custom property
-  nothing declares is not a parse failure: the cascade accepts it and computes the inherited color,
-  so `rgba('var(--absent)')` hands back channels rather than `undefined`. Read `token` or `rootToken`
-  where a missing token is the subject.
+- **`resolveColor` resolves an undeclared token to the inherited color.** A `var()` naming a custom
+  property nothing declares is not a parse failure: the cascade accepts it and computes the
+  inherited color, so `resolveColor('var(--absent)')` hands back channels rather than `undefined`.
+  Read `readToken` or `readRootToken` where a missing token is the subject.
 - **`createLoopback` cannot take back an upgraded socket.** A server that claims an upgrade keeps
   that connection, detached from the server itself, so `destroy()`'s `closeAllConnections` never
   reaches it and the close waits on it. A fixture that upgrades records the socket its `upgrade`
@@ -1257,10 +1262,10 @@ the helper rather than to the host, and each names what to reach for instead.
   neither an object nor a function before it reads anything, and a getter that throws on an accepted
   target hands that throw straight to the caller. Wrap the call in `captureError` where a hostile
   getter is the subject.
-- **`pixels` reports a measured contribution rather than a parsed length.** A resolved value carrying
-  no leading number — `'auto'`, `'none'`, `''` — reads as `0`, because none of them contributes a
-  pixel to what a reader sees, so a caller cannot tell an unparsable value from a genuine zero. Read
-  the text with `style` where that distinction is the subject.
+- **`readPixels` reports a measured contribution rather than a parsed length.** A resolved value
+  carrying no leading number — `'auto'`, `'none'`, `''` — reads as `0`, because none of them
+  contributes a pixel to what a reader sees, so a caller cannot tell an unparsable value from a
+  genuine zero. Read the text with `readStyle` where that distinction is the subject.
 
 ## Patterns
 
@@ -2021,11 +2026,11 @@ teardown.add(() => heading.remove())
 ```
 
 Mount before measuring. An unmounted element inherits no custom property, resolves against no rule,
-and lays out no box, so `style`, `token`, and `pixels` each answer with the initial value — which
-reads as a styling defect rather than as a detached node — and `contrast` refuses the element
-outright, because its computed foreground color does not exist. `build` sets its `text` as text
-rather than as markup, so a `<` in it stays a `<`; write the fixture as markup where the fixture is
-markup.
+and lays out no box, so `readStyle`, `readToken`, and `readPixels` each answer with the initial
+value — which reads as a styling defect rather than as a detached node — and `readContrast` refuses
+the element outright, because its computed foreground color does not exist. `build` sets its `text`
+as text rather than as markup, so a `<` in it stays a `<`; write the fixture as markup where the
+fixture is markup.
 
 ### Drive an interface the way a person does
 
@@ -2090,8 +2095,8 @@ the door for all of those.
 
 ### Measure what a reader sees
 
-`contrast` measures the ratio between an element's rendered text and what is actually behind it, not
-between the two colors its own rule declares. It walks the ancestors from the element up to the
+`readContrast` measures the ratio between an element's rendered text and what is actually behind it,
+not between the two colors its own rule declares. It walks the ancestors from the element up to the
 first opaque layer and composites them top over bottom, so a 3% surface tint reads as a tint over
 what shows through it. A translucent foreground then resolves against that effective background
 before luminance is measured.
@@ -2107,21 +2112,21 @@ knowing.
 
 ```ts
 import { requireValue } from '@orkestrel/test'
-import { CANVAS_COLOR, contrast, render } from '@orkestrel/test/browser'
+import { CANVAS_COLOR, readContrast, render } from '@orkestrel/test/browser'
 
 const surface = render('<main style="background:#fff"><p style="color:#767676">Ready</p></main>')
 const text = requireValue(surface.querySelector('p'))
 
-contrast(text).toFixed(2) // '4.54' — measured against the white the ancestor really paints
-contrast(text) >= 4.5 // true — the WCAG 2.x floor for body text
+readContrast(text).toFixed(2) // '4.54' — measured against the white the ancestor really paints
+readContrast(text) >= 4.5 // true — the WCAG 2.x floor for body text
 
 // A fragment with no painted ancestor is refused rather than assumed.
 const fragment = render('<p style="color:#767676">Ready</p>')
 const orphan = requireValue(fragment.querySelector('p'))
-contrast(orphan) // throws Error: Computed background color is unavailable
+readContrast(orphan) // throws Error: Computed background color is unavailable
 
 // Name the surface it is really on, and the same stack measures.
-contrast(orphan, CANVAS_COLOR).toFixed(2) // '4.54'
+readContrast(orphan, CANVAS_COLOR).toFixed(2) // '4.54'
 ```
 
 `readRing` is the same reading for focus chrome, and it reads only: focus arrives through
@@ -2143,36 +2148,43 @@ readRing(focused, requireValue(document.querySelector('label[for="evaluate"]')))
 
 ### Read the tokens and colors a theme declares
 
-`token` and `rootToken` read what the cascade resolved, and `rgba` resolves any color expression by
-asking the same browser. In the following fence the document declares `--ink: rgb(1, 2, 3)` on `:root`,
-`.card` sets `padding-left: 12px`, and `card` is a mounted inline element carrying that class, so
-its `width` resolves to `auto`.
+`readToken` and `readRootToken` read what the cascade resolved, and `resolveColor` resolves any
+color expression by asking the same browser. In the following fence the document declares
+`--ink: rgb(1, 2, 3)` on `:root`, `.card` sets `padding-left: 12px`, and `card` is a mounted inline
+element carrying that class, so its `width` resolves to `auto`.
 
 ```ts
-import { colorEqual, pixels, rgba, rootToken, token } from '@orkestrel/test/browser'
+import {
+	matchesColor,
+	readPixels,
+	readRootToken,
+	readToken,
+	resolveColor,
+} from '@orkestrel/test/browser'
 
-rootToken('ink') // 'rgb(1, 2, 3)'
-rootToken('--ink') // 'rgb(1, 2, 3)' — the dashes are optional
-token(card, 'ink') // 'rgb(1, 2, 3)' — inherited from `:root` by a mounted element
-token(card, 'absent') // '' — an undeclared token reads as a token declared empty does
+readRootToken('ink') // 'rgb(1, 2, 3)'
+readRootToken('--ink') // 'rgb(1, 2, 3)' — the dashes are optional
+readToken(card, 'ink') // 'rgb(1, 2, 3)' — inherited from `:root` by a mounted element
+readToken(card, 'absent') // '' — an undeclared token reads as a token declared empty does
 
-rgba('var(--ink)') // [1, 2, 3, 1]
-rgba('rebeccapurple') // [102, 51, 153, 1]
-rgba('not-a-color') // undefined — the CSSOM refused the expression
-colorEqual('rebeccapurple', 'rgb(102, 51, 153)') // true
-colorEqual(token(card, 'ink'), 'rgb(1, 2, 3)') // true
+resolveColor('var(--ink)') // [1, 2, 3, 1]
+resolveColor('rebeccapurple') // [102, 51, 153, 1]
+resolveColor('not-a-color') // undefined — the CSSOM refused the expression
+matchesColor('rebeccapurple', 'rgb(102, 51, 153)') // true
+matchesColor(readToken(card, 'ink'), 'rgb(1, 2, 3)') // true
 
-pixels(card, 'padding-left') // 12
-pixels(card, 'width') // 0 — a width resolving to `auto` carries no number
+readPixels(card, 'padding-left') // 12
+readPixels(card, 'width') // 0 — a width resolving to `auto` carries no number
 ```
 
 Assert on the value rather than on presence. An absent token and one declared empty both read as
-`''`, and `rgba` resolves a `var()` naming an undeclared property to the inherited color rather than
-refusing it, so a test that means to catch a missing token compares what `token` returned.
+`''`, and `resolveColor` resolves a `var()` naming an undeclared property to the inherited color
+rather than refusing it, so a test that means to catch a missing token compares what `readToken`
+returned.
 
 ### Find a rule in the cascade
 
-Assert on the stylesheet where the stylesheet is the subject, and on `style` where the rendered
+Assert on the stylesheet where the stylesheet is the subject, and on `readStyle` where the rendered
 result is. In the following fence the cascade declares `.card { padding: 8px }` inside a media query, and
 an animation named `slide` carrying a `from` stop and a `to` stop.
 
@@ -2196,7 +2208,8 @@ earlier one. That descent reaches a grouping rule and nothing else, and a `@keyf
 one: the last line of the fence finds the `@keyframes` rule itself because the walk collects it where
 it sits, and the keyframe stops inside it never appear in that list, which is why `findKeyframes` is
 the door to them. A rule either finder returns may still be overridden by another, which is why a
-claim about what a reader sees is asserted through `style`, `token`, `pixels`, or `contrast` instead.
+claim about what a reader sees is asserted through `readStyle`, `readToken`, `readPixels`, or
+`readContrast` instead.
 
 ### Remove an IndexedDB database
 
@@ -2399,35 +2412,33 @@ Each entry names the rules its file proves. The test names carry the cases.
   named by its tag, and a subtree with nothing reachable. `waitForFrame` takes the frame callbacks
   already queued, `render` takes parsed fixture markup attached to the document, and `clearStorage`
   takes local and session storage emptied together.
-  `contrast` takes a translucent surface composited onto the opaque layer beneath it, a fully opaque
-  stack over different ancestors as the control from outside that population, a stack where
+  `readContrast` takes a translucent surface composited onto the opaque layer beneath it, a fully
+  opaque stack over different ancestors as the control from outside that population, a stack where
   nothing paints and one whose every painted layer is translucent, a stack 64 translucent layers
   deep whose composite has rounded to the canvas's own channels, a detached element whose computed
   foreground does not exist, and the same unpainted and translucent stacks measured against a
-  supplied floor instead of refused. The color
-  leaves beneath it take their own inputs: `parseColor` across the legacy and modern syntaxes, a
-  refused keyword, hex triple, empty value, and unsupported color space, and — as the control the
-  literals cannot supply — what this browser actually computes for a keyword and for a
-  `color-mix()`. `blendColor`, `measureLuminance`, and `measureContrast` take their identities,
-  their ordering, and the symmetry of the ratio. `readLayers` takes an unpainted stack, a
-  transparent layer left out of a painted one, an opaque layer that ends the walk, and the deep
-  stack whose last layer stays translucent while its composite no longer separates the floors;
-  `readBackdrop` takes the floor returned by identity, a translucent stack composited onto it, and
-  an opaque layer that ends the walk.
-  `readRing` takes a painted outline and a painted box-shadow reached through `traverseAccessible`,
-  a control that is not focused, a focused control left the browser's own ring, a focus style that
-  only repaints the control's fill, and a `worn` element whose reading separates from the control's
-  own. `stagePane` takes the marked pane, the tester
-  rendered at the viewport it was given, and a release that runs twice without complaining;
-  `captureFrame` takes a real file written, read back, and matched, with a planted file as the
-  comparison's negative control, one element shot rather than the page, and a pane pinned to the
-  wrong size by a rule of higher specificity, which is the refusal that also proves the release runs
-  on the failing path. `readCascade` takes class tokens collected from plain and grouped rules and
-  only real ones; `readRows` takes a row joined from its own text nodes rather than from run-together
-  content, and an empty list; `extractOrphans` takes a child class rendered outside its container
-  with a nested one left alone, nothing reported when every child sits inside one, and, as the
-  control, an element answering the invariant by carrying both classes itself; `style` takes the
-  browser's resolved value for one property. `expandCaptures` takes the exact expected file list
+  supplied floor instead of refused. The color leaves beneath it take their own inputs: `parseColor`
+  across the legacy and modern syntaxes, a refused keyword, hex triple, empty value, and unsupported
+  color space, and — as the control the literals cannot supply — what this browser actually computes
+  for a keyword and for a `color-mix()`. `blendColor`, `measureLuminance`, and `measureContrast`
+  take their identities, their ordering, and the symmetry of the ratio. `readLayers` takes an
+  unpainted stack, a transparent layer left out of a painted one, an opaque layer that ends the
+  walk, and the deep stack whose last layer stays translucent while its composite no longer
+  separates the floors; `readBackdrop` takes the floor returned by identity, a translucent stack
+  composited onto it, and an opaque layer that ends the walk. `readRing` takes a painted outline and
+  a painted box-shadow reached through `traverseAccessible`, a control that is not focused, a
+  focused control left the browser's own ring, a focus style that only repaints the control's fill,
+  and a `worn` element whose reading separates from the control's own. `stagePane` takes the marked
+  pane, the tester rendered at the viewport it was given, and a release that runs twice without
+  complaining; `captureFrame` takes a real file written, read back, and matched, with a planted file
+  as the comparison's negative control, one element shot rather than the page, and a pane pinned to
+  the wrong size by a rule of higher specificity, which is the refusal that also proves the release
+  runs on the failing path. `readCascade` takes class tokens collected from plain and grouped rules
+  and only real ones; `readRows` takes a row joined from its own text nodes rather than from
+  run-together content, and an empty list; `extractOrphans` takes a child class rendered outside its
+  container with a nested one left alone, nothing reported when every child sits inside one, and, as
+  the control, an element answering the invariant by carrying both classes itself; `readStyle` takes
+  the browser's resolved value for one property. `expandCaptures` takes the exact expected file list
   rather than a count, and both empty inputs.
 - [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts) — rule 17, and the
   portfolio's refusals, its disabled gate, and its writes. Creation refuses an unregistered variant
