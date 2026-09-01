@@ -1471,7 +1471,7 @@ export function readRules(): readonly CSSRule[] {
  * @remarks
  * This proves a declaration exists in the cascade at all, which is a different question from what an
  * element resolves to: {@link readStyle} reads the winner, and a rule this finds may be overridden by
- * another. Assert on this where the subject is the stylesheet, and on `style` where the subject is
+ * another. Assert on this where the subject is the stylesheet, and on `readStyle` where the subject is
  * the rendered result.
  *
  * The match is a substring, so `findRule('.card')` finds `.card`, `.card:hover`, and

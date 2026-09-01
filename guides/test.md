@@ -453,7 +453,7 @@ naming a combination it did not render. A portfolio left un-`enabled` is the ord
 resizes nothing, writes nothing, and records nothing, so a journey calls it unconditionally. An
 enabled `place` applies the variant and writes `<directory>/<state>--<variant>.png` through
 `captureFrame`, so it stages the pane at the variant's size, verifies the written bytes, and records
-only a path that read back as this run's own frame. `states` and `paths` hand out snapshots, so a
+only a path that read back as this run's own frame. `placements` and `paths` hand out snapshots, so a
 list read before a placement stays what it was.
 
 `createJournal` records rather than replaces. Every intercepted console call is forwarded to the
