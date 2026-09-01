@@ -847,7 +847,7 @@ export function build<K extends keyof HTMLElementTagNameMap>(
  * @remarks
  * What this buys is the composition, not the attachment: the `append` method returns `void`, and
  * this hands the element back, so it fits where an expression is expected. The {@link render} helper
- * returns its fixture through it, and the {@link resolveColor} helper probes through
+ * returns its fixture through it, and the {@link parseCSSColor} helper probes through
  * `mount(build('span'))`. A bare `append` call breaks each of those call sites.
  *
  * Being connected is what the attachment then buys: `getComputedStyle` resolves against the shipped
@@ -1085,11 +1085,11 @@ export function parseColor(value: string): Color | undefined {
  *
  * @example
  * ```ts
- * resolveColor('rebeccapurple') // [102, 51, 153, 1]
- * resolveColor('not-a-color') // undefined
+ * parseCSSColor('rebeccapurple') // [102, 51, 153, 1]
+ * parseCSSColor('not-a-color') // undefined
  * ```
  */
-export function resolveColor(value: string): Color | undefined {
+export function parseCSSColor(value: string): Color | undefined {
 	const probe = mount(build('span'))
 	try {
 		probe.style.color = value
@@ -1109,7 +1109,7 @@ export function resolveColor(value: string): Color | undefined {
  * including when either side names no readable color.
  *
  * @remarks
- * Each string side is resolved through {@link resolveColor}, so a keyword, a token reference, and the
+ * Each string side is resolved through {@link parseCSSColor}, so a keyword, a token reference, and the
  * `rgb()` the engine computes for either of them compare equal without a test converting anything
  * first. A side that resolves to nothing makes the answer `false` rather than a throw, because this
  * is a predicate.
@@ -1126,8 +1126,8 @@ export function resolveColor(value: string): Color | undefined {
  * ```
  */
 export function matchesColor(first: string | Color, second: string | Color): boolean {
-	const left = typeof first === 'string' ? resolveColor(first) : first
-	const right = typeof second === 'string' ? resolveColor(second) : second
+	const left = typeof first === 'string' ? parseCSSColor(first) : first
+	const right = typeof second === 'string' ? parseCSSColor(second) : second
 	if (left === undefined || right === undefined) return false
 	const tolerance = 0.5
 	const [leftRed, leftGreen, leftBlue, leftAlpha] = left

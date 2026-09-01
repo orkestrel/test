@@ -52,7 +52,7 @@ import {
 	removeDatabase,
 	render,
 	resolveAccessible,
-	resolveColor,
+	parseCSSColor,
 	resolveRendered,
 	stagePane,
 	traverseAccessible,
@@ -1285,31 +1285,31 @@ describe('parseColor', () => {
 	})
 })
 
-describe('resolveColor', () => {
+describe('parseCSSColor', () => {
 	it('resolves the syntaxes parseColor refuses, by asking the browser', () => {
 		// Each of these returns `undefined` from `parseColor`, which is what the live resolver is for.
 		expect(parseColor('rebeccapurple')).toBeUndefined()
 		expect(parseColor('#ff0000')).toBeUndefined()
-		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(resolveColor('#ff0000')).toStrictEqual([255, 0, 0, 1])
-		expect(resolveColor('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
+		expect(parseCSSColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('#ff0000')).toStrictEqual([255, 0, 0, 1])
+		expect(parseCSSColor('rgb(1, 2, 3)')).toStrictEqual([1, 2, 3, 1])
 	})
 
 	it('resolves a var() reference against the tokens the document declares', () => {
 		buildStylesheet(':root { --journey-ink: rgb(10, 20, 30) }')
-		expect(resolveColor('var(--journey-ink)')).toStrictEqual([10, 20, 30, 1])
+		expect(parseCSSColor('var(--journey-ink)')).toStrictEqual([10, 20, 30, 1])
 	})
 
 	it('refuses an expression the CSSOM will not parse', () => {
-		expect(resolveColor('not-a-color')).toBeUndefined()
-		expect(resolveColor('')).toBeUndefined()
-		expect(resolveColor('12px')).toBeUndefined()
+		expect(parseCSSColor('not-a-color')).toBeUndefined()
+		expect(parseCSSColor('')).toBeUndefined()
+		expect(parseCSSColor('12px')).toBeUndefined()
 	})
 
 	it('leaves no probe element behind, on the refusing path as well as the reading one', () => {
 		const before = document.body.childElementCount
-		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(resolveColor('not-a-color')).toBeUndefined()
+		expect(parseCSSColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('not-a-color')).toBeUndefined()
 		expect(document.body.childElementCount).toBe(before)
 		expect(document.body.querySelector(':scope > span')).toBeNull()
 	})
@@ -1979,9 +1979,9 @@ describe('readToken', () => {
 		expect(readToken(card, 'ink')).toBe('rgb(1, 2, 3)')
 		expect(readToken(card, 'absent')).toBe('')
 
-		expect(resolveColor('var(--ink)')).toStrictEqual([1, 2, 3, 1])
-		expect(resolveColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
-		expect(resolveColor('not-a-color')).toBeUndefined()
+		expect(parseCSSColor('var(--ink)')).toStrictEqual([1, 2, 3, 1])
+		expect(parseCSSColor('rebeccapurple')).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('not-a-color')).toBeUndefined()
 		expect(matchesColor('rebeccapurple', 'rgb(102, 51, 153)')).toBe(true)
 		expect(matchesColor(readToken(card, 'ink'), 'rgb(1, 2, 3)')).toBe(true)
 

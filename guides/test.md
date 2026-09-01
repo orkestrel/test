@@ -263,7 +263,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `clearStorage`          | function | `() => void`                                                                                            | Empties local and session storage together, for an `afterEach` hook that runs after a failed test too.                                             |
 | `removeDatabase`        | function | `(name: string) => Promise<void>`                                                                       | Deletes one IndexedDB database; rejects on an error and on a block.                                                                                |
 | `parseColor`            | function | `(value: string) => Color \| undefined`                                                                 | One computed `rgb()`, `rgba()`, or `color(srgb …)` value as straight channels; `undefined` for anything else.                                      |
-| `resolveColor`          | function | `(value: string) => Color \| undefined`                                                                 | Any CSS color expression resolved to channels by the real cascade; `undefined` when the CSSOM refuses it.                                          |
+| `parseCSSColor`         | function | `(value: string) => Color \| undefined`                                                                 | Any CSS color expression resolved to channels by the real cascade; `undefined` when the CSSOM refuses it.                                          |
 | `matchesColor`          | function | `(first: string \| Color, second: string \| Color) => boolean`                                          | Whether two colors render the same, within half a channel step.                                                                                    |
 | `blendColor`            | function | `(front: Color, back: Color) => Color`                                                                  | One color composited over another, always opaque.                                                                                                  |
 | `measureLuminance`      | function | `(color: Color) => number`                                                                              | One opaque color's WCAG relative luminance, from `0` to `1`.                                                                                       |
@@ -352,8 +352,8 @@ another connection is still open, and a suite that swallowed it would leave the 
 the previous test's records through a database that reports itself deleted. The connection holding
 it open is the caller's to close, and [Voices](#voices) carries the message each refusal spells.
 
-`resolveColor` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks
-only the computed syntaxes a cascade hands back; `resolveColor` stages a probe element, hands the
+`parseCSSColor` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks
+only the computed syntaxes a cascade hands back; `parseCSSColor` stages a probe element, hands the
 expression to the real cascade, and reads back what the engine computed — which is the only way a
 keyword, a hex triple, a `var()` reference, or a `color-mix()` becomes channels at all. The probe is
 mounted, so a `var()` reference resolves against the tokens `:root` declares, and it is removed in a
@@ -361,7 +361,7 @@ mounted, so a `var()` reference resolves against the tokens `:root` declares, an
 naming an undeclared custom property is not refused, and [Limits](#limits) states what that costs.
 
 `matchesColor` compares two colors as a browser renders them. Each string side resolves through
-`resolveColor`, so a keyword, a token reference, and the `rgb()` an engine computes for either
+`parseCSSColor`, so a keyword, a token reference, and the `rgb()` an engine computes for either
 compare equal without a test converting anything first. The tolerance is half a channel step on the
 0–255 scale, and the alpha is scaled onto that same range before it is compared, so one number
 covers every channel. A side that resolves to nothing makes the answer `false` rather than a throw,
@@ -1240,9 +1240,9 @@ peer, protocol fixture, and domain builder stays in the package that owns it.
 A shipped helper can still decline the question it looks like it answers. Each bound here belongs to
 the helper rather than to the host, and each names what to reach for instead.
 
-- **`resolveColor` resolves an undeclared token to the inherited color.** A `var()` naming a custom
+- **`parseCSSColor` resolves an undeclared token to the inherited color.** A `var()` naming a custom
   property nothing declares is not a parse failure: the cascade accepts it and computes the
-  inherited color, so `resolveColor('var(--absent)')` hands back channels rather than `undefined`.
+  inherited color, so `parseCSSColor('var(--absent)')` hands back channels rather than `undefined`.
   Read `readToken` or `readRootToken` where a missing token is the subject.
 - **`createLoopback` cannot take back an upgraded socket.** A server that claims an upgrade keeps
   that connection, detached from the server itself, so `destroy()`'s `closeAllConnections` never
@@ -2148,7 +2148,7 @@ readRing(focused, requireValue(document.querySelector('label[for="evaluate"]')))
 
 ### Read the tokens and colors a theme declares
 
-`readToken` and `readRootToken` read what the cascade resolved, and `resolveColor` resolves any
+`readToken` and `readRootToken` read what the cascade resolved, and `parseCSSColor` resolves any
 color expression by asking the same browser. In the following fence the document declares
 `--ink: rgb(1, 2, 3)` on `:root`, `.card` sets `padding-left: 12px`, and `card` is a mounted inline
 element carrying that class, so its `width` resolves to `auto`.
@@ -2159,7 +2159,7 @@ import {
 	readPixels,
 	readRootToken,
 	readToken,
-	resolveColor,
+	parseCSSColor,
 } from '@orkestrel/test/browser'
 
 readRootToken('ink') // 'rgb(1, 2, 3)'
@@ -2167,9 +2167,9 @@ readRootToken('--ink') // 'rgb(1, 2, 3)' — the dashes are optional
 readToken(card, 'ink') // 'rgb(1, 2, 3)' — inherited from `:root` by a mounted element
 readToken(card, 'absent') // '' — an undeclared token reads as a token declared empty does
 
-resolveColor('var(--ink)') // [1, 2, 3, 1]
-resolveColor('rebeccapurple') // [102, 51, 153, 1]
-resolveColor('not-a-color') // undefined — the CSSOM refused the expression
+parseCSSColor('var(--ink)') // [1, 2, 3, 1]
+parseCSSColor('rebeccapurple') // [102, 51, 153, 1]
+parseCSSColor('not-a-color') // undefined — the CSSOM refused the expression
 matchesColor('rebeccapurple', 'rgb(102, 51, 153)') // true
 matchesColor(readToken(card, 'ink'), 'rgb(1, 2, 3)') // true
 
@@ -2178,7 +2178,7 @@ readPixels(card, 'width') // 0 — a width resolving to `auto` carries no number
 ```
 
 Assert on the value rather than on presence. An absent token and one declared empty both read as
-`''`, and `resolveColor` resolves a `var()` naming an undeclared property to the inherited color
+`''`, and `parseCSSColor` resolves a `var()` naming an undeclared property to the inherited color
 rather than refusing it, so a test that means to catch a missing token compares what `readToken`
 returned.
 
