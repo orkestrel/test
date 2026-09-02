@@ -969,4 +969,40 @@ describe('executeScenarios', () => {
 			['assert', 'closed'],
 		])
 	})
+
+	it('names the row whose builder refused and hands the refusal back as the cause', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const rows = createRecorder<readonly [name: string]>()
+
+		const thrown = await executeScenarios(DISCLOSURE_SCENARIOS, (scenario) => {
+			rows.handler(scenario.transition.name)
+			if (scenario.transition.name === 'open closes on hide') throw REFUSAL
+			return buildDisclosure(trail)
+		}).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toBe('open closes on hide: build refused')
+		expect(failure.cause).toBe(REFUSAL)
+		expect(rows.calls).toStrictEqual([['closed opens on show'], ['open closes on hide']])
+		// The refused row runs no phase of its own, and the row before it ran all three.
+		expect(trail.calls.map(([phase]) => phase)).toStrictEqual(['arrange', 'act', 'assert'])
+	})
+
+	it('names the row whose promised builder rejected and never builds the rows after it', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const rows = createRecorder<readonly [name: string]>()
+		const refusal = new Error('no fixture')
+
+		const thrown = await executeScenarios(DISCLOSURE_SCENARIOS, async (scenario) => {
+			rows.handler(scenario.transition.name)
+			await waitForDelay()
+			throw refusal
+		}).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toBe('closed opens on show: build refused')
+		expect(failure.cause).toBe(refusal)
+		expect(rows.calls).toStrictEqual([['closed opens on show']])
+		expect(trail.count).toBe(0)
+	})
 })

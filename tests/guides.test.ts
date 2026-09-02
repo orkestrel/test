@@ -687,6 +687,14 @@ describe('guide fences', () => {
 		).toBe(true)
 		expect(failure.cause).toBeInstanceOf(Error)
 
+		const refused = await executeScenarios(MISMATCHED_SCENARIOS, () => {
+			throw new Error('no fixture')
+		}).catch((error: unknown) => error)
+
+		const refusal = requireValue(refused instanceof Error ? refused : undefined)
+		expect(refusal.message).toBe('show leaves it closed: build refused')
+		expect(refusal.cause).toBeInstanceOf(Error)
+
 		expect(STATECHART_ATTRIBUTES.status).toBe('data-statechart-status')
 		expect(STATECHART_ATTRIBUTES.scenario).toBe('data-statechart-scenario')
 		expect(STATECHART_STATUSES[0]).toBe('pending')

@@ -1202,7 +1202,7 @@ packages wrote is still refused when it is one suite's policy, a redeclaration o
 `@orkestrel` package already publishes, or a race; a shape few packages wrote still ships when the
 mechanism is a contract every consumer has to implement identically.
 
-The journey layer in `src/browser` is that second case. It is what `orkestrel-human-journey`
+The journey layer in `src/browser` is that second case. It is what `orkestrel-prove-journey`
 requires every browser workspace to implement, and a workspace writing its own copy of it writes a
 slightly different resolver, a slightly different set of failure voices, and a journey that reads as
 if it proved something it did not. Publishing it once is what keeps those implementations identical.
@@ -1752,7 +1752,8 @@ rather than from the row, which is what lets one set of phases serve every row i
 The rows run one after another, because a statechart's rows drive one entity and a parallel run
 would have them arranging over each other. The run stops at the first row that fails, and the row's
 name opens the message — a table runs under one test name, so a bare assertion message never says
-which row produced it.
+which row produced it. A builder that refuses stops the run the same way and its row's name opens
+that message too, because a fixture is built under the same test name its phases run under.
 
 ```ts
 const MISMATCHED: ReadonlyArray<
@@ -1766,11 +1767,18 @@ const MISMATCHED: ReadonlyArray<
 
 await executeScenarios(MISMATCHED, () => ({ disclosure: new Disclosure() }))
 // Error: show leaves it closed: expected 'open' to be 'closed'
+
+await executeScenarios(MISMATCHED, () => {
+	throw new Error('no fixture')
+})
+// Error: show leaves it closed: build refused
 ```
 
 Whatever the phase threw arrives as that error's `cause`, by identity, so an assertion's own detail
 survives the renaming. A phase that throws something other than an `Error` is named by its type —
-`arrange refuses: threw a non-error object value` — and the value itself is still the `cause`.
+`arrange refuses: threw a non-error object value` — and the value itself is still the `cause`. A
+builder's refusal arrives as the `cause` the same way, and the phases of the row it was building for
+never start.
 
 Drive one row on its own with `executeScenario`, which takes the context rather than building it.
 
@@ -2362,6 +2370,10 @@ Nothing but an inline declaration is reported. A class and a `data-*` attribute 
 cascade resolves, so neither is reported however unusual it looks, and an inline `style` on a
 `<path>` inside an SVG is reported because a namespace changes nothing about what an inline
 declaration is. A `style` attribute holding nothing but whitespace declares nothing and is read past.
+
+The `extractStyles` reading is named for what it returns rather than `extractEscapes`, because the
+`escape` term already carries the encoding sense in the `@orkestrel/html` and `@orkestrel/console`
+packages.
 
 ### Remove an IndexedDB database
 

@@ -469,11 +469,17 @@ export async function executeScenario<TState extends string, TEvent extends stri
  * @param scenarios - The table to drive, in the order it is written.
  * @param build - The fixture builder, called once per row and awaited when it returns a promise.
  * @returns A promise that resolves after the last row completes.
- * @throws Whatever {@link executeScenario} throws for the first row that fails, so the run stops at
- * that row and the rows after it never start.
+ * @throws An `Error` reading `<name>: build refused` when the row's builder throws or rejects, whose
+ * `cause` is the value the builder refused with, or whatever {@link executeScenario} throws for the
+ * first row whose phases fail. Either way the run stops at that row and the rows after it never
+ * start.
  * @remarks The rows run one after another rather than together: a statechart's rows drive one
  * entity on one page, so a parallel run would have them arranging over each other. `build` receives
  * the row it is building for, which is what lets one table mix fixtures.
+ *
+ * A refusing builder is named for its row the way a failing phase is, because a table's rows build
+ * under one test name too. The refusal itself arrives as the `cause`, by identity, so its own
+ * message and stack survive the naming.
  *
  * @example
  * ```ts
@@ -485,6 +491,12 @@ export async function executeScenarios<TState extends string, TEvent extends str
 	build: (scenario: StateScenario<TState, TEvent, TContext>) => TContext | Promise<TContext>,
 ): Promise<void> {
 	for (const scenario of scenarios) {
-		await executeScenario(scenario, await build(scenario))
+		let context: TContext
+		try {
+			context = await build(scenario)
+		} catch (cause) {
+			throw new Error(`${scenario.transition.name}: build refused`, { cause })
+		}
+		await executeScenario(scenario, context)
 	}
 }
