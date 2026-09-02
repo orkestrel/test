@@ -1418,6 +1418,37 @@ export function readCascade(): ReadonlySet<string> {
 }
 
 /**
+ * Collects every class token the markup under one root carries.
+ *
+ * @param root - The subtree to sweep. A detached element and a `DocumentFragment` both work.
+ * @returns The class tokens in document order of first sighting; an empty set for markup carrying no
+ * class at all.
+ *
+ * @remarks
+ * The root's own classes count when the root is an `Element`, so a `DocumentFragment` contributes
+ * its descendants alone. Every element is read through `classList`, which is what makes an SVG
+ * element count the same as an HTML one: `className` on an SVG element is an `SVGAnimatedString`
+ * rather than a string, and a reader splitting that value finds nothing.
+ *
+ * This is the authored half of a class conformance check and {@link readCascade} is the defined
+ * half, so the difference between them is the set of classes the markup uses and no loaded
+ * stylesheet declares.
+ *
+ * @example
+ * ```ts
+ * [...readClasses(container)].filter((name) => !readCascade().has(name))
+ * ```
+ */
+export function readClasses(root: ParentNode): ReadonlySet<string> {
+	const authored = new Set<string>()
+	if (root instanceof Element) for (const name of root.classList) authored.add(name)
+	for (const element of root.querySelectorAll('*')) {
+		for (const name of element.classList) authored.add(name)
+	}
+	return authored
+}
+
+/**
  * Collects every rule the stylesheets loaded into this document hold, nested grouping rules
  * included.
  *
@@ -1571,6 +1602,42 @@ export function extractOrphans(root: ParentNode, child: string, parent: string):
 	return [...root.querySelectorAll(`.${child}`)]
 		.filter((node) => (node.parentElement?.closest(`.${parent}`) ?? null) === null)
 		.map((node) => node.outerHTML)
+}
+
+/**
+ * Collects the markup of every element carrying a non-empty `style` attribute and of every `<style>`
+ * element, in document order, `root` included in both populations when it is an `Element`.
+ *
+ * @param root - The subtree to sweep. A detached element and a `DocumentFragment` both work.
+ * @returns The `outerHTML` of each such element, in document order; an empty list when the markup
+ * declares no style of its own.
+ *
+ * @remarks
+ * These are the declarations the stylesheet never sees: an inline `style` attribute, wherever it
+ * sits, and a `<style>` element, whatever it holds. Nothing else counts. A class and a `data-*`
+ * attribute name something the cascade resolves, so neither is reported however unusual it looks;
+ * an inline `style` on a `<path>` inside an SVG is reported, because a namespace changes nothing
+ * about what an inline declaration is.
+ *
+ * A `style` attribute holding nothing but whitespace declares nothing, so it is not reported. A
+ * `DocumentFragment` root contributes its descendants alone, because it is not an `Element`; a
+ * `<style>` root and a root carrying an inline attribute are each reported, and an element that is a
+ * `<style>` element and carries an inline attribute too is reported once.
+ *
+ * @example
+ * ```ts
+ * extractStyles(container) // []
+ * ```
+ */
+export function extractStyles(root: ParentNode): readonly string[] {
+	const elements: Element[] = root instanceof Element ? [root] : []
+	elements.push(...root.querySelectorAll('*'))
+	const styled: string[] = []
+	for (const element of elements) {
+		const inline = element.getAttribute('style') ?? ''
+		if (inline.trim() !== '' || element.localName === 'style') styled.push(element.outerHTML)
+	}
+	return styled
 }
 
 /**

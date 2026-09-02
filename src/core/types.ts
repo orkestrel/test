@@ -191,3 +191,60 @@ export type JSONSafe<T> = unknown extends T
  * entries-array, and `Headers` forms all satisfy it.
  */
 export type HeadersSource = NonNullable<ConstructorParameters<typeof Headers>[0]>
+
+/**
+ * One row of a statechart table: the entity's state before an event, the event, and the state that
+ * event must leave it in.
+ *
+ * @typeParam TState - The states the entity moves between, as a string-literal union.
+ * @typeParam TEvent - The events the entity accepts, as a string-literal union.
+ * @remarks The two unions are the entity's own vocabulary, so a table naming a state or an event the
+ * entity does not have fails to typecheck rather than failing at runtime.
+ */
+export interface StateTransition<TState extends string, TEvent extends string> {
+	/** The row's name, which is prepended to the message of whatever the row throws. */
+	readonly name: string
+	/** The state the row arranges before it acts. */
+	readonly from: TState
+	/** The event the row applies to the arranged entity. */
+	readonly event: TEvent
+	/** The state the row asserts the entity reached. */
+	readonly to: TState
+}
+
+/**
+ * Drives one {@link StateTransition} through the three phases that prove it.
+ *
+ * @typeParam TState - The states the entity moves between, as a string-literal union.
+ * @typeParam TEvent - The events the entity accepts, as a string-literal union.
+ * @typeParam TContext - The fixture the three phases drive.
+ * @remarks Each phase receives the context and the part of the transition it is responsible for, so
+ * a phase reads its subject from its own parameters rather than from the row it belongs to. A phase
+ * may be synchronous or asynchronous, and `executeScenario` awaits each one before starting the
+ * next.
+ */
+export interface StateScenario<TState extends string, TEvent extends string, TContext> {
+	/** The row this scenario drives. */
+	readonly transition: StateTransition<TState, TEvent>
+	/**
+	 * Puts the entity into the transition's `from` state.
+	 *
+	 * @param context - The fixture this row drives.
+	 * @param state - The transition's `from` state.
+	 */
+	arrange(context: TContext, state: TState): Promise<void> | void
+	/**
+	 * Applies the transition's event to the arranged entity.
+	 *
+	 * @param context - The fixture this row drives.
+	 * @param event - The transition's event.
+	 */
+	act(context: TContext, event: TEvent): Promise<void> | void
+	/**
+	 * Checks that the entity reached the transition's `to` state.
+	 *
+	 * @param context - The fixture this row drives.
+	 * @param state - The transition's `to` state.
+	 */
+	assert(context: TContext, state: TState): Promise<void> | void
+}

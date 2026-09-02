@@ -77,7 +77,10 @@ The rest of core is `collect` (drains an async iterable), `collectStream` (drain
 `ReadableStream`), `roundTripJSON` (copies any value `JSONSafe` accepts, including an
 interface-typed one, and throws rather than turning a non-finite number into `null`), `resolveRoot`
 (the directory above the calling module, from `import.meta`), and `createHostileValues` (a frozen
-array of fresh values that each make a naive reader throw).
+array of fresh values that each make a naive reader throw). Beside them sits the statechart
+contract the fleet repeats: `StateTransition` and `StateScenario` for one row of a transition table,
+`executeScenario` and `executeScenarios` to walk it, and `STATECHART_ATTRIBUTES` and
+`STATECHART_STATUSES` for the harness a browser workspace renders that table in.
 
 The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
 file text that a parity suite can assert against, and `createLoopback`, which binds a server the
@@ -97,27 +100,33 @@ const root = resolveRoot(import.meta)
 const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['.ts'] })
 
 Object.keys(sources)
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
+// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+//  'src/core/types.ts', 'src/core/validators.ts', 'src/server/constants.ts',
 //  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts', 'src/server/types.ts']
 
 // The keys are paths; the values are the file contents.
 sources['src/core/index.ts']
-// "export * from './types.js'\nexport * from './helpers.js'\nexport * from './factories.js'\n"
+// "export * from './types.js'\nexport * from './constants.js'\nexport * from './validators.js'\n
+//  export * from './helpers.js'\nexport * from './factories.js'\n"
 
 // A target is a file or a directory. A named file is read whatever the extension filter says.
 Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] }))
-// ['package.json', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts']
+// ['package.json', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
+//  'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 // An `exclude` entry matches whole key segments. A file key drops that file.
 Object.keys(
 	readInventory(root, ['src/core'], { extensions: ['.ts'], exclude: ['src/core/index.ts'] }),
 )
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts']
+// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts',
+//  'src/core/validators.ts']
 
 // A directory key prunes its whole subtree.
 Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
-// ['src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts']
+// ['src/browser/constants.ts', 'src/browser/factories.ts', 'src/browser/helpers.ts',
+//  'src/browser/index.ts', 'src/browser/types.ts', 'src/core/constants.ts',
+//  'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
+//  'src/core/validators.ts']
 ```
 
 Keys are root-relative and `/`-separated whatever the host separator is, though this package's own
@@ -150,7 +159,10 @@ region and disclosure targeting, input and traversal verbs, perception readers, 
 instrument that composites translucent layers, and the capture portfolio. Every acting verb
 resolves its own target from a role and an accessible name — none takes an element, a component
 instance, or a selector — and the whole environment imports `vitest/browser` and DOM globals and
-nothing else, with `vitest` declared as a peer dependency. The guide's
+nothing else, with `vitest` declared as a peer dependency. Beside the journey verbs are the
+readers a markup conformance check needs: `readClasses` for the classes the markup carries,
+differenced against `readCascade` for the classes the cascade declares, and `extractStyles` for
+the inline `style` attributes and `<style>` elements that go round the cascade entirely. The guide's
 [Browser](guides/test.md#browser) section carries every export and every voice.
 
 `createLoopback` binds a server the test built. The caller constructs it and keeps every route,

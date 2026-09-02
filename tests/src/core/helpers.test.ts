@@ -1,10 +1,13 @@
-import type { JSONSafe } from '@src/core'
+import type { JSONSafe, RecorderInterface, StateScenario } from '@src/core'
 import {
 	captureError,
 	collect,
 	collectStream,
 	createHostileValues,
+	createRecorder,
 	decodeJSONLines,
+	executeScenario,
+	executeScenarios,
 	flattenHeaders,
 	invokeUnchecked,
 	readProperty,
@@ -745,5 +748,225 @@ describe('resolveRoot', () => {
 		expect(root).toBeInstanceOf(URL)
 		expect(root.pathname.endsWith('/tests/src/')).toBe(true)
 		expect(root.pathname.includes('/tests/src/core/')).toBe(false)
+	})
+})
+
+// The statechart cases drive one real entity rather than a scripted stand-in: a disclosure that is
+// closed or open and accepts a show or a hide. The scenarios sit at module scope so each phase reads
+// its subject from its own parameters, which is the shape the published contract asks a consumer for.
+type DisclosureState = 'closed' | 'open'
+
+type DisclosureEvent = 'show' | 'hide'
+
+interface DisclosureContext {
+	readonly disclosure: Disclosure
+	readonly trail: RecorderInterface<readonly [phase: string, subject: string]>
+}
+
+class Disclosure {
+	#state: DisclosureState = 'closed'
+
+	get state(): DisclosureState {
+		return this.#state
+	}
+
+	show(): void {
+		this.#state = 'open'
+	}
+
+	hide(): void {
+		this.#state = 'closed'
+	}
+}
+
+// Thrown by identity, so the non-error case asserts on the value that came back rather than on a
+// rendering of it. A frozen record is not an `Error`, which is the whole of what the case turns on.
+const REFUSAL = Object.freeze({ reason: 'refused' })
+
+function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	context.trail.handler('arrange', state)
+	if (state === 'open') context.disclosure.show()
+}
+
+// Asynchronous on purpose: an unawaited act would leave the entity in its arranged state, so the
+// happy path fails rather than passes if `executeScenario` stops awaiting a phase.
+async function actOnDisclosure(context: DisclosureContext, event: DisclosureEvent): Promise<void> {
+	context.trail.handler('act', event)
+	await waitForDelay()
+	if (event === 'show') context.disclosure.show()
+	else context.disclosure.hide()
+}
+
+function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	context.trail.handler('assert', state)
+	expect(context.disclosure.state).toBe(state)
+}
+
+function buildDisclosure(
+	trail: RecorderInterface<readonly [phase: string, subject: string]>,
+): DisclosureContext {
+	return { disclosure: new Disclosure(), trail }
+}
+
+const DISCLOSURE_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+	{
+		transition: { name: 'open closes on hide', from: 'open', event: 'hide', to: 'closed' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+// The control, drawn from outside the population above: the same entity and the same three phases,
+// with a `to` state the event cannot reach. Nothing about the row is malformed, so the assertion is
+// the only thing that can catch it.
+const MISMATCHED_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+const REFUSED_SCENARIO: StateScenario<DisclosureState, DisclosureEvent, DisclosureContext> = {
+	transition: { name: 'arrange refuses', from: 'closed', event: 'show', to: 'open' },
+	arrange() {
+		throw REFUSAL
+	},
+	act: actOnDisclosure,
+	assert: assertDisclosure,
+}
+
+describe('executeScenario', () => {
+	it('drives arrange, act, and assert in order, each against its own part of the transition', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const context = buildDisclosure(trail)
+
+		await executeScenario(requireValue(DISCLOSURE_SCENARIOS[0]), context)
+
+		expect(trail.calls).toStrictEqual([
+			['arrange', 'closed'],
+			['act', 'show'],
+			['assert', 'open'],
+		])
+		expect(context.disclosure.state).toBe('open')
+	})
+
+	it('arranges the from state before the event is applied', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const context = buildDisclosure(trail)
+
+		await executeScenario(requireValue(DISCLOSURE_SCENARIOS[1]), context)
+
+		expect(trail.calls).toStrictEqual([
+			['arrange', 'open'],
+			['act', 'hide'],
+			['assert', 'closed'],
+		])
+		expect(context.disclosure.state).toBe('closed')
+	})
+
+	it('names the failing row and keeps the assertion it failed on as the cause', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+
+		const thrown = await executeScenario(
+			requireValue(MISMATCHED_SCENARIOS[0]),
+			buildDisclosure(trail),
+		).catch((error: unknown) => error)
+
+		expect(thrown).toBeInstanceOf(Error)
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message.startsWith('show leaves it closed: ')).toBe(true)
+		expect(failure.cause).toBeInstanceOf(Error)
+		expect(trail.calls).toStrictEqual([
+			['arrange', 'closed'],
+			['act', 'show'],
+			['assert', 'closed'],
+		])
+	})
+
+	it('names a non-error throw by its type and hands the value back as the cause', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+
+		const thrown = await executeScenario(REFUSED_SCENARIO, buildDisclosure(trail)).catch(
+			(error: unknown) => error,
+		)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toBe('arrange refuses: threw a non-error object value')
+		expect(failure.cause).toBe(REFUSAL)
+		expect(trail.count).toBe(0)
+	})
+})
+
+describe('executeScenarios', () => {
+	it('drives every row in written order, each against a context of its own', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const contexts = createRecorder<readonly [context: DisclosureContext]>()
+
+		await executeScenarios(DISCLOSURE_SCENARIOS, () => {
+			const context = buildDisclosure(trail)
+			contexts.handler(context)
+			return context
+		})
+
+		expect(trail.calls).toStrictEqual([
+			['arrange', 'closed'],
+			['act', 'show'],
+			['assert', 'open'],
+			['arrange', 'open'],
+			['act', 'hide'],
+			['assert', 'closed'],
+		])
+		expect(contexts.count).toBe(2)
+		expect(requireValue(contexts.calls[0])[0]).not.toBe(requireValue(contexts.calls[1])[0])
+	})
+
+	it('builds each context for the row it is about to drive, and awaits a promised one', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+		const rows = createRecorder<readonly [name: string]>()
+
+		await executeScenarios(DISCLOSURE_SCENARIOS, async (scenario) => {
+			rows.handler(scenario.transition.name)
+			await waitForDelay()
+			return buildDisclosure(trail)
+		})
+
+		expect(rows.calls).toStrictEqual([['closed opens on show'], ['open closes on hide']])
+		expect(trail.calls.map(([phase]) => phase)).toStrictEqual([
+			'arrange',
+			'act',
+			'assert',
+			'arrange',
+			'act',
+			'assert',
+		])
+	})
+
+	it('stops at the first failing row and never starts the rows after it', async () => {
+		const trail = createRecorder<readonly [phase: string, subject: string]>()
+
+		const thrown = await executeScenarios([...MISMATCHED_SCENARIOS, ...DISCLOSURE_SCENARIOS], () =>
+			buildDisclosure(trail),
+		).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message.startsWith('show leaves it closed: ')).toBe(true)
+		expect(trail.calls).toStrictEqual([
+			['arrange', 'closed'],
+			['act', 'show'],
+			['assert', 'closed'],
+		])
 	})
 })

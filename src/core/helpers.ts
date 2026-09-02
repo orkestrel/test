@@ -3,6 +3,7 @@ import type {
 	HeadersSource,
 	JSONSafe,
 	RetryOptions,
+	StateScenario,
 	WaitOptions,
 } from './types.js'
 
@@ -416,4 +417,74 @@ export function roundTripJSON<T>(value: T & JSONSafe<T>): T {
  */
 export function resolveRoot(meta: ImportMeta): URL {
 	return new URL('../', meta.url)
+}
+
+/**
+ * Drives one statechart scenario through its arrange, act, and assert phases.
+ *
+ * @typeParam TState - The states the entity moves between.
+ * @typeParam TEvent - The events the entity accepts.
+ * @typeParam TContext - The fixture the phases drive.
+ * @param scenario - The scenario to drive.
+ * @param context - The fixture handed to each phase.
+ * @returns A promise that resolves after the assert phase completes.
+ * @throws An `Error` whose message opens with the transition's `name` and whose `cause` is the value
+ * the failing phase threw.
+ * @remarks Each phase is awaited before the next begins, so an asynchronous arrange settles before
+ * the event is applied. The phases receive the transition's own parts: `arrange` receives `from`,
+ * `act` receives `event`, and `assert` receives `to`.
+ *
+ * The row's name is prepended because a table's rows run under one test name, so a bare assertion
+ * message says what failed and never which row. A thrown `Error` keeps its own message after the
+ * name and arrives as the `cause`; anything else thrown is named by its type and arrives as the
+ * `cause` unchanged.
+ *
+ * @example
+ * ```ts
+ * await executeScenario(scenarios[0], { disclosure: new Disclosure() })
+ * ```
+ */
+export async function executeScenario<TState extends string, TEvent extends string, TContext>(
+	scenario: StateScenario<TState, TEvent, TContext>,
+	context: TContext,
+): Promise<void> {
+	const transition = scenario.transition
+	try {
+		await scenario.arrange(context, transition.from)
+		await scenario.act(context, transition.event)
+		await scenario.assert(context, transition.to)
+	} catch (cause) {
+		const message =
+			cause instanceof Error ? cause.message : `threw a non-error ${typeof cause} value`
+		throw new Error(`${transition.name}: ${message}`, { cause })
+	}
+}
+
+/**
+ * Drives a statechart table row by row, each row against a context of its own.
+ *
+ * @typeParam TState - The states the entity moves between.
+ * @typeParam TEvent - The events the entity accepts.
+ * @typeParam TContext - The fixture the phases drive.
+ * @param scenarios - The table to drive, in the order it is written.
+ * @param build - The fixture builder, called once per row and awaited when it returns a promise.
+ * @returns A promise that resolves after the last row completes.
+ * @throws Whatever {@link executeScenario} throws for the first row that fails, so the run stops at
+ * that row and the rows after it never start.
+ * @remarks The rows run one after another rather than together: a statechart's rows drive one
+ * entity on one page, so a parallel run would have them arranging over each other. `build` receives
+ * the row it is building for, which is what lets one table mix fixtures.
+ *
+ * @example
+ * ```ts
+ * await executeScenarios(SCENARIOS, () => ({ disclosure: new Disclosure() }))
+ * ```
+ */
+export async function executeScenarios<TState extends string, TEvent extends string, TContext>(
+	scenarios: ReadonlyArray<StateScenario<TState, TEvent, TContext>>,
+	build: (scenario: StateScenario<TState, TEvent, TContext>) => TContext | Promise<TContext>,
+): Promise<void> {
+	for (const scenario of scenarios) {
+		await executeScenario(scenario, await build(scenario))
+	}
 }

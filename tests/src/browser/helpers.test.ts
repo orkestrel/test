@@ -17,6 +17,7 @@ import {
 	describeTree,
 	expandCaptures,
 	extractOrphans,
+	extractStyles,
 	FIELD_ROLES,
 	fillAccessible,
 	findKeyframes,
@@ -33,6 +34,7 @@ import {
 	pressKeys,
 	readBackdrop,
 	readCascade,
+	readClasses,
 	readFocus,
 	readLayers,
 	readName,
@@ -2035,5 +2037,139 @@ describe('expandCaptures', () => {
 	it('expands an empty registry and an empty variant matrix to no files', () => {
 		expect(expandCaptures([], VARIANTS)).toStrictEqual([])
 		expect(expandCaptures(['start'], [])).toStrictEqual([])
+	})
+})
+
+describe('readClasses', () => {
+	it('collects the root own classes and every descendant class in document order', () => {
+		const container = buildFixture(
+			'<section class="card shadow"><p class="lead">Ready</p>' +
+				'<span class="badge lead">New</span></section>',
+		)
+		const section = requireValue(container.querySelector('section'))
+
+		expect([...readClasses(section)]).toStrictEqual(['card', 'shadow', 'lead', 'badge'])
+	})
+
+	it('reads an SVG class through classList rather than through className', () => {
+		const container = buildFixture('<svg class="chart"><path class="series" d="M0 0"></path></svg>')
+		const chart = requireValue(container.querySelector('svg'))
+
+		expect(typeof chart.className).not.toBe('string')
+		expect([...readClasses(chart)]).toStrictEqual(['chart', 'series'])
+	})
+
+	it('contributes only its descendants when the root is not an element', () => {
+		const fragment = document.createDocumentFragment()
+		fragment.append(build('p', { classes: 'lead' }))
+
+		expect([...readClasses(fragment)]).toStrictEqual(['lead'])
+	})
+
+	it('reports an empty set for markup carrying no class at all', () => {
+		const container = buildFixture('<section><p>Ready</p></section>')
+
+		expect(readClasses(container).size).toBe(0)
+	})
+
+	it('leaves a class no loaded stylesheet declares in the difference against the cascade', () => {
+		buildStylesheet('.journey-declared { color: rgb(1, 2, 3) }')
+		const container = buildFixture('<p class="journey-declared journey-undeclared">Ready</p>')
+
+		const authored = [...readClasses(container)]
+		expect(authored).toStrictEqual(['journey-declared', 'journey-undeclared'])
+		expect(authored.filter((name) => !readCascade().has(name))).toStrictEqual([
+			'journey-undeclared',
+		])
+	})
+})
+
+describe('extractStyles', () => {
+	it('reports an inline style attribute and a style element in document order', () => {
+		const container = buildFixture(
+			'<p style="color: red">One</p><span class="badge">Two</span>' +
+				'<style>.late { color: blue }</style>',
+		)
+
+		expect(extractStyles(container)).toStrictEqual([
+			'<p style="color: red">One</p>',
+			'<style>.late { color: blue }</style>',
+		])
+	})
+
+	it('counts a style root and a styled root, and leaves a root carrying neither out', () => {
+		const container = buildFixture(
+			'<style>.late { color: blue }</style><section style="gap: 4px"><p>Ready</p></section>' +
+				'<div><p>Ready</p></div>',
+		)
+		const sheet = requireValue(container.querySelector('style'))
+		const section = requireValue(container.querySelector('section'))
+		const plain = requireValue(container.querySelector('div'))
+
+		expect(extractStyles(sheet)).toStrictEqual(['<style>.late { color: blue }</style>'])
+		expect(extractStyles(section)).toStrictEqual([
+			'<section style="gap: 4px"><p>Ready</p></section>',
+		])
+		expect(extractStyles(plain)).toStrictEqual([])
+	})
+
+	it('reports an inline style on an SVG path', () => {
+		const container = buildFixture(
+			'<svg class="chart"><path style="fill: red" d="M0 0"></path></svg>',
+		)
+
+		expect(extractStyles(container)).toStrictEqual(['<path style="fill: red" d="M0 0"></path>'])
+	})
+
+	it('reports a style element carrying an inline attribute once', () => {
+		const container = buildFixture('<style style="display: none">.late { color: blue }</style>')
+
+		expect(extractStyles(container)).toStrictEqual([
+			'<style style="display: none">.late { color: blue }</style>',
+		])
+	})
+
+	it('reads past a style attribute holding nothing but whitespace', () => {
+		const container = buildFixture('<p style="">One</p><span style="   ">Two</span>')
+
+		expect(extractStyles(container)).toStrictEqual([])
+	})
+
+	it('sweeps the descendants alone when the root is not an element', () => {
+		const fragment = document.createDocumentFragment()
+		fragment.append(build('p', { attributes: { style: 'color: red' }, text: 'Ready' }))
+
+		expect(extractStyles(fragment)).toStrictEqual(['<p style="color: red">Ready</p>'])
+	})
+
+	it('reports nothing for markup with no style attribute and no style element', () => {
+		const container = buildFixture(
+			'<section class="card" data-role="panel"><p class="lead">Ready</p></section>',
+		)
+
+		expect(extractStyles(container)).toStrictEqual([])
+	})
+
+	// guides/test.md → Patterns → "Read the classes and styles the markup carries". A browser fence
+	// carries in this directory because the guides project runs with the browser disabled.
+	it('separates the classes the cascade declares from the markup that styles itself', () => {
+		buildStylesheet('.card { padding: 8px }')
+		const container = buildFixture(
+			'<section class="card"><p class="lead" style="color: red">Ready</p>' +
+				'<style>.late { color: blue }</style></section>',
+		)
+		const section = requireValue(container.querySelector('section'))
+
+		const authored = readClasses(section)
+		expect(authored.has('card')).toBe(true)
+		expect(authored.has('lead')).toBe(true)
+
+		const undeclared = [...authored].filter((name) => !readCascade().has(name))
+		expect(undeclared).toStrictEqual(['lead'])
+
+		expect(extractStyles(section)).toStrictEqual([
+			'<p class="lead" style="color: red">Ready</p>',
+			'<style>.late { color: blue }</style>',
+		])
 	})
 })

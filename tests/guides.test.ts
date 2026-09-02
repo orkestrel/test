@@ -1,5 +1,5 @@
 import type { Duplex } from 'node:stream'
-import type { EventSourceInterface } from '@src/core'
+import type { EventSourceInterface, StateScenario } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
 	createGuide,
@@ -25,6 +25,7 @@ import {
 	createResourceFactory,
 	createSignal,
 	createTeardown,
+	executeScenarios,
 	flattenHeaders,
 	invokeUnchecked,
 	readProperty,
@@ -32,6 +33,8 @@ import {
 	resolveRoot,
 	retryUntil,
 	roundTripJSON,
+	STATECHART_ATTRIBUTES,
+	STATECHART_STATUSES,
 	waitForAbort,
 	waitForCondition,
 	waitForEvent,
@@ -142,6 +145,69 @@ function parseSchema(value: unknown): Schema | undefined {
 	if (!members.every((field): field is string => typeof field === 'string')) return undefined
 	return { name, fields: members }
 }
+
+// The "Drive a statechart table" fence drives a disclosure that is closed until something shows it.
+// This is that entity, in the fence's own shape.
+type DisclosureState = 'closed' | 'open'
+
+type DisclosureEvent = 'show' | 'hide'
+
+class Disclosure {
+	#state: DisclosureState = 'closed'
+
+	get state(): DisclosureState {
+		return this.#state
+	}
+
+	show(): void {
+		this.#state = 'open'
+	}
+
+	hide(): void {
+		this.#state = 'closed'
+	}
+}
+
+interface DisclosureContext {
+	readonly disclosure: Disclosure
+}
+
+function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	if (state === 'open') context.disclosure.show()
+}
+
+function actOnDisclosure(context: DisclosureContext, event: DisclosureEvent): void {
+	if (event === 'show') context.disclosure.show()
+	else context.disclosure.hide()
+}
+
+function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	expect(context.disclosure.state).toBe(state)
+}
+
+const DISCLOSURE_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+// The failing-row fence's table: nothing about the row is malformed, and the `to` state the event
+// leaves the entity in is not the one the row names, so only `assert` can catch it.
+const MISMATCHED_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
 
 describe('guides parity', () => {
 	it('parses a non-empty manifest', () => {
@@ -607,12 +673,33 @@ describe('guide fences', () => {
 		expect(JSON.stringify(serializeSchema(received))).toBe(wire)
 	})
 
+	// guides/test.md → Patterns → "Drive a statechart table".
+	it('walks the table and opens a failing row message with that row name', async () => {
+		await executeScenarios(DISCLOSURE_SCENARIOS, () => ({ disclosure: new Disclosure() }))
+
+		const thrown = await executeScenarios(MISMATCHED_SCENARIOS, () => ({
+			disclosure: new Disclosure(),
+		})).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(
+			failure.message.startsWith("show leaves it closed: expected 'open' to be 'closed'"),
+		).toBe(true)
+		expect(failure.cause).toBeInstanceOf(Error)
+
+		expect(STATECHART_ATTRIBUTES.status).toBe('data-statechart-status')
+		expect(STATECHART_ATTRIBUTES.scenario).toBe('data-statechart-scenario')
+		expect(STATECHART_STATUSES[0]).toBe('pending')
+		expect(STATECHART_STATUSES.includes('running')).toBe(true)
+	})
+
 	// guides/test.md → Patterns → "Read a source inventory". The root is this workspace, as the
 	// fence's own comment says it is, so the keys are this package's real files.
 	it('keys a walk root-relative, takes a named file whatever the filter says, and excludes below a directory', () => {
 		const root = resolveRoot(import.meta)
 
 		expect(Object.keys(readInventory(root, ['src/core'], { extensions: ['.ts'] }))).toStrictEqual([
+			'src/core/constants.ts',
 			'src/core/factories.ts',
 			'src/core/helpers.ts',
 			'src/core/index.ts',
@@ -624,6 +711,7 @@ describe('guide fences', () => {
 			Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] })),
 		).toStrictEqual([
 			'package.json',
+			'src/core/constants.ts',
 			'src/core/factories.ts',
 			'src/core/helpers.ts',
 			'src/core/index.ts',
@@ -639,6 +727,7 @@ describe('guide fences', () => {
 				}),
 			),
 		).toStrictEqual([
+			'src/core/constants.ts',
 			'src/core/factories.ts',
 			'src/core/helpers.ts',
 			'src/core/types.ts',
@@ -653,6 +742,7 @@ describe('guide fences', () => {
 			'src/browser/helpers.ts',
 			'src/browser/index.ts',
 			'src/browser/types.ts',
+			'src/core/constants.ts',
 			'src/core/factories.ts',
 			'src/core/helpers.ts',
 			'src/core/index.ts',
