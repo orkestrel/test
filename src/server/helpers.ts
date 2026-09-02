@@ -103,7 +103,7 @@ export function readErrorCode(error: unknown): string | undefined {
  *
  * @param current - The identity read from the path now.
  * @param allocation - The identity recorded when the directory was allocated.
- * @returns Whether the device, the index node, and the creation time all match.
+ * @returns True if the device, the index node, and the creation time all match; false otherwise.
  * @remarks All three fields are compared because none of them alone identifies an allocation. A
  * device is shared by every directory on one filesystem, an index node is reused once its directory
  * is removed, and a creation time repeats within the host's timestamp resolution.
@@ -121,7 +121,7 @@ export function matchesIdentity(current: ScratchIdentity, allocation: ScratchIde
  *
  * @param key - The root-relative key to test.
  * @param exclusions - The normalized root-relative exclusion keys.
- * @returns Whether an exclusion names the key or one of its ancestors.
+ * @returns True if an exclusion names the key or one of its ancestors; false otherwise.
  */
 export function isExcluded(key: string, exclusions: readonly string[]): boolean {
 	return exclusions.some((rule) => rule === '' || key === rule || key.startsWith(`${rule}/`))

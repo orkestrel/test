@@ -1,8 +1,8 @@
 import type { WaitOptions } from '@src/core'
 
-/** A temporary directory a test owns, writes into, reads back, and removes when it is done. */
+/** Holds a temporary directory a test owns, writes into, reads back, and removes when it is done. */
 export interface ScratchInterface {
-	/** The absolute path of the allocated directory. */
+	/** Holds the absolute path of the allocated directory. */
 	readonly path: string
 	/**
 	 * Writes a file, creating each parent directory that does not exist.
@@ -29,7 +29,8 @@ export interface ScratchInterface {
 	 * Reports whether a path exists without following its final symbolic link.
 	 *
 	 * @param target - A relative or absolute path contained by the scratch directory.
-	 * @returns True when the entry exists, including a symbolic link whose target is missing.
+	 * @returns True if the entry exists, including a symbolic link whose target is
+	 * missing; false otherwise.
 	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
 	 */
 	has(target: string): boolean
@@ -86,45 +87,45 @@ export interface ScratchInterface {
 	destroy(): void
 }
 
-/** The fields that together identify one allocated directory on its host. */
+/** Represents the fields that together identify one allocated directory on its host. */
 export interface ScratchIdentity {
-	/** The identifier of the device holding the directory. */
+	/** Holds the identifier of the device holding the directory. */
 	readonly device: number
-	/** The number of the directory's index node on that device. */
+	/** Holds the number of the directory's index node on that device. */
 	readonly inode: number
-	/** The directory's creation time in milliseconds. */
+	/** Holds the directory's creation time in milliseconds. */
 	readonly birth: number
 }
 
-/** Options for allocating a scratch directory. */
+/** Configures a scratch directory allocation. */
 export interface ScratchOptions {
 	/**
-	 * The existing directory in which to create the allocation. Defaults to the host temporary
+	 * Names the existing directory in which to create the allocation. Defaults to the host temporary
 	 * directory. Allocation throws when this path is missing, a symbolic link, or not a directory.
 	 */
 	readonly parent?: string
 	/**
-	 * The name fragment that starts the generated directory name. Allocation throws when this value
-	 * contains `/` or `\`. Both are refused on every host, so the rule does not vary by host. A
+	 * Holds the name fragment that starts the generated directory name. Allocation throws when this
+	 * value contains `/` or `\`. Both are refused on every host, so the rule does not vary by host. A
 	 * fragment carrying no separator is one path segment and cannot steer the allocation, so
 	 * `release-0..2-` allocates.
 	 */
 	readonly prefix?: string
 	/**
-	 * Files to write on allocation, keyed by path below the scratch directory. Allocation removes its
-	 * directory and rethrows when a key escapes or the host refuses a write.
+	 * Holds the files to write on allocation, keyed by path below the scratch directory. Allocation
+	 * removes its directory and rethrows when a key escapes or the host refuses a write.
 	 */
 	readonly files?: Readonly<Record<string, string>>
 }
 
-/** A server a test owns, listening on an ephemeral loopback port until the test releases it. */
+/** Holds a server a test owns, listening on an ephemeral loopback port until the test releases it. */
 export interface LoopbackInterface {
 	/**
-	 * The `http` origin for the assigned port, without a trailing slash. A TLS server answers on the
-	 * same port under `https`.
+	 * Names the `http` origin for the assigned port, without a trailing slash. A TLS server answers
+	 * on the same port under `https`.
 	 */
 	readonly url: string
-	/** The ephemeral port the host assigned. */
+	/** Holds the ephemeral port the host assigned. */
 	readonly port: number
 	/**
 	 * Drops every live connection on a server that carries `closeAllConnections`, stops listening, and
@@ -135,10 +136,11 @@ export interface LoopbackInterface {
 	destroy(): Promise<void>
 }
 
-/** A name-keyed cookie store a test drives one origin with, filled from real responses. */
+/** Holds a name-keyed cookie store a test drives one origin with, filled from real responses. */
 export interface CookieJarInterface {
 	/**
-	 * The `Cookie` request header naming every stored cookie, or `undefined` while the jar holds none.
+	 * Reports the `Cookie` request header naming every stored cookie, or `undefined` while the jar
+	 * holds none.
 	 */
 	readonly header: string | undefined
 	/**
@@ -160,35 +162,36 @@ export interface CookieJarInterface {
 	capture(response: Response): readonly string[]
 }
 
-/** Options for reading a source inventory. */
+/** Configures a source inventory read. */
 export interface InventoryOptions {
-	/** The file extensions to include, each written with its leading dot. */
+	/** Lists the file extensions to include, each written with its leading dot. */
 	readonly extensions?: readonly string[]
 	/**
-	 * The root-relative path keys to exclude. A key excludes itself and every key below it, matched
-	 * on whole segments, so `excluded` drops `excluded/file.ts` and keeps `excluded-other/file.ts`.
+	 * Lists the root-relative path keys to exclude. A key excludes itself and every key below it,
+	 * matched on whole segments, so `excluded` drops `excluded/file.ts` and keeps
+	 * `excluded-other/file.ts`.
 	 */
 	readonly exclude?: readonly string[]
 }
 
 /**
- * Options for driving a client upgrade request.
+ * Configures a client upgrade request.
  *
  * @remarks The time bounds and abort signal bound the wait for the server's answer, so a server
  * that accepts the connection and never answers ends the call rather than parking it.
  */
 export interface UpgradeOptions extends WaitOptions {
-	/** The request path, written with its leading slash. Defaults to `/`. */
+	/** Names the request path, written with its leading slash. Defaults to `/`. */
 	readonly path?: string
 	/**
-	 * The subprotocol tokens the request offers. They are sent as one comma-separated
+	 * Lists the subprotocol tokens the request offers. They are sent as one comma-separated
 	 * `Sec-WebSocket-Protocol` field, and an empty or omitted list sends no field at all.
 	 */
 	readonly protocols?: readonly string[]
 }
 
 /**
- * What one server did with a client upgrade request.
+ * Represents what one server did with a client upgrade request.
  *
  * @remarks `claimed` is the discriminant. The claimed arm carries `protocol`, the subprotocol the
  * server selected, which is `undefined` when it selected none; a claimed upgrade produced no plain

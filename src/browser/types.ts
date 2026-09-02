@@ -1,5 +1,5 @@
 /**
- * One rendered color as straight sRGB channels and its alpha.
+ * Represents one rendered color as straight sRGB channels and its alpha.
  *
  * @remarks
  * The channels run 0–255 and the alpha runs 0–1, which is the shape a computed `rgb()` value already
@@ -9,7 +9,7 @@
 export type Color = readonly [red: number, green: number, blue: number, alpha: number]
 
 /**
- * Options for one built element.
+ * Configures one built element.
  *
  * @remarks
  * `classes` is written the way a `class` attribute is written — one space-separated string — so a
@@ -18,70 +18,70 @@ export type Color = readonly [red: number, green: number, blue: number, alpha: n
  * with it.
  */
 export interface ElementOptions {
-	/** The class list, space-separated, exactly as a `class` attribute writes it. */
+	/** Holds the class list, space-separated, exactly as a `class` attribute writes it. */
 	readonly classes?: string
-	/** The text the element carries, set as text rather than parsed as markup. */
+	/** Holds the text the element carries, set as text rather than parsed as markup. */
 	readonly text?: string
-	/** Every attribute to set, keyed by attribute name. */
+	/** Holds every attribute to set, keyed by attribute name. */
 	readonly attributes?: Readonly<Record<string, string>>
 }
 
-/** Options for one captured frame. */
+/** Configures one captured frame. */
 export interface FrameOptions {
-	/** The frame's path, relative to the calling test file. */
+	/** Holds the frame's path, relative to the calling test file. */
 	readonly path: string
-	/** The viewport width in CSS pixels the frame is shot at. */
+	/** Holds the viewport width in CSS pixels the frame is shot at. */
 	readonly width: number
-	/** The viewport height in CSS pixels the frame is shot at. */
+	/** Holds the viewport height in CSS pixels the frame is shot at. */
 	readonly height: number
-	/** The element to shoot. Omit it to shoot the whole page. */
+	/** Holds the element to shoot. Omit it to shoot the whole page. */
 	readonly element?: Element | undefined
 }
 
-/** One theme-and-viewport pair a capture run renders. */
+/** Represents one theme-and-viewport pair a capture run renders. */
 export interface CaptureVariant {
-	/** The variant's name, which is the second half of every filename the run writes. */
+	/** Holds the variant's name, which is the second half of every filename the run writes. */
 	readonly name: string
-	/** The viewport width in pixels. */
+	/** Holds the viewport width in pixels. */
 	readonly width: number
-	/** The viewport height in pixels. */
+	/** Holds the viewport height in pixels. */
 	readonly height: number
 	/**
-	 * The document change this variant needs before the viewport is resized — a theme attribute, a
-	 * density class, a language direction. Omit it when the variant is a viewport alone.
+	 * Holds the document change this variant needs before the viewport is resized — a theme
+	 * attribute, a density class, a language direction. Omit it when the variant is a viewport alone.
 	 */
 	readonly apply?: () => void
 }
 
-/** Options for a capture portfolio. */
+/** Configures a capture portfolio. */
 export interface PortfolioOptions {
 	/**
-	 * Every state name the journeys place, declared once. `place` refuses a name absent from this
-	 * list, so the registry and the disk cannot drift apart.
+	 * Lists every state name the journeys place, declared once. `place` refuses a name absent from
+	 * this list, so the registry and the disk cannot drift apart.
 	 */
 	readonly states: readonly string[]
-	/** Every variant the portfolio can be rendered in. One run renders exactly one of them. */
+	/** Lists every variant the portfolio can be rendered in. One run renders exactly one of them. */
 	readonly variants: readonly CaptureVariant[]
-	/** The name of the variant this run renders. Creation throws when no variant carries it. */
+	/** Holds the name of the variant this run renders. Creation throws when no variant carries it. */
 	readonly variant: string
-	/** The directory each written file is placed in, relative to the calling test file. */
+	/** Holds the directory each written file is placed in, relative to the calling test file. */
 	readonly directory: string
 	/**
-	 * Whether this run writes files. An ordinary run leaves it unset, so `place` resizes nothing,
-	 * writes nothing, and records nothing.
+	 * Determines whether this run writes files. An ordinary run leaves it unset, so `place` resizes
+	 * nothing, writes nothing, and records nothing.
 	 */
 	readonly enabled?: boolean
 }
 
-/** The registry of capture states one run places, and the files it wrote placing them. */
+/** Holds the registry of capture states one run places, and the files it wrote placing them. */
 export interface PortfolioInterface {
-	/** The name of the variant this run renders. */
+	/** Holds the name of the variant this run renders. */
 	readonly variant: string
-	/** Every state placed so far, in placement order. */
+	/** Lists every state placed so far, in placement order. */
 	readonly placements: readonly string[]
-	/** Every path written so far, in write order. */
+	/** Lists every path written so far, in write order. */
 	readonly paths: readonly string[]
-	/** The registry expanded across every variant: the filenames a complete portfolio holds. */
+	/** Lists the filenames a complete portfolio holds: the registry expanded across every variant. */
 	readonly files: readonly string[]
 	/**
 	 * Places one registered state: applies the variant, stages the pane, and writes the verified
@@ -96,18 +96,18 @@ export interface PortfolioInterface {
 	place(state: string, element?: Element): Promise<string | undefined>
 }
 
-/** One scripted step a journal recorded, and what the surface did about it. */
+/** Represents one scripted step a journal recorded, and what the surface did about it. */
 export interface JournalStep {
-	/** What the run did, as one verb. */
+	/** Names what the run did, as one verb. */
 	readonly action: string
-	/** The exact thing it did it to. */
+	/** Names the exact thing it did it to. */
 	readonly trigger: string
-	/** What was observed on the surface after the step landed. */
+	/** Holds what was observed on the surface after the step landed. */
 	readonly result: string
 }
 
 /**
- * The record of one scenario: every step it took and everything the page said while it ran.
+ * Records one scenario: every step it took and everything the page said while it ran.
  *
  * @remarks
  * Recording is off until {@link JournalInterface.start} arms it, so a suite that never starts a
@@ -116,9 +116,9 @@ export interface JournalStep {
  * journal that swallowed what it read would hide exactly the diagnostics it exists to keep.
  */
 export interface JournalInterface {
-	/** Every step recorded since the journal started, in the order it was taken; a snapshot. */
+	/** Lists every step recorded since the journal started, in the order it was taken; a snapshot. */
 	readonly steps: readonly JournalStep[]
-	/** Every console line and uncaught failure the page emitted since it started; a snapshot. */
+	/** Lists every console line and uncaught failure the page emitted since it started; a snapshot. */
 	readonly output: readonly string[]
 	/**
 	 * Starts a fresh recording, dropping whatever the previous scenario left.

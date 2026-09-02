@@ -15,7 +15,7 @@ import {
  * Determines whether a rectangle lies wholly outside the browser viewport.
  *
  * @param rectangle - The measured client rectangle to inspect.
- * @returns `true` when no part of the rectangle intersects the viewport.
+ * @returns True if no part of the rectangle intersects the viewport; false otherwise.
  *
  * @example
  * ```ts
@@ -35,9 +35,9 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  * Determines whether a person can click one element where it currently sits.
  *
  * @param element - The element to judge.
- * @returns `true` when the element is connected, visible, laid out with a non-zero box, in the
+ * @returns True if the element is connected, visible, laid out with a non-zero box, in the
  * sequential focus order, neither disabled nor marked `aria-disabled="true"`, and outside every
- * `[inert]` subtree; `false` otherwise.
+ * `[inert]` subtree; false otherwise.
  *
  * @remarks
  * This is the one reachability filter the layer applies. `resolveRendered`, `clickAccessibleWithin`,
@@ -72,8 +72,7 @@ export function isReachable(element: Element): boolean {
  * Determines whether the accessibility tree presents one element at all.
  *
  * @param element - The element to judge.
- * @returns `false` when the element is hidden from assistive technology, from sight, or from both;
- * `true` otherwise.
+ * @returns True if the element is presented to assistive technology and to sight; false otherwise.
  *
  * @remarks
  * A control clipped to a zero-size rectangle is still announced, which is the whole point of that
@@ -1105,7 +1104,7 @@ export function parseCSSColor(value: string): Color | undefined {
  *
  * @param first - A CSS color expression or an already-parsed color.
  * @param second - A CSS color expression or an already-parsed color.
- * @returns `true` when every channel and the alpha agree within the tolerance; `false` otherwise,
+ * @returns True if every channel and the alpha agree within the tolerance; false otherwise,
  * including when either side names no readable color.
  *
  * @remarks

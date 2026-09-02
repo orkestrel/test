@@ -1,7 +1,7 @@
 import type { Color } from './types.js'
 
 /**
- * The interactive ARIA roles a bare accessible name is searched across.
+ * Names the interactive ARIA roles a bare accessible name is searched across.
  *
  * @remarks
  * A person names a control, not a role, so the one-argument resolver searches every role a control
@@ -28,7 +28,7 @@ export const ACCESSIBLE_ROLES: readonly string[] = Object.freeze([
 ])
 
 /**
- * The page a browser paints an unstyled document onto.
+ * Names the color a browser paints an unstyled document with.
  *
  * @remarks
  * This is the floor a backdrop walk ends on wherever the caller wants the browser's own canvas
@@ -38,8 +38,8 @@ export const ACCESSIBLE_ROLES: readonly string[] = Object.freeze([
 export const CANVAS_COLOR: Color = Object.freeze([255, 255, 255, 1])
 
 /**
- * The attribute marking the runner's tester pane, and the rule that sizes it, while a frame is
- * staged.
+ * Names the attribute marking the runner's tester pane, and the rule that sizes it, while a frame
+ * is staged.
  *
  * @remarks
  * `stagePane` writes it onto the pane and onto the stylesheet it appends, and `releasePane` finds
@@ -49,7 +49,7 @@ export const CANVAS_COLOR: Color = Object.freeze([255, 255, 255, 1])
 export const CAPTURE_PANE = 'data-capture-pane'
 
 /**
- * The roles whose accessible name is the text a reader can see inside them.
+ * Names the roles whose accessible name is the text a reader can see inside them.
  *
  * @remarks
  * `readName` reads an element in this list from its own rendered text, after every `aria-hidden`
@@ -69,7 +69,7 @@ export const CONTENT_ROLES: readonly string[] = Object.freeze([
 ])
 
 /**
- * The role each `input` type carries.
+ * Names the role each `input` type carries.
  *
  * @remarks
  * Membership is the contract. The map answers for `button`, `checkbox`, `email`, `number`,
@@ -94,7 +94,7 @@ export const FIELD_ROLES: Readonly<Record<string, string>> = Object.freeze({
 })
 
 /**
- * What sequential keyboard navigation can reach, before disabled and unrendered elements go.
+ * Names what sequential keyboard navigation can reach, before disabled and unrendered elements go.
  *
  * @remarks
  * `describeFocus` queries this selector and then drops what a browser drops: an element the
@@ -106,7 +106,7 @@ export const FOCUSABLE_SELECTOR =
 	'a[href], area[href], button, input, select, summary, textarea, [tabindex]'
 
 /**
- * The role a `th` carries for the header axis its `scope` names.
+ * Names the role a `th` carries for the header axis its `scope` names.
  *
  * @remarks
  * A header cell heads a column or a row, and this map answers for the `col` and `row` scopes that
@@ -119,7 +119,8 @@ export const HEADER_ROLES: Readonly<Record<string, string>> = Object.freeze({
 })
 
 /**
- * The role each listed tag carries in the accessibility tree when it declares none of its own.
+ * Names the role each listed tag carries in the accessibility tree when it declares none of its
+ * own.
  *
  * @remarks
  * Membership is the contract. The map answers for the sectioning elements `ARTICLE`, `ASIDE`,
