@@ -187,8 +187,6 @@ describe('createPortfolio', () => {
 			enabled: true,
 		})
 		const before = portfolio.states
-		const width = window.innerWidth
-		const height = window.innerHeight
 		const written = await portfolio.place('start-empty')
 		// The provider returns the written path in its host's own separator, and the runner reports
 		// its root with forward slashes on every host, so each side is compared through
