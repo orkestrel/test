@@ -239,6 +239,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resolveAccessible`     | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`                         | One visible, focus-reachable control, scrolled into view once before reachability is measured.                                                     |
 | `resolveRendered`       | function | `(first: string, second?: string) => HTMLElement`                                                       | The same resolver without the viewport requirement; the acting verbs use it.                                                                       |
+| `computeNamePattern`    | function | `(name: string) => RegExp`                                                                              | The pattern the hidden pass matches a name with, tolerating a decorative glyph at either edge.                                                     |
 | `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                                               | Whether a measured rectangle lies wholly outside the viewport.                                                                                     |
 | `isRendered`            | function | `(element: Element) => boolean`                                                                         | Whether the accessibility tree presents the element at all; no geometry is read, so a zero-size announced control passes.                          |
 | `isReachable`           | function | `(element: Element) => boolean`                                                                         | Whether a person can click the element where it sits; the one reachability filter every acting verb applies.                                       |
@@ -317,10 +318,35 @@ acting verb resolves through, so a click does not fail on a target the act itsel
 It is exported because a journey that needs a target before it is on screen needs the same rule
 rather than a second reading of it.
 
+`resolveRendered` runs two passes, and only the first one can return an element. The visible pass
+asks the role engine for the exact name over the elements the accessibility tree presents, so the
+name it matches is the one a screen reader announces: an `aria-hidden` icon beside the text
+contributes nothing to it, and a control captioned by a glyph resolves under the words a person
+reads. Every element the resolver returns, refuses as unreachable, or reports as ambiguous comes
+from that pass. The hidden pass runs only when the visible pass found nothing at all, and it decides
+which refusal the caller hears: `No interactive element has the accessible name "X"` when the page
+carries the name nowhere, `Interactive target "X" is not visible and focus-reachable` when a folded
+control carries it. Seeing a folded control means including hidden elements, which puts the glyph
+back into the computed name, so that pass matches `computeNamePattern` rather than the exact string.
+
+`computeNamePattern` anchors the name at both ends and admits a run of characters that are neither
+letters nor digits before it and after it. That is what a glyph is, so the pattern separates
+`Add building` beside an icon from `Add`, and the exact contract holds in the hidden pass as it does
+in the visible one. Its tolerance has two edges, and both cost a refusal voice rather than an
+element: a hidden icon whose own content is a word defeats the pattern, and a name differing from
+the requested one by punctuation alone satisfies it.
+
+`readPerception` runs one pass, because absence and concealment share its refusal. That pass asks
+over the presented elements too, so a region labelled by a heading that carries a glyph is read
+under the heading's words, and a region the tree does not present is refused as not visible.
+
 `clickAccessibleWithin` matches the region's name exactly and the control's name loosely. That
 combination is what a person does with a repeated short verb such as `Add`, or with a line whose
 rendered status completes its accessible name: the region supplies the context, and the name only
-has to be recognisable inside it.
+has to be recognisable inside it. The loose match reads a computed name that includes the hidden
+subtrees, so a glyph joins the text rather than displacing it and the control is still recognisable
+under the words beside it. That verb owns one refusal for a control it cannot reach, absent or
+hidden, so it needs no second pass to tell the two apart.
 
 `traverseAccessible` charges a step only when focus actually lands on an element, ends when focus
 revisits one — that is a complete cycle of the tab order — and re-resolves the target by name on
@@ -2506,19 +2532,30 @@ Each entry names the rules its file proves. The test names carry the cases.
   across the layer, in real Chromium against constructed markup. The resolver takes a bare name, a
   role that disambiguates a tab from its own panel, a name no element carries, a name carried only by
   a role outside `ACCESSIBLE_ROLES`, and the disabled, hidden, and inert matches that are present but
-  gated; `resolveAccessible` takes a target scrolled into view and one fixed outside the viewport
+  gated. It takes the glyph cases against a fixture stylesheet that really paints one: an exact name
+  beside an `aria-hidden` icon, the same shape folded so the hidden pass names it unreachable rather
+  than absent, a folded control carrying no glyph, the name the page carries nowhere, a short prefix
+  that resolves nothing whether the longer name is on screen or folded, and a painted control an
+  `aria-hidden` ancestor withholds, refused rather than returned. `computeNamePattern`
+  takes a glyph at either edge, the prefix and the trailing word it refuses, regular-expression
+  punctuation read as literal text, a requested name whose whitespace is collapsed, and both edges of
+  its tolerance. `resolveAccessible` takes a target scrolled into view and one fixed outside the viewport
   that stays there, and `isOutsideViewport` takes a rectangle wholly beyond each edge and one
   straddling an edge. `isReachable` takes a plain control and each condition it drops, a control the
   document no longer holds, a focusable SVG against an element from a foreign namespace, and the
   refused summary that proves it is the one filter the acting verbs apply; `isRendered` takes each
   removal a browser honours and, as the split from `isReachable`, a zero-size announced control.
   Each acting verb takes its happy path and every voice it owns, including both
-  region-scoped refusals and both native-disclosure ones. `traverseAccessible` takes a Tab-reachable
+  region-scoped refusals and both native-disclosure ones; `clickAccessibleWithin` also takes a
+  glyph-captioned control inside a region a glyph-carrying heading labels, which is the loose match
+  proving unchanged. `traverseAccessible` takes a Tab-reachable
   target; as the cap control, a lone target whose own focus handler blurs it, so focus never lands
   and the cap fails with an empty trail; and, as the cycle control, the same self-blurring target
   behind a reachable decoy, so the traversal completes one cycle and reports the decoy in its trail.
   The page readers take their own inputs: `readPerception` takes one named region including its
-  visually hidden text and its not-visible and ambiguous refusals, `readPage` the whole page as one
+  visually hidden text, a region a glyph-carrying heading labels through `aria-labelledby`, a painted
+  region an `aria-hidden` attribute withholds, and its not-visible and ambiguous refusals, `readPage`
+  the whole page as one
   normalized sentence, and
   `readFocus` a focused control's rendered text, a focused element that renders none, and nothing
   holding focus at all; `readValue` takes a rendered value and a control carrying none. The element

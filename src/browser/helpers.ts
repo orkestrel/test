@@ -102,6 +102,42 @@ export function isRendered(element: Element): boolean {
 }
 
 /**
+ * Computes the pattern that matches one accessible name a decorative glyph may sit beside.
+ *
+ * @param name - The exact accessible name a person reads, whitespace runs collapsed on the way in.
+ * @returns A pattern anchored at both ends, admitting a run of characters that are neither letters
+ * nor digits before the name and after it.
+ *
+ * @remarks
+ * A role query that includes hidden elements computes a name from the `aria-hidden` subtrees too,
+ * so an icon font's `::before` glyph joins the name a person never hears and an exact string never
+ * matches again. This pattern is what {@link resolveRendered} asks the hidden pass with, and its
+ * tolerance is bounded to what a glyph can be: a leading or trailing run carrying no letter and no
+ * digit. A hidden icon whose own content is a word still defeats it, and a name differing from the
+ * requested one by punctuation alone still satisfies it.
+ *
+ * That bound is affordable because the hidden pass chooses between two refusal voices and returns
+ * nothing. The visible pass decides which element a resolver returns, and it matches the exact
+ * string against the name the accessibility tree actually publishes.
+ *
+ * Pass this to a role query with `exact: true`. That flag is the engine's case-sensitivity switch
+ * as well as its exactness one, so a query carrying `exact: false` uppercases the computed name
+ * before testing a pattern against it and a lowercase letter in the requested name never matches.
+ *
+ * @example
+ * ```ts
+ * computeNamePattern('Add building').test('\uF4FE Add building') // true
+ * ```
+ */
+export function computeNamePattern(name: string): RegExp {
+	const wanted = name
+		.replaceAll(/\s+/g, ' ')
+		.trim()
+		.replaceAll(/[$()*+.?[\\\]^{|}]/g, '\\$&')
+	return new RegExp(`^[^\\p{L}\\p{N}]*${wanted}[^\\p{L}\\p{N}]*$`, 'u')
+}
+
+/**
  * Resolves one rendered, focus-reachable interactive element without requiring it to intersect the
  * viewport yet.
  *
@@ -115,6 +151,14 @@ export function isRendered(element: Element): boolean {
  * This is the resolver the acting verbs use, so a click does not fail on a target the act itself
  * scrolls into view. Use {@link resolveAccessible} wherever the target must already be on screen.
  *
+ * It runs two passes, and only the first one can return an element. The visible pass asks the role
+ * engine for the exact name over the elements the accessibility tree presents, which is the name a
+ * screen reader announces: an `aria-hidden` icon beside the text contributes nothing to it. The
+ * hidden pass runs only when the visible pass found nothing at all, and it decides which refusal
+ * the caller hears — a name the page carries nowhere, or a target that is there and out of reach.
+ * That pass must include hidden elements to see a folded control, which is what puts a glyph back
+ * into the computed name, so it asks with {@link computeNamePattern} rather than the exact string.
+ *
  * @example
  * ```ts
  * resolveRendered('tab', 'Drafts')
@@ -125,14 +169,19 @@ export function resolveRendered(first: string, second?: string): HTMLElement {
 	const roles = second === undefined ? ACCESSIBLE_ROLES : [first]
 	const matches: HTMLElement[] = []
 	for (const role of roles) {
-		for (const element of page
-			.getByRole(role, { name, exact: true, includeHidden: true })
-			.elements()) {
+		for (const element of page.getByRole(role, { name, exact: true }).elements()) {
 			if (element instanceof HTMLElement && !matches.includes(element)) matches.push(element)
 		}
 	}
 	if (matches.length === 0) {
-		throw new Error(`No interactive element has the accessible name "${name}"`)
+		const pattern = computeNamePattern(name)
+		const hidden = roles.some(
+			(role) =>
+				page.getByRole(role, { name: pattern, exact: true, includeHidden: true }).elements()
+					.length > 0,
+		)
+		if (!hidden) throw new Error(`No interactive element has the accessible name "${name}"`)
+		throw new Error(`Interactive target "${name}" is not visible and focus-reachable`)
 	}
 	const reachable = matches.filter((element) => isReachable(element))
 	if (reachable.length === 0) {
@@ -410,6 +459,13 @@ export async function traverseAccessible(name: string): Promise<HTMLElement> {
  * visually-hidden content.
  * @throws When the named region is absent, hidden, or ambiguous.
  *
+ * @remarks
+ * One pass answers this, because absence and concealment share the refusal. The pass asks the role
+ * engine over the elements the accessibility tree presents, so the name matched is the one a screen
+ * reader announces and an `aria-hidden` glyph in a heading a region points at contributes nothing
+ * to it. A region the tree does not present is refused as not visible, which is what a reader
+ * perceiving nothing there means.
+ *
  * @example
  * ```ts
  * readPerception('Run')
@@ -418,9 +474,7 @@ export async function traverseAccessible(name: string): Promise<HTMLElement> {
 export function readPerception(name: string): string {
 	const matches: HTMLElement[] = []
 	for (const role of ['alert', 'alertdialog', 'dialog', 'region', 'status', 'table', 'tabpanel']) {
-		for (const element of page
-			.getByRole(role, { name, exact: true, includeHidden: true })
-			.elements()) {
+		for (const element of page.getByRole(role, { name, exact: true }).elements()) {
 			if (element instanceof HTMLElement && !matches.includes(element)) matches.push(element)
 		}
 	}

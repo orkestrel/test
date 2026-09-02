@@ -12,6 +12,7 @@ import {
 	clickDisclosure,
 	colorEqual,
 	commitInput,
+	computeNamePattern,
 	contrast,
 	describeFocus,
 	describeTree,
@@ -169,6 +170,14 @@ const FIELD_ROLE_CASES: ReadonlyArray<{ readonly type: string; readonly role: st
 	{ type: 'url', role: 'textbox' },
 ]
 
+// An icon font paints its glyph as `::before` content on an element marked `aria-hidden`, which is
+// how Bootstrap Icons writes one. The character is a private-use codepoint, so only a name
+// computation that reads hidden subtrees ever sees it. The stylesheet is what makes the glyph real:
+// without it the element paints nothing and a case built on it proves nothing.
+const GLYPH = '\uF4FE'
+const GLYPH_STYLE = `.glyph::before { content: "${GLYPH}" }`
+const GLYPH_ICON = '<i class="glyph" aria-hidden="true"></i>'
+
 // Relative to this test file, which is where the provider resolves a screenshot path from. `tmp` is
 // ignored by git, so a written frame never reaches a commit.
 const FRAMES = '../../../tmp/capture/frame'
@@ -188,6 +197,38 @@ afterAll(async () => {
 })
 
 afterEach(resetFixtures)
+
+describe('computeNamePattern', () => {
+	it('admits a glyph run at either edge and nothing a reader would hear', () => {
+		const pattern = computeNamePattern('Add building')
+		expect(pattern.test('Add building')).toBe(true)
+		expect(pattern.test(`${GLYPH} Add building`)).toBe(true)
+		expect(pattern.test(`Add building ${GLYPH}`)).toBe(true)
+		expect(pattern.test('Add')).toBe(false)
+		expect(pattern.test('Add building now')).toBe(false)
+		expect(pattern.test('Please Add building')).toBe(false)
+	})
+
+	// `Save draft` is the control: it is what the same source matches when the parentheses reach the
+	// engine as a group rather than as the characters a person reads.
+	it('reads a name with regular-expression punctuation as the literal text', () => {
+		const pattern = computeNamePattern('Save (draft)')
+		expect(pattern.test('Save (draft)')).toBe(true)
+		expect(pattern.test('Save draft')).toBe(false)
+	})
+
+	it('collapses the requested name the way a role query collapses a computed one', () => {
+		expect(computeNamePattern('  Save   changes ').test('Save changes')).toBe(true)
+	})
+
+	// The two edges of the approximation, recorded rather than worked around. Both cost a refusal
+	// voice and neither can cost a wrong element, because the visible pass returns every element
+	// this helper never sees.
+	it('bounds its tolerance at a word, and admits a punctuation-only difference', () => {
+		expect(computeNamePattern('Add building').test('New Add building')).toBe(false)
+		expect(computeNamePattern('Save').test('Save!')).toBe(true)
+	})
+})
 
 describe('resolveRendered', () => {
 	it('resolves one interactive element by its bare accessible name', () => {
@@ -233,6 +274,65 @@ describe('resolveRendered', () => {
 				`Interactive target "${name}" is not visible and focus-reachable`,
 			)
 		}
+	})
+
+	it('resolves an exact name that sits beside an aria-hidden icon glyph', () => {
+		buildStylesheet(GLYPH_STYLE)
+		const container = buildFixture(`<button type="button">${GLYPH_ICON} Add building</button>`)
+		const icon = requireValue(container.querySelector('.glyph'))
+		expect(getComputedStyle(icon, '::before').content).toContain(GLYPH)
+		expect(resolveRendered('button', 'Add building')).toBe(container.querySelector('button'))
+		expect(resolveRendered('Add building')).toBe(container.querySelector('button'))
+	})
+
+	it('refuses a folded control beside a glyph as hidden rather than absent', () => {
+		buildStylesheet(GLYPH_STYLE)
+		buildFixture(`<button type="button" style="display: none">${GLYPH_ICON} Add building</button>`)
+		expect(() => resolveRendered('button', 'Add building')).toThrow(
+			'Interactive target "Add building" is not visible and focus-reachable',
+		)
+	})
+
+	// The visible pass reads the accessibility tree, so a control the tree withholds is refused
+	// where it was once returned. A journey that could still click it was acting on something no
+	// reader is told about.
+	it('refuses a control an aria-hidden ancestor withholds rather than returning it', () => {
+		buildFixture('<div aria-hidden="true"><button type="button">Muted</button></div>')
+		expect(() => resolveRendered('Muted')).toThrow(
+			'Interactive target "Muted" is not visible and focus-reachable',
+		)
+	})
+
+	it('refuses a folded control carrying no glyph as hidden rather than absent', () => {
+		buildFixture('<button type="button" style="display: none">Save</button>')
+		expect(() => resolveRendered('Save')).toThrow(
+			'Interactive target "Save" is not visible and focus-reachable',
+		)
+	})
+
+	it('refuses a name the page carries nowhere, hidden or not', () => {
+		buildFixture('<button type="button">Add building</button>')
+		expect(() => resolveRendered('Save')).toThrow(
+			'No interactive element has the accessible name "Save"',
+		)
+	})
+
+	it('keeps the exact contract in the hidden pass as well as the visible one', () => {
+		buildStylesheet(GLYPH_STYLE)
+		const container = buildFixture(
+			`<button type="button">${GLYPH_ICON} Add building</button>` +
+				`<button type="button" style="display: none">${GLYPH_ICON} Add column</button>`,
+		)
+		expect(resolveRendered('Add building')).toBe(container.querySelector('button'))
+		expect(() => resolveRendered('Add')).toThrow(
+			'No interactive element has the accessible name "Add"',
+		)
+		expect(() => resolveRendered('Add col')).toThrow(
+			'No interactive element has the accessible name "Add col"',
+		)
+		expect(() => resolveRendered('Add column')).toThrow(
+			'Interactive target "Add column" is not visible and focus-reachable',
+		)
 	})
 })
 
@@ -439,6 +539,19 @@ describe('clickAccessibleWithin', () => {
 		expect(vault.count).toBe(0)
 	})
 
+	it('activates a glyph-captioned control inside a glyph-labelled region', async () => {
+		buildStylesheet(GLYPH_STYLE)
+		const container = buildFixture(
+			'<section aria-labelledby="ledger-heading">' +
+				`<h2 id="ledger-heading">${GLYPH_ICON} Ledger</h2>` +
+				`<button type="button">${GLYPH_ICON} Monthly income ready</button></section>`,
+		)
+		const clicks = createRecorder<[event: Event]>()
+		requireValue(container.querySelector('button')).addEventListener('click', clicks.handler)
+		await clickAccessibleWithin('Ledger', 'button', 'Monthly income')
+		expect(clicks.count).toBe(1)
+	})
+
 	it('refuses a control the region does not reach', async () => {
 		buildFixture('<section aria-label="Ledger"><button type="button">Add row</button></section>')
 		await expect(clickAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrow(
@@ -579,6 +692,23 @@ describe('readPerception', () => {
 		expect(() => readPerception('Twin')).toThrow(
 			'Named region "Twin" is ambiguous across 2 elements',
 		)
+	})
+
+	it('reads a region whose label carries an aria-hidden glyph', () => {
+		buildStylesheet(GLYPH_STYLE)
+		buildFixture(
+			'<section aria-labelledby="plan-heading">' +
+				`<h2 id="plan-heading">${GLYPH_ICON} Build a carrier-ready schedule</h2>` +
+				'<p>Two runs queued</p></section>',
+		)
+		expect(readPerception('Build a carrier-ready schedule')).toBe(
+			'Build a carrier-ready schedule Two runs queued',
+		)
+	})
+
+	it('refuses a region the accessibility tree withholds, painted or not', () => {
+		buildFixture('<section aria-label="Muted" aria-hidden="true">Answer ready</section>')
+		expect(() => readPerception('Muted')).toThrow('Named region "Muted" is not visible')
 	})
 })
 
