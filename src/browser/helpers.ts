@@ -1,4 +1,4 @@
-import type { CaptureVariant, Color, ElementOptions, FrameOptions } from './types.js'
+import type { CaptureVariant, Color, ElementOptions, FrameOptions, FrameReading } from './types.js'
 import { commands, page, userEvent } from 'vitest/browser'
 import {
 	ACCESSIBLE_ROLES,
@@ -1826,12 +1826,18 @@ export function pixels(element: Element, property: string): number {
  * The wait is two frames rather than a delay: the first carries the resize into layout and the
  * second is the paint a screenshot reads.
  *
+ * The viewport the tester had before this staging is written onto that rule element as the
+ * {@link CAPTURE_PANE} value, in `<width>x<height>` form, and {@link releasePane} hands it back.
+ * Staging an already-staged pane leaves that value alone, so a capture that stages a second time to
+ * cover a taller document still releases to the viewport the tester started with.
+ *
  * @example
  * ```ts
  * await stagePane(390, 844)
  * ```
  */
 export async function stagePane(width: number, height: number): Promise<void> {
+	const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`
 	await page.viewport(width, height)
 	const frame = window.frameElement
 	const pane = frame?.parentElement
@@ -1842,7 +1848,7 @@ export async function stagePane(width: number, height: number): Promise<void> {
 	pane.setAttribute(CAPTURE_PANE, '')
 	if (owner.querySelector(`style[${CAPTURE_PANE}]`) === null) {
 		const rule = owner.createElement('style')
-		rule.setAttribute(CAPTURE_PANE, '')
+		rule.setAttribute(CAPTURE_PANE, viewport)
 		rule.textContent = [
 			`[${CAPTURE_PANE}],:has(>iframe[data-vitest])`,
 			'{--tester-transform:none !important;--tester-margin-left:0px !important}',
@@ -1864,25 +1870,36 @@ export async function stagePane(width: number, height: number): Promise<void> {
 }
 
 /**
- * Hands the tester pane back to the runner's own layout.
+ * Hands the tester pane back to the runner's own layout, at the viewport it had before staging.
  *
  * @remarks
  * A staged pane is the runner's fitting scale suppressed, so a pane left staged outlives the capture
  * that needed it and every later act in the file happens on a surface the runner is no longer
  * fitting to its window. What that costs is not a wrong picture: it is a control whose page
  * coordinates fall outside the pane, which the runner's own layout then intercepts, so an ordinary
- * press fails with the voice of a control that is covered. Calling this on an unstaged pane does
+ * press fails with the voice of a control that is covered.
+ *
+ * The viewport goes back too, because a capture resizes the tester and the size it chose belongs to
+ * the frame rather than to the file: a test that runs after one and reads a breakpoint would
+ * otherwise read the last capture's variant. The size comes off the {@link CAPTURE_PANE} value
+ * {@link stagePane} wrote onto the rule element, which is the reading taken before the first
+ * staging. Calling this on an unstaged pane finds no such value, so it changes nothing and resizes
  * nothing.
  *
  * @example
  * ```ts
- * releasePane()
+ * await releasePane()
  * ```
  */
-export function releasePane(): void {
+export async function releasePane(): Promise<void> {
 	const pane = window.frameElement?.parentElement
+	const rule = pane?.ownerDocument.querySelector(`style[${CAPTURE_PANE}]`)
+	const viewport = rule?.getAttribute(CAPTURE_PANE)?.split('x') ?? []
 	pane?.removeAttribute(CAPTURE_PANE)
-	pane?.ownerDocument.querySelector(`style[${CAPTURE_PANE}]`)?.remove()
+	rule?.remove()
+	const width = Number(viewport[0])
+	const height = Number(viewport[1])
+	if (Number.isFinite(width) && Number.isFinite(height)) await page.viewport(width, height)
 }
 
 /**
@@ -1901,8 +1918,19 @@ export function releasePane(): void {
  * path, so the two are compared by the segments that survive resolving `.` and `..` lexically — the
  * refusal is what a provider resolving that path against a different base would trip.
  *
+ * The frame covers the whole document at `options.width`, whatever `options.height` is. The
+ * provider shoots the tester's body in the top-level page's own coordinates, so a document taller
+ * than the pane is painted for the pane's height and the rows below it are the runner's page rather
+ * than the document — a frame that reads as the surface down to the fold and as bare canvas after
+ * it. The document is therefore laid out at the declared viewport first and, where it is taller
+ * than that, the pane is staged a second time at the document's own height for the shot alone. One
+ * layout caveat rides with that: a rule bound to the viewport height — a `vh` length, a fixed
+ * footer, a full-height panel — lays out against the taller pane while the shot is taken, so a
+ * surface built out of those reports its scrolled-open height rather than one screen of it.
+ *
  * Omit `options.element` to shoot the whole page. The pane is staged for the frame and released
- * before this returns, on the failing path as well as the passing one.
+ * before this returns, on the failing path as well as the passing one, which hands the tester back
+ * the viewport it had before the first staging.
  *
  * @example
  * ```ts
@@ -1912,6 +1940,8 @@ export function releasePane(): void {
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	try {
 		await stagePane(options.width, options.height)
+		const covered = document.documentElement.scrollHeight
+		if (covered > options.height) await stagePane(options.width, covered)
 		const shot =
 			options.element === undefined
 				? await page.screenshot({ path: options.path, base64: true })
@@ -1932,7 +1962,63 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		}
 		return shot.path
 	} finally {
-		releasePane()
+		await releasePane()
+	}
+}
+
+/**
+ * Reads one written frame back and reports its size and the color its bottom row paints.
+ *
+ * @param path - The frame's absolute path, as `captureFrame` returns it.
+ * @returns The frame's size in device pixels and its floor.
+ * @throws Thrown when the runner cannot read the path, when the bytes there are not an image this
+ * browser decodes, and when the browser hands out no 2D canvas to measure them on.
+ *
+ * @remarks
+ * The reading comes off the written file rather than off the document that produced it, which is
+ * what makes it evidence about a capture: the browser's own image decoding and an
+ * `OffscreenCanvas` answer for the pixels a viewer would see, so a frame that ends on the runner's
+ * canvas reports that canvas whatever the document's style resolves to. Pass the path the provider
+ * resolved and `captureFrame` returned; the runner's `readFile` command resolves a relative path
+ * against its own root rather than against the calling test file, so a relative path names a file
+ * somewhere else.
+ *
+ * @example
+ * ```ts
+ * const reading = await readFrame(written)
+ * ```
+ */
+export async function readFrame(path: string): Promise<FrameReading> {
+	const encoded = await commands.readFile(path, 'base64').catch((cause: unknown) => {
+		throw new Error(`Capture frame at ${path} could not be read`, { cause })
+	})
+	const image = new Image()
+	image.src = `data:image/png;base64,${encoded}`
+	await image.decode().catch((cause: unknown) => {
+		throw new Error(`Capture frame at ${path} is not an image this browser decodes`, { cause })
+	})
+	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')
+	if (context === null) {
+		throw new Error(`Capture frame at ${path} cannot be measured without a 2D canvas`)
+	}
+	context.drawImage(image, 0, 0)
+	const row = context.getImageData(0, image.height - 1, image.width, 1).data
+	const red = row[0]
+	const green = row[1]
+	const blue = row[2]
+	const alpha = row[3]
+	let single = red !== undefined && green !== undefined && blue !== undefined
+	for (let pixel = 4; single && pixel < row.length; pixel += 4) {
+		single =
+			row[pixel] === red &&
+			row[pixel + 1] === green &&
+			row[pixel + 2] === blue &&
+			row[pixel + 3] === alpha
+	}
+	return {
+		width: image.width,
+		height: image.height,
+		floor: single ? `rgb(${String(red)}, ${String(green)}, ${String(blue)})` : undefined,
 	}
 }
 

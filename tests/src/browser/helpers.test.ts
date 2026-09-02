@@ -37,6 +37,7 @@ import {
 	readCascade,
 	readClasses,
 	readFocus,
+	readFrame,
 	readLayers,
 	readName,
 	readPage,
@@ -1795,16 +1796,32 @@ describe('stagePane', () => {
 		expect(Math.round(box.width)).toBe(390)
 		expect(Math.round(box.height)).toBe(844)
 		expect(window.innerWidth).toBe(390)
-		releasePane()
+		await releasePane()
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 		expect(owner.querySelector(`style[${CAPTURE_PANE}]`)).toBeNull()
 	})
 
-	it('releases an unstaged pane without complaining', () => {
+	it('hands the tester back the viewport it had before the staging', async () => {
+		// Read rather than written out, so the case pins the hand-back itself instead of the size the
+		// runner happens to start this file at.
+		const before = [window.innerWidth, window.innerHeight]
+		await stagePane(390, 844)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual([390, 844])
+		// A capture stages twice when the document outruns the pane, and the release owes the tester
+		// the viewport it had before the first staging rather than the one the second left.
+		await stagePane(390, 1200)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual([390, 1200])
+		await releasePane()
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
+	})
+
+	it('releases an unstaged pane without complaining', async () => {
 		const pane = requireValue(window.frameElement?.parentElement)
-		releasePane()
-		releasePane()
+		const before = [window.innerWidth, window.innerHeight]
+		await releasePane()
+		await releasePane()
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
 	})
 })
 
@@ -1862,6 +1879,79 @@ describe('captureFrame', () => {
 		const shot = await commands.readFile(part, 'base64')
 		expect(shot.length).toBeGreaterThan(0)
 		expect(shot).not.toBe(await commands.readFile(whole, 'base64'))
+	})
+
+	it('covers a document taller than the pane, down to its last row', async () => {
+		// The background is declared on the root element, so the browser paints it across the whole
+		// canvas the document owns rather than across a box inside it. Everything the frame holds
+		// beyond that canvas is the runner's own page, which is white, so the bottom row is what
+		// separates a covered document from a clipped one.
+		buildStylesheet('html { background: rgb(0, 128, 0) }')
+		buildFixture('<div style="height: 1600px">Taller than the pane</div>')
+		const covered = document.documentElement.scrollHeight
+		expect(covered).toBeGreaterThan(844)
+
+		const written = await captureFrame({ path: `${FRAMES}/tall.png`, width: 390, height: 844 })
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBeGreaterThanOrEqual(covered)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+	})
+
+	it('shoots a document shorter than the pane at the pane height, on the same floor', async () => {
+		buildStylesheet('html { background: rgb(0, 128, 0) }')
+		buildFixture('<div style="height: 40px">Shorter than the pane</div>')
+		const written = await captureFrame({ path: `${FRAMES}/short.png`, width: 390, height: 844 })
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBe(844)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+	})
+})
+
+describe('readFrame', () => {
+	// guides/test.md → Patterns → "Read a written frame back". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('reports the size of a written frame and the color its bottom row paints', async () => {
+		buildStylesheet('html { background: rgb(0, 128, 0) }')
+		const written = await captureFrame({ path: `${FRAMES}/read.png`, width: 390, height: 844 })
+
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBe(844)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+
+		// The frame is decoded rather than computed, so the floor is a second reading of the same
+		// claim: the cascade's own answer for the canvas this document paints.
+		expect(reading.floor).toBe(style(document.documentElement, 'background-color'))
+	})
+
+	it('reports no floor for a frame whose bottom row paints more than one color', async () => {
+		const container = buildFixture(
+			'<div style="width: 40px; height: 40px; background: linear-gradient(' +
+				'to right, rgb(0, 0, 0) 50%, rgb(255, 255, 255) 50%)">.</div>',
+		)
+		const written = await captureFrame({
+			path: `${FRAMES}/split.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.firstElementChild),
+		})
+
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(40)
+		expect(reading.floor).toBeUndefined()
+	})
+
+	it('refuses a path holding no file, and a file holding no image', async () => {
+		const absent = `${server.config.root}/tmp/capture/frame/absent.png`
+		await expect(readFrame(absent)).rejects.toThrow(`Capture frame at ${absent} could not be read`)
+
+		const planted = `${server.config.root}/tmp/capture/frame/planted-read.png`
+		await commands.writeFile(planted, 'not a frame')
+		await expect(readFrame(planted)).rejects.toThrow(
+			`Capture frame at ${planted} is not an image this browser decodes`,
+		)
 	})
 })
 

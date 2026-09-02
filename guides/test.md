@@ -214,6 +214,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `Color`              | type      | `readonly [red, green, blue, alpha]` — one rendered color, its channels 0–255 and its alpha 0–1.                                                    |
 | `ElementOptions`     | interface | `{ classes?, text?, attributes? }` — the class list, the text, and the attributes one built element carries.                                        |
 | `FrameOptions`       | interface | `{ path, width, height, element? }` — where one frame is written, the viewport it is shot at, and what it shoots.                                   |
+| `FrameReading`       | interface | `{ width, height, floor }` — one written frame's size in device pixels, and the single color its bottom row paints.                                 |
 | `CaptureVariant`     | interface | `{ name, width, height, apply? }` — one theme-and-viewport pair, and the document change it needs first.                                            |
 | `PortfolioOptions`   | interface | `{ states, variants, variant, directory, enabled? }` — the registry, the matrix, this run's variant, where it writes, and whether it writes at all. |
 | `PortfolioInterface` | interface | `{ variant, states, paths, files }` plus `place` — one run's registry and what it placed.                                                           |
@@ -226,7 +227,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | -------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `ACCESSIBLE_ROLES`   | const | `readonly string[]`                | The interactive roles a bare accessible name is searched across.                                                                   |
 | `CANVAS_COLOR`       | const | `Color`                            | Opaque white: the page a browser paints an unstyled document onto.                                                                 |
-| `CAPTURE_PANE`       | const | `string`                           | The attribute marking the runner's tester pane, and the rule sizing it, while a frame is staged.                                   |
+| `CAPTURE_PANE`       | const | `string`                           | The attribute marking the runner's tester pane, and the rule sizing it; that rule carries the viewport the release hands back.     |
 | `CONTENT_ROLES`      | const | `readonly string[]`                | The roles `readName` names from the text a reader can see inside them.                                                             |
 | `FIELD_ROLES`        | const | `Readonly<Record<string, string>>` | The role each `input` type carries; a type it omits exposes none.                                                                  |
 | `FOCUSABLE_SELECTOR` | const | `string`                           | What sequential keyboard navigation can reach, before the removals `describeFocus` applies.                                        |
@@ -279,8 +280,9 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `contrast`              | function | `(element: Element, floor?: Color) => number`                                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.                      |
 | `readRing`              | function | `(control: Element, worn?: Element) => number \| undefined`                                             | The ratio the painted focus chrome reaches against its backdrop; `undefined` off `:focus-visible` or with no painted chrome.                       |
 | `stagePane`             | function | `(width: number, height: number) => Promise<void>`                                                      | Sets the viewport and renders the runner's tester pane at that size, unscaled.                                                                     |
-| `releasePane`           | function | `() => void`                                                                                            | Hands the staged pane back to the runner's own layout.                                                                                             |
-| `captureFrame`          | function | `(options: FrameOptions) => Promise<string>`                                                            | Stages, shoots, reads the file back, and returns the verified absolute path; releases the pane either way.                                         |
+| `releasePane`           | function | `() => Promise<void>`                                                                                   | Hands the staged pane back to the runner's own layout, at the viewport the tester had before staging.                                              |
+| `captureFrame`          | function | `(options: FrameOptions) => Promise<string>`                                                            | Stages, shoots the whole document at that width, reads the file back, and returns the verified absolute path; releases the pane either way.        |
+| `readFrame`             | function | `(path: string) => Promise<FrameReading>`                                                               | One written frame's size in device pixels and the single color its bottom row paints; refuses a path holding no frame.                             |
 | `readCascade`           | function | `() => ReadonlySet<string>`                                                                             | Every class token the stylesheets loaded into this document define.                                                                                |
 | `readClasses`           | function | `(root: ParentNode) => ReadonlySet<string>`                                                             | Every class token the markup under one root carries, the root's own included.                                                                      |
 | `readRules`             | function | `() => readonly CSSRule[]`                                                                              | Every rule the loaded stylesheets hold, level by level, nested grouping rules included; a `@keyframes` rule is collected and its children are not. |
@@ -473,7 +475,10 @@ tester layout, which is contract rather than accident: `vitest@4.1.11` is the ve
 `--viewport-width`, and `--viewport-height` custom properties it writes. A release that renames any
 of them reddens the size check rather than writing a wrong frame. Always hand the pane back with
 `releasePane`: a tester left pinned at a viewport taller than the window puts its lower half beyond
-what a pointer can reach, so the next ordinary press fails as a control that is covered.
+what a pointer can reach, so the next ordinary press fails as a control that is covered. The release
+also resizes the tester to the viewport it had before the staging, which it reads off the rule
+element it removes, so the capture's variant size belongs to the frame rather than to every test
+that runs after it.
 
 `captureFrame` stages, shoots, and proves the file. The path a screenshot call returns is the path
 it meant to write, so `captureFrame` reads that file back through the runner's built-in `readFile`
@@ -481,13 +486,33 @@ command and compares it with the shot itself, which is what separates this run's
 earlier run left behind. It releases the pane in a `finally`, so a refusal at any stage hands the
 tester back before it propagates.
 
+The frame covers the whole document at the width it was given, whatever height it was given. The
+provider shoots the tester's body in the top-level page's own coordinates, so a document taller than
+the pane paints for the pane's height and the rows under it are the runner's page: the frame reads
+as the surface down to the fold and as bare canvas after it. `captureFrame` therefore lays the
+document out at the declared viewport, reads the height it takes, and stages the pane a second time
+at that height for the shot alone. One layout caveat rides with it: a rule bound to the viewport
+height — a `vh` length, a fixed footer, a full-height panel — lays out against the taller pane while
+the shot is taken, so a surface built out of those photographs as its scrolled-open self rather than
+as one screen.
+
+`readFrame` reads a written frame back: its size in device pixels, and the single color its bottom
+row paints. The reading comes off the file through the browser's own image decoding rather than off
+the document that produced it, which is what makes it evidence about the capture rather than a
+second look at the style that fed it — a clipped frame reports the runner's white canvas as its
+floor while every style in the document still resolves to the document's own background. Pass the
+absolute path `captureFrame` returned: the runner's `readFile` command resolves a relative path
+against its own root rather than against the calling test file.
+
 `createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
 naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
 resizes nothing, writes nothing, and records nothing, so a journey calls it unconditionally. An
 enabled `place` applies the variant and writes `<directory>/<state>--<variant>.png` through
-`captureFrame`, so it stages the pane at the variant's size, verifies the written bytes, and records
-only a path that read back as this run's own frame. `states` and `paths` hand out snapshots, so a
-list read before a placement stays what it was.
+`captureFrame`, so it stages the pane at the variant's size, covers the whole document, verifies the
+written bytes, and records only a path that read back as this run's own frame. The tester comes back
+at the viewport it had before the placement, so a journey that places a state carries on at its own
+size rather than at the variant's. `states` and `paths` hand out snapshots, so a list read before a
+placement stays what it was.
 
 `createJournal` records rather than replaces. Every intercepted console call is forwarded to the
 channel that was there when the journal started, so a run under a journal prints exactly what it
@@ -836,6 +861,9 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                 | `stagePane`             |
 | `Capture frame was written to <path> where <path> was asked for`                      | `captureFrame`          |
 | `Capture frame at <path> is not the one this run shot`                                | `captureFrame`          |
+| `Capture frame at <path> could not be read`                                           | `readFrame`             |
+| `Capture frame at <path> is not an image this browser decodes`                        | `readFrame`             |
+| `Capture frame at <path> cannot be measured without a 2D canvas`                      | `readFrame`             |
 | `Capture variant "<name>" is not registered`                                          | `createPortfolio`       |
 | `Capture state "<state>" is not registered`                                           | `place`                 |
 | `Capture state "<state>" is already placed`                                           | `place`                 |
@@ -853,7 +881,10 @@ was asked for` fires where the provider resolves a screenshot path against a bas
 calling test file. `Capture frame at <path> is not the one this run shot` fires where the file on
 disk disagrees with the bytes the provider handed back — which a provider that overwrites its target
 never produces, so the suite proves that comparison discriminates with a planted file rather than by
-reaching the refusal.
+reaching the refusal. `Capture frame at <path> cannot be measured without a 2D canvas` is narrowing
+of the same kind: a canvas allocated for this reading and asked for no other context type hands one
+back. `readFrame`'s other two refusals are driven, by a path holding no file and by a file holding
+no image.
 
 ### Refusals outside the journey layer
 
@@ -1146,7 +1177,12 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     them reddens `stagePane`'s size check, which throws
     `Tester pane rendered <w>x<h> for a <w>x<h> viewport` rather than writing a wrong frame. The
     coupling therefore fails loudly, and the version this rule names moves with the fix instead of a
-    suite shipping thumbnails nobody inspects.
+    suite shipping thumbnails nobody inspects. The same layout decides what a frame covers: the
+    provider shoots the tester's body in the top-level page's coordinates, so `captureFrame` stages
+    the pane a second time at the document's own height wherever the document outruns the declared
+    one, and a frame is never shorter than the document it photographs. What the capture borrows it
+    gives back — `releasePane` returns the tester to the viewport it held before the staging, so the
+    variant a frame was shot at belongs to that frame alone.
 
 ### Threat model
 
@@ -2477,6 +2513,35 @@ await portfolio.place('start-empty')
 portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
 ```
 
+### Read a written frame back
+
+A capture is a claim about pixels, so prove it against the pixels. In the following fence the
+document declares `html { background: rgb(0, 128, 0) }` on its root element and carries content
+shorter than a 390x844 pane.
+
+```ts
+import { captureFrame, readFrame } from '@orkestrel/test/browser'
+
+const written = await captureFrame({
+	path: '../../../tmp/capture/frame/read.png',
+	width: 390,
+	height: 844,
+})
+
+const reading = await readFrame(written)
+reading.width // 390 — the pane's width, in device pixels
+reading.height // 844 — the pane's height, because this document is shorter than the pane
+reading.floor // 'rgb(0, 128, 0)' — the document's own background, all the way down
+```
+
+The floor is what separates a covered frame from a clipped one. The rows a capture cannot paint are
+the runner's own page rather than the document, so a clipped frame reads `'rgb(255, 255, 255)'`
+there while every style in the document still resolves to the background it declared. Shoot the same
+document at a taller fixture and the reading answers for the whole of it: the height is at least
+`document.documentElement.scrollHeight` and the floor is that same background. A bottom row painting
+more than one color — a split gradient, a two-column footer — reports `undefined` rather than
+picking one of them.
+
 ### Practices
 
 - **Adopt one helper at a time.** Replace a package's local recorder, then its delay, then its
@@ -2609,11 +2674,17 @@ Each entry names the rules its file proves. The test names carry the cases.
   a control that is not focused, a focused control left the browser's own ring, a focus style that
   only repaints the control's fill, and a `worn` element whose reading separates from the control's
   own. `stagePane` takes the marked pane, the tester
-  rendered at the viewport it was given, and a release that runs twice without complaining;
+  rendered at the viewport it was given, a release that runs twice without complaining, and a
+  release after two stagings that hands back the viewport the tester held before the first;
   `captureFrame` takes a real file written, read back, and matched, with a planted file as the
   comparison's negative control, one element shot rather than the page, and a pane pinned to the
   wrong size by a rule of higher specificity, which is the refusal that also proves the release runs
-  on the failing path. `readCascade` takes class tokens collected from plain and grouped rules and
+  on the failing path. It also takes a document taller than the pane, whose frame reaches the
+  document's own scroll height and ends on the background the document declares rather than on the
+  runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height on
+  that same floor. `readFrame` takes a written frame's size and floor, read a second way through the
+  cascade's own answer for the same canvas, a bottom row split between two colors reported as no
+  floor at all, a path holding no file, and a file holding no image. `readCascade` takes class tokens collected from plain and grouped rules and
   only real ones; `readRows` takes a row joined from its own text nodes rather than from run-together
   content, and an empty list; `extractOrphans` takes a child class rendered outside its container
   with a nested one left alone, nothing reported when every child sits inside one, and, as the

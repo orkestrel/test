@@ -75,6 +75,7 @@ export const ROUTED_FENCES: Readonly<Record<string, string>> = Object.freeze({
 	'Find a rule in the cascade': 'tests/src/browser/helpers.test.ts',
 	'Read the classes and styles the markup carries': 'tests/src/browser/helpers.test.ts',
 	'Remove an IndexedDB database': 'tests/src/browser/helpers.test.ts',
+	'Read a written frame back': 'tests/src/browser/helpers.test.ts',
 	'Record a browser journal': 'tests/src/browser/factories.test.ts',
 	'Place a capture portfolio': 'tests/src/browser/factories.test.ts',
 })

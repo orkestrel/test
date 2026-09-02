@@ -43,8 +43,9 @@ export const CANVAS_COLOR: Color = Object.freeze([255, 255, 255, 1])
  *
  * @remarks
  * `stagePane` writes it onto the pane and onto the stylesheet it appends, and `releasePane` finds
- * both by it. Nothing else reads it, so a document carrying it after a capture returned is a pane
- * that was never released.
+ * both by it. The stylesheet's value is the viewport the tester had before the first staging, in
+ * `<width>x<height>` form, which is what `releasePane` hands back. Nothing else reads it, so a
+ * document carrying it after a capture returned is a pane that was never released.
  */
 export const CAPTURE_PANE = 'data-capture-pane'
 

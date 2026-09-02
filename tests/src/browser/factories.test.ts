@@ -177,7 +177,7 @@ describe('createPortfolio', () => {
 		expect(portfolio.states).toStrictEqual([])
 	})
 
-	it('applies the variant, resizes the viewport, writes the file, and records it', async () => {
+	it('applies the variant, hands the viewport back, writes the file, and records it', async () => {
 		const applied = createRecorder<[]>()
 		const portfolio = createPortfolio({
 			states: STATES,
@@ -187,6 +187,8 @@ describe('createPortfolio', () => {
 			enabled: true,
 		})
 		const before = portfolio.states
+		const width = window.innerWidth
+		const height = window.innerHeight
 		const written = await portfolio.place('start-empty')
 		// The provider returns the written path in its host's own separator, and the runner reports
 		// its root with forward slashes on every host, so each side is compared through
@@ -195,8 +197,10 @@ describe('createPortfolio', () => {
 			`${server.config.root}/tmp/capture/portfolio/start-empty--dark-390.png`,
 		)
 		expect(applied.count).toBe(1)
-		expect(window.innerWidth).toBe(390)
-		expect(window.innerHeight).toBe(844)
+		// `place` shoots at the variant's viewport and `captureFrame` hands the tester back, so the
+		// reading after it is the viewport this file started at rather than the variant's.
+		expect(window.innerWidth).toBe(width)
+		expect(window.innerHeight).toBe(height)
 		expect(normalizePath(requireValue(written))).toBe(expected)
 		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 		expect(portfolio.states).toStrictEqual(['start-empty'])
@@ -296,9 +300,10 @@ describe('createPortfolio', () => {
 			expect(portfolio.states).toStrictEqual(['start-empty'])
 
 			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
-			// The placement above left the viewport and the theme at what `dark-390` selects, so a
-			// viewport and a theme that variant does not produce are staged before the disabled call.
-			// The readings after it then answer for that call rather than for the one before it.
+			// The placement above handed the viewport back and left the theme at what `dark-390`
+			// selects, so a viewport and a theme that variant does not produce are staged before the
+			// disabled call. The readings after it then answer for that call rather than for the one
+			// before it.
 			await page.viewport(320, 480)
 			document.documentElement.removeAttribute('data-theme')
 			expect(window.innerWidth).toBe(320)

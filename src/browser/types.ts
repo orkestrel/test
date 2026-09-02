@@ -38,6 +38,26 @@ export interface FrameOptions {
 	readonly element?: Element | undefined
 }
 
+/**
+ * One written frame, read back from the file a capture produced.
+ *
+ * @remarks
+ * The floor is the frame's bottom row, because that row is where coverage shows: a frame shot at a
+ * pane shorter than the document ends on the runner's own canvas rather than on the document's
+ * background, and the two read as different colors. A row counts as one color only when every
+ * channel matches across it, alpha included, and `floor` names the three color channels of that one
+ * color in the `rgb(r, g, b)` form a computed style is written in, so a literal comparison,
+ * `parseColor`, and `colorEqual` all take it.
+ */
+export interface FrameReading {
+	/** The frame's width in device pixels. */
+	readonly width: number
+	/** The frame's height in device pixels. */
+	readonly height: number
+	/** The single color the frame's bottom row paints; `undefined` where that row paints several. */
+	readonly floor: string | undefined
+}
+
 /** One theme-and-viewport pair a capture run renders. */
 export interface CaptureVariant {
 	/** The variant's name, which is the second half of every filename the run writes. */
