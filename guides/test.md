@@ -280,6 +280,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `readBackdrop`          | function | `(element: Element, floor: Color) => Color`                                                             | The opaque color behind an element, every translucent layer composited onto the required floor.                                                    |
 | `contrast`              | function | `(element: Element, floor?: Color) => number`                                                           | The WCAG 2.x ratio for one element's text; an omitted floor refuses an unpainted stack and a supplied one composites onto it.                      |
 | `readRing`              | function | `(control: Element, worn?: Element) => number \| undefined`                                             | The ratio the painted focus chrome reaches against its backdrop; `undefined` off `:focus-visible` or with no painted chrome.                       |
+| `measureContent`        | function | `() => number`                                                                                          | The row the document's own content ends on, rounded up; the same reading under a pane taller than the document as under a shorter one.             |
 | `stagePane`             | function | `(width: number, height: number) => Promise<void>`                                                      | Sets the viewport and renders the runner's tester pane at that size, unscaled.                                                                     |
 | `releasePane`           | function | `() => Promise<void>`                                                                                   | Hands the staged pane back to the runner's own layout, at the viewport the tester had before staging.                                              |
 | `captureFrame`          | function | `(options: FrameOptions) => Promise<string>`                                                            | Stages, shoots the whole document at that width, reads the file back, and returns the verified absolute path; releases the pane either way.        |
@@ -500,19 +501,37 @@ as the surface down to the fold and as bare canvas after it. `captureFrame` ther
 document out at the declared viewport, measures the height the shot needs, and stages the pane again
 at that height for the shot alone.
 
-The measurement is the larger of the body's own box, rounded up, and the document's scroll height.
-The box is what the provider clips the shot to and it can end part way through a row, while
-`scrollHeight` is an integer that rounds such a box to the nearest one, so a body ending on a
-fraction under a half reads back a row short of what the frame will hold and that row comes out as
-the runner's page. The measurement is taken again after every staging, because a rule bound to the
-viewport height — a `vh` length, a fixed footer, a full-height panel — lays the document out taller
-against the taller pane, so a surface built out of those photographs as its scrolled-open self
-rather than as one screen, and the reading taken before that staging is stale by exactly what the
-reflow added. The re-reading stops when a reading no longer outruns the pane it was taken under. A
+The measurement is `measureContent`, floored at the declared height because the declared viewport is
+the smallest frame a variant asks for. Read the content's edge rather than the body's box: the box
+is the larger of the content and the pane, so every pane staged over the document stretches it and
+reads back as the document's own height. A capture that staged a pane taller than the document could
+not descend from a reading like that — the box, `body.scrollHeight`, `body.offsetHeight`, and
+`documentElement.scrollHeight` each answer with the pane. `measureContent` walks the elements inside
+the body instead, taking the largest bottom edge in document coordinates plus that element's own
+bottom margin, and adds the body's and the root's bottom padding and margin under them. It rounds
+up, which is what covers a body ending part way through a row: a box ending on a fraction under a
+half is a row the integer scroll height drops, and that row comes out as the runner's page.
+
+The edge is read again after every staging, because a rule bound to the viewport height — a `vh`
+length, a fixed footer, a full-height panel — lays the document out taller against the taller pane,
+so a surface built out of those photographs as its scrolled-open self rather than as one screen, and
+the reading taken before that staging is stale by exactly what the reflow added. Restaging at the
+edge alone converges on such a document without arriving: a rule that keeps half the pane reads
+1322, 1561, 1681, and 1741 against a fixed point of 1800, halving what is left each time. Each
+staging
+therefore carries the growth the one before it produced, staging at the edge plus that growth, which
+lands on the fixed point instead of creeping toward it: 1322, then 1800. The first staging carries
+no growth, because nothing has grown yet, so a document of fixed content is staged at its own edge
+and shot there — a 1600-row document reads back as a 1600-row frame rather than as one an overshoot
+stretched.
+
+The re-reading stops when the pane and the edge agree, which is the pane the shot is taken at. A
 rule that adds height with every pane never reaches that point, so the re-reading is bounded by
 `CAPTURE_STAGINGS` and the shot is refused with
 `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
-written at a height that is already wrong.
+written at a height that is already wrong. That bound is 4: a document holding half the pane plus a
+fixed block settles in two restagings, one whose growth is capped part way settles in three, and
+the fourth is headroom.
 
 `readFrame` reads a written frame back: its size in device pixels, and the single color its bottom
 row paints. The reading comes off the file through the browser's own image decoding rather than off
@@ -1200,12 +1219,14 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     suite shipping thumbnails nobody inspects. The same layout decides what a frame covers: the
     provider shoots the tester's body in the top-level page's coordinates, so `captureFrame` stages
     the pane again at the document's own height wherever the document outruns the declared one, and
-    a frame is never shorter than the document it photographs. That height is the body's box rounded
-    up or the document's scroll height, whichever is larger, and it is read again after every
-    staging, because the box can end part way through a row that `scrollHeight` rounds away and a
-    rule bound to the viewport height lays the document out taller against the taller pane. The
-    re-reading is bounded by `CAPTURE_STAGINGS`, and a document still growing at that bound is
-    refused rather than photographed at a stale height. What the capture borrows it gives back —
+    a frame is neither shorter nor taller than the document it photographs. That height is
+    `measureContent`, the content's own edge rounded up, rather than the body's box: the box is the
+    larger of the content and the pane, so a taller pane stretches it and a capture cannot read its
+    way back down. The edge is read again after every staging, because a rule bound to the viewport
+    height lays the document out taller against the taller pane, and each staging carries the growth
+    the one before it produced so a converging document lands on its fixed point rather than
+    creeping toward it. The re-reading is bounded by `CAPTURE_STAGINGS`, and a document still
+    growing at that bound is refused rather than photographed at a stale height. What the capture borrows it gives back —
     `releasePane` returns the tester to the viewport it held before the staging, so the variant a
     frame was shot at belongs to that frame alone, and a suite that wants a size of its own calls
     `page.viewport` rather than this pair.
@@ -2539,6 +2560,33 @@ await portfolio.place('start-empty')
 portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
 ```
 
+### Measure a document's content edge
+
+A capture stages the pane at the height the document needs, and the body's box cannot answer for
+that height once the pane is taller than the document. In the following fence the document holds
+1600 rows of fixed content and nothing is bound to the viewport.
+
+```ts
+import { measureContent, releasePane, stagePane } from '@orkestrel/test/browser'
+
+await stagePane(390, 844)
+measureContent() // 1600 — the row the last content ends on
+document.documentElement.scrollHeight // 1600 — the box, which is the content under this pane
+
+await stagePane(390, 2356)
+measureContent() // 1600 — unchanged, because nothing in the document moved
+document.documentElement.scrollHeight // 2356 — the box, stretched to the pane
+
+await releasePane()
+```
+
+The second pair is what the reading exists for. Every box a document exposes — the body's rectangle,
+`body.scrollHeight`, `body.offsetHeight`, `documentElement.scrollHeight` — is the larger of the
+content and the pane, so a caller that has staged too tall a pane reads that pane back and cannot
+descend from it. `measureContent` walks the elements inside the body instead, so it descends. Where
+the document is laid out against the viewport, it moves with the viewport and reports what the
+reflow produced rather than what the pane claimed.
+
 ### Read a written frame back
 
 A capture is a claim about pixels, so prove it against the pixels. In the following fence the
@@ -2563,8 +2611,8 @@ reading.floor // 'rgb(0, 128, 0)' — the document's own background, all the way
 The floor is what separates a covered frame from a clipped one. The rows a capture cannot paint are
 the runner's own page rather than the document, so a clipped frame reads `'rgb(255, 255, 255)'`
 there while every style in the document still resolves to the background it declared. Shoot the same
-document at a taller fixture and the reading answers for the whole of it: the height is at least
-`document.documentElement.scrollHeight` and the floor is that same background. A bottom row painting
+document at a taller fixture and the reading answers for the whole of it and no more: the height is
+the content edge `measureContent` read, and the floor is that same background. A bottom row painting
 more than one color — a split gradient, a two-column footer — reports `undefined` rather than
 picking one of them.
 
@@ -2699,20 +2747,30 @@ Each entry names the rules its file proves. The test names carry the cases.
   `readRing` takes a painted outline and a painted box-shadow reached through `traverseAccessible`,
   a control that is not focused, a focused control left the browser's own ring, a focus style that
   only repaints the control's fill, and a `worn` element whose reading separates from the control's
-  own. `stagePane` takes the marked pane, the tester
+  own. `measureContent` takes a 1600-row document read under an 844 pane and under a 2356 one,
+  against the scroll height that agrees with it under the shorter pane and stretches to the pane
+  under the taller, and a document whose last element carries a bottom margin under a body carrying
+  bottom padding, where a reading taken from rectangles alone stops 100 rows short. `stagePane`
+  takes the marked pane, the tester
   rendered at the viewport it was given, a release that runs twice without complaining, and a
   release after two stagings that hands back the viewport the tester held before the first;
   `captureFrame` takes a real file written, read back, and matched, with a planted file as the
   comparison's negative control, one element shot rather than the page, and a pane pinned to the
   wrong size by a rule of higher specificity, which is the refusal that also proves the release runs
-  on the failing path. It also takes a document taller than the pane, whose frame reaches the
-  document's own scroll height and ends on the background the document declares rather than on the
-  runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height on
-  that same floor. The height the shot is staged at takes its own cases. A body whose box ends on a
+  on the failing path. It also takes a document taller than the pane, whose frame equals the
+  fixture's own declared 1600 rows and ends on the background the document declares rather than on
+  the runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height
+  on that same floor. The equality is the control that an overshoot adds no rows: a frame taller
+  than the document paints the same floor, because the root's background covers whatever canvas the
+  pane stretched, so a `>=` assertion reads a 2356-row frame as coverage. The height the shot is
+  staged at takes its own cases. A body whose box ends on a
   quarter of a pixel is measured under the staged pane first, so the case reddens on a browser that
   rounds the other way instead of passing quietly, and its frame ends on the fixture's background
   rather than on the runner's page in the row `scrollHeight` rounded away. A full-height panel capped
-  by a media query reflows against the taller pane, and its frame covers what the reflow added. The
+  by a media query reflows against the taller pane, and its frame covers what the reflow added. A
+  panel holding half the pane over a fixed 900-row block converges on 1800 without ever reaching it
+  by restaging at the height just read — 1322, then 1561 — and its frame lands on 1800, which is the
+  fixed point written out rather than read back from the capture that staged it. The
   same panel uncapped grows with every pane and reaches the refusal, whose written-out restaging
   bound reddens when the source's bound moves and whose pane and viewport are handed back anyway.
   `readFrame` takes a written frame's size and floor, read a second way through the

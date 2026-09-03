@@ -53,13 +53,19 @@ export const CAPTURE_PANE = 'data-capture-pane'
  * The restagings one capture takes before it refuses a document whose height never settles.
  *
  * @remarks
- * `captureFrame` stages the pane at the height the document needs, and a rule bound to the viewport
- * height lays that document out taller against the taller pane, so the height has to be read again
- * after every staging. The re-reading stops when a reading no longer outruns the pane it was taken
- * under, and a rule that adds height with every pane never reaches that point, so the re-reading is
- * bounded here and the shot is refused rather than taken at a height that is already stale.
+ * `captureFrame` stages the pane at the content edge `measureContent` reads, and a rule bound to
+ * the viewport height lays that document out taller against the taller pane, so the edge has to be
+ * read again after every staging. The re-reading stops when the pane and the edge agree, and a rule
+ * that adds height with every pane never reaches that point, so the re-reading is bounded here and
+ * the shot is refused rather than taken at a height that is already stale.
+ *
+ * The bound is the measured need plus one. A document holding half the pane plus a fixed block
+ * settles in two restagings, because the second carries the growth the first produced and lands on
+ * the fixed point; a document whose growth is capped part way settles in three, because it takes
+ * one restaging past the cap before it comes back down to the edge. Nothing measured needs a
+ * fourth, so a fourth is the headroom that keeps a settling document off the refusal.
  */
-export const CAPTURE_STAGINGS = 3
+export const CAPTURE_STAGINGS = 4
 
 /**
  * The roles whose accessible name is the text a reader can see inside them.

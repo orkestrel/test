@@ -1794,6 +1794,52 @@ export function pixels(element: Element, property: string): number {
 }
 
 /**
+ * Measures the row the document's own content ends on, in document coordinates.
+ *
+ * @returns The content edge, rounded up to a whole row.
+ *
+ * @remarks
+ * The body's box is not the document's height: it is the larger of the content and the pane. A pane
+ * taller than the document stretches it, and `document.body.getBoundingClientRect()`,
+ * `body.scrollHeight`, `body.offsetHeight`, and `documentElement.scrollHeight` all read that pane
+ * back rather than the content under it. So a caller that has staged a pane taller than the
+ * document cannot find its way down again from any of them. This reading can, because it is taken
+ * over the elements inside the body rather than over the box around them: a document of fixed
+ * content answers the same number under a short pane and a tall one, and a document laid out
+ * against the viewport answers what that viewport actually laid out.
+ *
+ * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
+ * bottom margin, which sits outside that rectangle, and the largest contribution wins. Taking the
+ * largest is what handles a collapsed margin without asking whether it collapsed: a child margin
+ * that collapses out through its parent is counted once, at the child, and one the parent's padding
+ * holds in is counted once, at the parent. The body's and the root's own bottom padding and margin
+ * sit under every child rather than beside them, so they are added after the walk.
+ *
+ * The sum is rounded up because a box can end part way through a row and a frame cannot hold part
+ * of one.
+ *
+ * @example
+ * ```ts
+ * const covered = measureContent()
+ * ```
+ */
+export function measureContent(): number {
+	let edge = 0
+	for (const element of document.body.querySelectorAll('*')) {
+		const bottom =
+			element.getBoundingClientRect().bottom + window.scrollY + pixels(element, 'margin-bottom')
+		if (bottom > edge) edge = bottom
+	}
+	return Math.ceil(
+		edge +
+			pixels(document.body, 'padding-bottom') +
+			pixels(document.body, 'margin-bottom') +
+			pixels(document.documentElement, 'padding-bottom') +
+			pixels(document.documentElement, 'margin-bottom'),
+	)
+}
+
+/**
  * Sets the tester's viewport and renders the runner's pane at the size that viewport claims.
  *
  * @param width - The viewport width in CSS pixels.
@@ -1937,17 +1983,28 @@ export async function releasePane(): Promise<void> {
  * it. The document is therefore laid out at the declared viewport first and, where it is taller
  * than that, the pane is staged again at the height the document needs, for the shot alone.
  *
- * That height is the larger of the body's own box, rounded up, and the document's scroll height.
- * The box is what the provider clips the shot to and it can end part way through a row, while
- * `scrollHeight` is an integer that rounds such a box to the nearest one, so a body ending on a
- * fraction under a half reads back a row short of what the frame will hold. The height is read
- * again after every staging, because a rule bound to the viewport height — a `vh` length, a fixed
- * footer, a full-height panel — lays the document out taller against the taller pane, so a surface
- * built out of those photographs as its scrolled-open self rather than as one screen, and the
- * reading taken before that staging is stale by exactly what the reflow added. The re-reading stops
- * when a reading no longer outruns the pane it was taken under. A rule that adds height with every
- * pane never reaches that point, so the re-reading is bounded by {@link CAPTURE_STAGINGS} and the
- * shot is refused with
+ * That height is {@link measureContent}, never less than `options.height`, because the declared
+ * viewport is the smallest frame a variant asks for. The reading is the content's own edge rather
+ * than the body's box: the box is the larger of the content and the pane, so it stretches with
+ * every pane staged over it and a capture that staged too tall a pane could not read its way back
+ * down. Rounding up is what covers a body ending part way through a row, which the box does and an
+ * integer scroll height does not.
+ *
+ * The edge is read again after every staging, because a rule bound to the viewport height — a `vh`
+ * length, a fixed footer, a full-height panel — lays the document out taller against the taller
+ * pane, so a surface built out of those photographs as its scrolled-open self rather than as one
+ * screen, and the reading taken before that staging is stale by exactly what the reflow added.
+ * Restaging at the edge alone converges on such a document without arriving: each staging closes
+ * the same fraction of what is left, so a rule keeping half the pane reads 1322, 1561, 1681, and
+ * 1741 against a fixed point of 1800. Each staging therefore carries the growth the one before it
+ * produced — the pane is the edge plus that growth — which lands on the fixed point rather than
+ * creeping up to it. The first staging carries no growth, because nothing has grown yet, so a
+ * document of fixed content is staged at its own edge and shot there rather than at a pane the
+ * overshoot stretched.
+ *
+ * The re-reading stops when the pane and the edge agree, which is the pane the shot is taken at. A
+ * rule that adds height with every pane never reaches that point, so the re-reading is bounded by
+ * {@link CAPTURE_STAGINGS} and the shot is refused with
  * `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
  * written at a height that is already wrong.
  *
@@ -1964,19 +2021,19 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 	try {
 		await stagePane(options.width, options.height)
 		let pane = options.height
-		for (let staging = 0; ; staging += 1) {
-			const covered = Math.max(
-				Math.ceil(document.body.getBoundingClientRect().height),
-				document.documentElement.scrollHeight,
-			)
-			if (covered <= pane) break
+		let covered = Math.max(measureContent(), options.height)
+		let growth = 0
+		for (let staging = 0; pane !== covered; staging += 1) {
 			if (staging === CAPTURE_STAGINGS) {
 				throw new Error(
 					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGINGS)} restagings: ${String(covered)} over a ${String(pane)} pane`,
 				)
 			}
-			await stagePane(options.width, covered)
-			pane = covered
+			pane = covered + growth
+			await stagePane(options.width, pane)
+			const reading = Math.max(measureContent(), options.height)
+			growth = Math.max(0, reading - covered)
+			covered = reading
 		}
 		const shot =
 			options.element === undefined

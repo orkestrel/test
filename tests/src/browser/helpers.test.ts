@@ -27,6 +27,7 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	measureContent,
 	measureContrast,
 	measureLuminance,
 	mount,
@@ -1784,6 +1785,44 @@ describe('readRing', () => {
 	})
 })
 
+describe('measureContent', () => {
+	// guides/test.md → Patterns → "Measure a document's content edge". A browser fence carries in
+	// this directory because the guides project runs with the browser disabled.
+	it('reads one content edge under a pane the document outruns and under a pane it does not', async () => {
+		buildFixture('<div style="height: 1600px">Taller than the pane</div>')
+		await stagePane(390, 844)
+		const short = [measureContent(), document.documentElement.scrollHeight]
+		await stagePane(390, 2356)
+		const tall = [measureContent(), document.documentElement.scrollHeight]
+		await releasePane()
+
+		// The scroll height is the second reading of each pair, and it is what the content edge is
+		// measured against: the two agree under the shorter pane, where the body's box is the
+		// document's own height, and part company under the taller one, where the box is the pane.
+		expect(short).toStrictEqual([1600, 1600])
+		expect(tall).toStrictEqual([1600, 2356])
+	})
+
+	it('counts a trailing bottom margin and a bottom padding on the body', async () => {
+		// The last element's own bottom margin sits outside its client rectangle, and the body's
+		// bottom padding sits under every child, so a reading taken from rectangles alone stops 100
+		// rows short of the document here.
+		buildStylesheet('body { padding-bottom: 40px }')
+		buildFixture('<div style="height: 1600px; margin-bottom: 60px">Trailing margin</div>')
+		await stagePane(390, 844)
+		const short = [measureContent(), document.documentElement.scrollHeight]
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		// 1600 rows of content, the child's 60-row bottom margin, and the body's 40-row bottom
+		// padding. The scroll height agrees under the shorter pane, which is what makes 1700 the
+		// document's own height rather than this helper's opinion of it.
+		expect(short).toStrictEqual([1700, 1700])
+		expect(tall).toBe(1700)
+	})
+})
+
 describe('stagePane', () => {
 	it('marks the pane, renders the tester at the viewport it was given, and releases both', async () => {
 		const pane = requireValue(window.frameElement?.parentElement)
@@ -1881,20 +1920,52 @@ describe('captureFrame', () => {
 		expect(shot).not.toBe(await commands.readFile(whole, 'base64'))
 	})
 
-	it('covers a document taller than the pane, down to its last row', async () => {
+	it('covers a document taller than the pane, down to its last row and no further', async () => {
 		// The background is declared on the root element, so the browser paints it across the whole
 		// canvas the document owns rather than across a box inside it. Everything the frame holds
 		// beyond that canvas is the runner's own page, which is white, so the bottom row is what
 		// separates a covered document from a clipped one.
+		//
+		// The height is an equality against the fixture's own declared 1600, not a floor. A frame
+		// taller than the document is rows nothing in the document asked for, and it paints the same
+		// floor as a covered one because the root's background covers the whole canvas the pane
+		// stretched — so `toBeGreaterThanOrEqual` reads a 2356-row frame as coverage.
 		buildStylesheet('html { background: rgb(0, 128, 0) }')
 		buildFixture('<div style="height: 1600px">Taller than the pane</div>')
-		const covered = document.documentElement.scrollHeight
-		expect(covered).toBeGreaterThan(844)
 
 		const written = await captureFrame({ path: `${FRAMES}/tall.png`, width: 390, height: 844 })
 		const reading = await readFrame(written)
 		expect(reading.width).toBe(390)
-		expect(reading.height).toBeGreaterThanOrEqual(covered)
+		expect(reading.height).toBe(1600)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+	})
+
+	it('settles a document whose height converges under a viewport-bound rule', async () => {
+		// `min-height: 50vh` plus a fixed 900-row block is a document whose height is half the pane
+		// plus 900, so it converges on 1800 and never reaches it by restaging at the height just
+		// read: each staging closes half the remaining gap. The two readings below are that
+		// approach measured — 1322 under the declared pane, 1561 under a pane staged at 1322 — so a
+		// fixture that stops converging reddens here rather than passing on a document that settles
+		// on its own.
+		buildStylesheet('html { background: rgb(0, 128, 0) } .half { min-height: 50vh }')
+		buildFixture('<div class="half">Half</div><div style="height: 900px">Beyond</div>')
+		await stagePane(390, 844)
+		const first = document.documentElement.scrollHeight
+		await stagePane(390, first)
+		const second = document.documentElement.scrollHeight
+		await releasePane()
+		expect([first, second]).toStrictEqual([1322, 1561])
+
+		const written = await captureFrame({
+			path: `${FRAMES}/converging.png`,
+			width: 390,
+			height: 844,
+		})
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		// 900 fixed rows over a rule that keeps half the pane: the fixed point is 900 / (1 - 1/2),
+		// written out rather than read back from the capture that staged it.
+		expect(reading.height).toBe(1800)
 		expect(reading.floor).toBe('rgb(0, 128, 0)')
 	})
 
@@ -1957,7 +2028,8 @@ describe('captureFrame', () => {
 
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {
 		// Nothing caps this one: the full-height panel grows with every pane the capture stages, so
-		// the document outruns each staged height however many times the capture restages. The count
+		// the document outruns each staged height however many times the capture restages, and each
+		// staging's overshoot carries the growth forward rather than closing on anything. The count
 		// is written out rather than read from the constant, so a changed bound reddens here instead
 		// of re-deriving its own answer.
 		buildStylesheet('html { background: rgb(0, 128, 0) } .grow { min-height: 100vh }')
@@ -1969,7 +2041,7 @@ describe('captureFrame', () => {
 
 		await expect(
 			captureFrame({ path: `${FRAMES}/growing.png`, width: 390, height: 844 }),
-		).rejects.toThrow(`Capture frame at ${FRAMES}/growing.png never settled after 3 restagings`)
+		).rejects.toThrow(`Capture frame at ${FRAMES}/growing.png never settled after 4 restagings`)
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
 	})
