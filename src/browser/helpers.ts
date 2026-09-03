@@ -4,6 +4,7 @@ import {
 	ACCESSIBLE_ROLES,
 	CANVAS_COLOR,
 	CAPTURE_PANE,
+	CAPTURE_STAGINGS,
 	CONTENT_ROLES,
 	FIELD_ROLES,
 	FOCUSABLE_SELECTOR,
@@ -1817,6 +1818,11 @@ export function pixels(element: Element, property: string): number {
  * the window puts its lower half beyond what a pointer can reach, so an ordinary press then fails
  * as a control outside the viewport, in a test that took no picture at all.
  *
+ * This is a capture's staging alone. A suite that resizes the tester for a journey — a breakpoint
+ * to drive, a variant to act at — calls `page.viewport` from `vitest/browser` and leaves the tester
+ * there. Staging and releasing as a pair resizes and then undoes the resize, so the journey step
+ * after it runs at the size the file started at.
+ *
  * The rule is declared rather than written inline, because the runner writes its own scale onto the
  * pane as inline custom properties and rewrites them whenever the tester resizes. A declared rule
  * marked important outranks an inline value and survives every rewrite. It finds the pane by the
@@ -1886,6 +1892,11 @@ export async function stagePane(width: number, height: number): Promise<void> {
  * staging. Calling this on an unstaged pane finds no such value, so it changes nothing and resizes
  * nothing.
  *
+ * That hand-back is what makes {@link stagePane} and this pair a capture's staging rather than a
+ * resize: the pair puts the tester back where it found it, so a suite that used it to reach a
+ * breakpoint runs its next step at the old size. Call `page.viewport` from `vitest/browser` for a
+ * journey's own size, and leave this pair to the capture.
+ *
  * @example
  * ```ts
  * await releasePane()
@@ -1907,8 +1918,9 @@ export async function releasePane(): Promise<void> {
  *
  * @param options - The path to write, the viewport to shoot at, and the element to shoot.
  * @returns The absolute path of the written frame, after it has been read back and matched.
- * @throws Thrown when the pane cannot be staged, when the provider wrote the frame somewhere else,
- * and when the bytes on disk are not the ones this shot produced.
+ * @throws Thrown when the pane cannot be staged, when the document's height never settles under
+ * {@link CAPTURE_STAGINGS} restagings, when the provider wrote the frame somewhere else, and when
+ * the bytes on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
@@ -1923,10 +1935,21 @@ export async function releasePane(): Promise<void> {
  * than the pane is painted for the pane's height and the rows below it are the runner's page rather
  * than the document — a frame that reads as the surface down to the fold and as bare canvas after
  * it. The document is therefore laid out at the declared viewport first and, where it is taller
- * than that, the pane is staged a second time at the document's own height for the shot alone. One
- * layout caveat rides with that: a rule bound to the viewport height — a `vh` length, a fixed
- * footer, a full-height panel — lays out against the taller pane while the shot is taken, so a
- * surface built out of those reports its scrolled-open height rather than one screen of it.
+ * than that, the pane is staged again at the height the document needs, for the shot alone.
+ *
+ * That height is the larger of the body's own box, rounded up, and the document's scroll height.
+ * The box is what the provider clips the shot to and it can end part way through a row, while
+ * `scrollHeight` is an integer that rounds such a box to the nearest one, so a body ending on a
+ * fraction under a half reads back a row short of what the frame will hold. The height is read
+ * again after every staging, because a rule bound to the viewport height — a `vh` length, a fixed
+ * footer, a full-height panel — lays the document out taller against the taller pane, so a surface
+ * built out of those photographs as its scrolled-open self rather than as one screen, and the
+ * reading taken before that staging is stale by exactly what the reflow added. The re-reading stops
+ * when a reading no longer outruns the pane it was taken under. A rule that adds height with every
+ * pane never reaches that point, so the re-reading is bounded by {@link CAPTURE_STAGINGS} and the
+ * shot is refused with
+ * `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
+ * written at a height that is already wrong.
  *
  * Omit `options.element` to shoot the whole page. The pane is staged for the frame and released
  * before this returns, on the failing path as well as the passing one, which hands the tester back
@@ -1940,8 +1963,21 @@ export async function releasePane(): Promise<void> {
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	try {
 		await stagePane(options.width, options.height)
-		const covered = document.documentElement.scrollHeight
-		if (covered > options.height) await stagePane(options.width, covered)
+		let pane = options.height
+		for (let staging = 0; ; staging += 1) {
+			const covered = Math.max(
+				Math.ceil(document.body.getBoundingClientRect().height),
+				document.documentElement.scrollHeight,
+			)
+			if (covered <= pane) break
+			if (staging === CAPTURE_STAGINGS) {
+				throw new Error(
+					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGINGS)} restagings: ${String(covered)} over a ${String(pane)} pane`,
+				)
+			}
+			await stagePane(options.width, covered)
+			pane = covered
+		}
 		const shot =
 			options.element === undefined
 				? await page.screenshot({ path: options.path, base64: true })

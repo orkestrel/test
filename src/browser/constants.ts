@@ -50,6 +50,18 @@ export const CANVAS_COLOR: Color = Object.freeze([255, 255, 255, 1])
 export const CAPTURE_PANE = 'data-capture-pane'
 
 /**
+ * The restagings one capture takes before it refuses a document whose height never settles.
+ *
+ * @remarks
+ * `captureFrame` stages the pane at the height the document needs, and a rule bound to the viewport
+ * height lays that document out taller against the taller pane, so the height has to be read again
+ * after every staging. The re-reading stops when a reading no longer outruns the pane it was taken
+ * under, and a rule that adds height with every pane never reaches that point, so the re-reading is
+ * bounded here and the shot is refused rather than taken at a height that is already stale.
+ */
+export const CAPTURE_STAGINGS = 3
+
+/**
  * The roles whose accessible name is the text a reader can see inside them.
  *
  * @remarks

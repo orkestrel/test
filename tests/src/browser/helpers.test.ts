@@ -1907,6 +1907,72 @@ describe('captureFrame', () => {
 		expect(reading.height).toBe(844)
 		expect(reading.floor).toBe('rgb(0, 128, 0)')
 	})
+
+	it('covers a body whose box ends on a fraction of a pixel', async () => {
+		// The provider clips the shot to the body's own box, and that box can end part way through a
+		// row. `scrollHeight` is an integer, so a box ending on a fraction under a half reads back a
+		// row short and a pane staged from that reading leaves the last row to the runner's page.
+		// The rounding is what the case turns on, so it is measured under the staged pane rather
+		// than assumed: a browser that rounds the other way reddens here instead of passing quietly.
+		buildStylesheet('html { background: rgb(0, 128, 0) }')
+		buildFixture('<div style="height: 1600px; padding-bottom: 0.25px">Fractional</div>')
+		await stagePane(390, 844)
+		const box = document.body.getBoundingClientRect().height
+		const rounded = document.documentElement.scrollHeight
+		await releasePane()
+		expect(rounded).toBeLessThan(Math.ceil(box))
+
+		const written = await captureFrame({ path: `${FRAMES}/fraction.png`, width: 390, height: 844 })
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBeGreaterThanOrEqual(Math.ceil(box))
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+	})
+
+	it('re-reads the document after the pane grows, and covers what the reflow added', async () => {
+		// A rule bound to the viewport height lays the document out taller against the taller pane,
+		// so the height read before the restaging is already stale when the shot is taken. The media
+		// query caps that growth, which is what makes this the re-reading case rather than the
+		// refusal below. The height before the reflow and the height after it are measured here, so
+		// a fixture that stops reflowing reddens rather than passing on a document that never moved.
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } .grow { min-height: 100vh }' +
+				' @media (min-height: 900px) { .grow { min-height: 900px } }',
+		)
+		buildFixture('<div class="grow">Full height</div><div style="height: 200px">Beyond</div>')
+		await stagePane(390, 844)
+		const first = document.documentElement.scrollHeight
+		await stagePane(390, first)
+		const reflowed = document.documentElement.scrollHeight
+		await releasePane()
+		expect(first).toBeGreaterThan(844)
+		expect(reflowed).toBeGreaterThan(first)
+
+		const written = await captureFrame({ path: `${FRAMES}/reflow.png`, width: 390, height: 844 })
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBeGreaterThanOrEqual(reflowed)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+	})
+
+	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {
+		// Nothing caps this one: the full-height panel grows with every pane the capture stages, so
+		// the document outruns each staged height however many times the capture restages. The count
+		// is written out rather than read from the constant, so a changed bound reddens here instead
+		// of re-deriving its own answer.
+		buildStylesheet('html { background: rgb(0, 128, 0) } .grow { min-height: 100vh }')
+		buildFixture(
+			'<div class="grow">Grows with the pane</div><div style="height: 200px">Beyond</div>',
+		)
+		const pane = requireValue(window.frameElement?.parentElement)
+		const before = [window.innerWidth, window.innerHeight]
+
+		await expect(
+			captureFrame({ path: `${FRAMES}/growing.png`, width: 390, height: 844 }),
+		).rejects.toThrow(`Capture frame at ${FRAMES}/growing.png never settled after 3 restagings`)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
+	})
 })
 
 describe('readFrame', () => {

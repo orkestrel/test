@@ -228,6 +228,7 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `ACCESSIBLE_ROLES`   | const | `readonly string[]`                | The interactive roles a bare accessible name is searched across.                                                                   |
 | `CANVAS_COLOR`       | const | `Color`                            | Opaque white: the page a browser paints an unstyled document onto.                                                                 |
 | `CAPTURE_PANE`       | const | `string`                           | The attribute marking the runner's tester pane, and the rule sizing it; that rule carries the viewport the release hands back.     |
+| `CAPTURE_STAGINGS`   | const | `number`                           | The restagings one capture takes before it refuses a document whose height never settles.                                          |
 | `CONTENT_ROLES`      | const | `readonly string[]`                | The roles `readName` names from the text a reader can see inside them.                                                             |
 | `FIELD_ROLES`        | const | `Readonly<Record<string, string>>` | The role each `input` type carries; a type it omits exposes none.                                                                  |
 | `FOCUSABLE_SELECTOR` | const | `string`                           | What sequential keyboard navigation can reach, before the removals `describeFocus` applies.                                        |
@@ -480,6 +481,12 @@ also resizes the tester to the viewport it had before the staging, which it read
 element it removes, so the capture's variant size belongs to the frame rather than to every test
 that runs after it.
 
+That hand-back is why the pair is a capture's staging and not a resize. Call `page.viewport` from
+`vitest/browser` where a journey needs its own size — a breakpoint to drive, a variant to act at —
+and leave the tester there. A suite that stages and releases instead resizes the tester and then
+undoes the resize, so its next step runs at the size the file started at. This package publishes no
+verb for that, because `page.viewport` already is one.
+
 `captureFrame` stages, shoots, and proves the file. The path a screenshot call returns is the path
 it meant to write, so `captureFrame` reads that file back through the runner's built-in `readFile`
 command and compares it with the shot itself, which is what separates this run's frame from one an
@@ -490,11 +497,22 @@ The frame covers the whole document at the width it was given, whatever height i
 provider shoots the tester's body in the top-level page's own coordinates, so a document taller than
 the pane paints for the pane's height and the rows under it are the runner's page: the frame reads
 as the surface down to the fold and as bare canvas after it. `captureFrame` therefore lays the
-document out at the declared viewport, reads the height it takes, and stages the pane a second time
-at that height for the shot alone. One layout caveat rides with it: a rule bound to the viewport
-height — a `vh` length, a fixed footer, a full-height panel — lays out against the taller pane while
-the shot is taken, so a surface built out of those photographs as its scrolled-open self rather than
-as one screen.
+document out at the declared viewport, measures the height the shot needs, and stages the pane again
+at that height for the shot alone.
+
+The measurement is the larger of the body's own box, rounded up, and the document's scroll height.
+The box is what the provider clips the shot to and it can end part way through a row, while
+`scrollHeight` is an integer that rounds such a box to the nearest one, so a body ending on a
+fraction under a half reads back a row short of what the frame will hold and that row comes out as
+the runner's page. The measurement is taken again after every staging, because a rule bound to the
+viewport height — a `vh` length, a fixed footer, a full-height panel — lays the document out taller
+against the taller pane, so a surface built out of those photographs as its scrolled-open self
+rather than as one screen, and the reading taken before that staging is stale by exactly what the
+reflow added. The re-reading stops when a reading no longer outruns the pane it was taken under. A
+rule that adds height with every pane never reaches that point, so the re-reading is bounded by
+`CAPTURE_STAGINGS` and the shot is refused with
+`Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
+written at a height that is already wrong.
 
 `readFrame` reads a written frame back: its size in device pixels, and the single color its bottom
 row paints. The reading comes off the file through the browser's own image decoding rather than off
@@ -859,6 +877,7 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Computed background color is unavailable`                                            | `contrast`              |
 | `Tester pane is unavailable for a capture`                                            | `stagePane`             |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                 | `stagePane`             |
+| `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane`     | `captureFrame`          |
 | `Capture frame was written to <path> where <path> was asked for`                      | `captureFrame`          |
 | `Capture frame at <path> is not the one this run shot`                                | `captureFrame`          |
 | `Capture frame at <path> could not be read`                                           | `readFrame`             |
@@ -884,7 +903,8 @@ never produces, so the suite proves that comparison discriminates with a planted
 reaching the refusal. `Capture frame at <path> cannot be measured without a 2D canvas` is narrowing
 of the same kind: a canvas allocated for this reading and asked for no other context type hands one
 back. `readFrame`'s other two refusals are driven, by a path holding no file and by a file holding
-no image.
+no image, and so is `Capture frame at <path> never settled after <n> restagings`, by a fixture whose
+full-height panel grows with every pane the capture stages.
 
 ### Refusals outside the journey layer
 
@@ -1179,10 +1199,16 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     coupling therefore fails loudly, and the version this rule names moves with the fix instead of a
     suite shipping thumbnails nobody inspects. The same layout decides what a frame covers: the
     provider shoots the tester's body in the top-level page's coordinates, so `captureFrame` stages
-    the pane a second time at the document's own height wherever the document outruns the declared
-    one, and a frame is never shorter than the document it photographs. What the capture borrows it
-    gives back — `releasePane` returns the tester to the viewport it held before the staging, so the
-    variant a frame was shot at belongs to that frame alone.
+    the pane again at the document's own height wherever the document outruns the declared one, and
+    a frame is never shorter than the document it photographs. That height is the body's box rounded
+    up or the document's scroll height, whichever is larger, and it is read again after every
+    staging, because the box can end part way through a row that `scrollHeight` rounds away and a
+    rule bound to the viewport height lays the document out taller against the taller pane. The
+    re-reading is bounded by `CAPTURE_STAGINGS`, and a document still growing at that bound is
+    refused rather than photographed at a stale height. What the capture borrows it gives back —
+    `releasePane` returns the tester to the viewport it held before the staging, so the variant a
+    frame was shot at belongs to that frame alone, and a suite that wants a size of its own calls
+    `page.viewport` rather than this pair.
 
 ### Threat model
 
@@ -2682,7 +2708,14 @@ Each entry names the rules its file proves. The test names carry the cases.
   on the failing path. It also takes a document taller than the pane, whose frame reaches the
   document's own scroll height and ends on the background the document declares rather than on the
   runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height on
-  that same floor. `readFrame` takes a written frame's size and floor, read a second way through the
+  that same floor. The height the shot is staged at takes its own cases. A body whose box ends on a
+  quarter of a pixel is measured under the staged pane first, so the case reddens on a browser that
+  rounds the other way instead of passing quietly, and its frame ends on the fixture's background
+  rather than on the runner's page in the row `scrollHeight` rounded away. A full-height panel capped
+  by a media query reflows against the taller pane, and its frame covers what the reflow added. The
+  same panel uncapped grows with every pane and reaches the refusal, whose written-out restaging
+  bound reddens when the source's bound moves and whose pane and viewport are handed back anyway.
+  `readFrame` takes a written frame's size and floor, read a second way through the
   cascade's own answer for the same canvas, a bottom row split between two colors reported as no
   floor at all, a path holding no file, and a file holding no image. `readCascade` takes class tokens collected from plain and grouped rules and
   only real ones; `readRows` takes a row joined from its own text nodes rather than from run-together
