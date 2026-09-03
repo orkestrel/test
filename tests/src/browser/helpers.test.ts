@@ -32,7 +32,6 @@ import {
 	mount,
 	parseColor,
 	parseCSSColor,
-	pressKeys,
 	readBackdrop,
 	readCascade,
 	readClasses,
@@ -67,7 +66,7 @@ import {
 } from '@src/browser'
 import { createRecorder, createTeardown, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { commands, page, server } from 'vitest/browser'
+import { commands, page, server, userEvent } from 'vitest/browser'
 import { normalizePath } from '../../setup.js'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
@@ -632,15 +631,6 @@ describe('fillAccessible', () => {
 	})
 })
 
-describe('pressKeys', () => {
-	it('sends letters and key descriptors to whatever holds focus', async () => {
-		buildFixture('<label for="notes">Notes</label><textarea id="notes"></textarea>')
-		await clickAccessible('Notes')
-		await pressKeys('ab{Enter}c')
-		expect(readValue('textbox', 'Notes')).toBe('ab\nc')
-	})
-})
-
 describe('traverseAccessible', () => {
 	it('reaches a named control through forward Tab alone', async () => {
 		const container = buildFixture(
@@ -730,7 +720,7 @@ describe('readFocus', () => {
 
 	it('reads nothing when focus rests on an element that renders no text', async () => {
 		buildFixture('<svg tabindex="0" width="20" height="20"><title>Chart</title></svg>')
-		await pressKeys('{Tab}')
+		await userEvent.keyboard('{Tab}')
 		expect(document.activeElement).toBeInstanceOf(SVGElement)
 		expect(readFocus()).toBeUndefined()
 	})

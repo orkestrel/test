@@ -2,15 +2,15 @@
 
 The test helpers the `@orkestrel` fleet kept rewriting, published once. A call recorder that is a
 real callback rather than a spy. A real host delay. A throw-to-value converter and a presence
-narrower, so `!` and `as` stay banned in tests. Two async collectors and a JSON copier. A frozen
-hostile-value corpus for proving guards are total. A cleanup list that gives every owned resource
-back, newest first. A scratch directory the test owns and destroys, a loopback port for a server the
-test built, and a symlink-refusing source-file walker. And the browser journey layer, which drives
-a real interface by role and accessible name through the installed Vitest provider. A helper ships
-here only when enough packages had already written their own; the guide's
+narrower, so `!` and `as` stay banned in tests. An async-iterable collector, a stream collector, and
+a JSON copier. A frozen hostile-value corpus for proving guards are total. A cleanup list that gives
+every owned resource back, newest first. A scratch directory the test owns and destroys, a loopback
+port for a server the test built, and a symlink-refusing source-file walker. And the browser journey
+layer, which drives a real interface by role and accessible name through the installed Vitest
+provider. A helper ships here only when enough packages had already written their own; the guide's
 [Limits](guides/test.md#limits) section states that rule, what it excluded, and the one door the
-journey layer came through instead. Add it as a devDependency; nothing here runs in production
-code. Part of the `@orkestrel` line.
+journey layer came through instead. Add it as a devDependency; nothing here runs in production code.
+Part of the `@orkestrel` line.
 
 It has **zero runtime dependencies**, and no exported signature names an `@orkestrel/*` type. Both
 rules exist for one reason: a test helper hands its types straight into the consumer's assertions,
@@ -73,21 +73,27 @@ once, in its own setup, because registering it here would take a runtime depende
 runner. A handler that throws does not stop the run: one failure is rethrown by identity, so the
 test can assert on the value it threw, and several arrive as an `AggregateError` in run order.
 
-The rest of core is `collect` (drains an async iterable), `collectStream` (drains a
-`ReadableStream`), `roundTripJSON` (copies any value `JSONSafe` accepts, including an
-interface-typed one, and throws rather than turning a non-finite number into `null`), `resolveRoot`
-(the directory above the calling module, from `import.meta`), and `createHostileValues` (a frozen
-array of fresh values that each make a naive reader throw). Beside them sits the statechart
-contract the fleet repeats: `StateTransition` and `StateScenario` for one row of a transition table,
-`executeScenario` and `executeScenarios` to walk it, and `STATECHART_ATTRIBUTES` and
-`STATECHART_STATUSES` for the harness a browser workspace renders that table in.
+Core also carries the wait family (`waitForCondition`, `retryUntil`, `waitForEvent`, `waitForAbort`,
+and the leaves they share), the recorder map and the abort-signal instrument, the unchecked
+boundary, the header flattener, and the JSON Lines decoder — the guide's
+[Surface](guides/test.md#surface) section carries every export. Among them are `collect` (drains an
+async iterable), `collectStream` (drains a `ReadableStream`), `roundTripJSON` (copies any value
+`JSONSafe` accepts, including an interface-typed one, and throws rather than turning a non-finite
+number into `null`), `resolveRoot` (the directory above the calling module, from `import.meta`), and
+`createHostileValues` (a frozen array of fresh values that each make a naive read throw or violate a
+naive structural assumption). Beside them sits the statechart contract the fleet repeats:
+`StateTransition` and `StateScenario` for one row of a transition table, `executeScenario` and
+`executeScenarios` to walk it, and `STATECHART_ATTRIBUTES` and `STATECHART_STATUSES` for the harness
+a browser workspace renders that table in.
 
 The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
 file text that a parity suite can assert against, and `createLoopback`, which binds a server the
-test built to an ephemeral loopback port. Behind `readInventory` and `createScratch` sit three pure
-leaves: `resolveContained`, the lexical check both refuse escapes with; `isExcluded`, the exclusion
-rule the walk applies; and `matchesIdentity`, the comparison `destroy()` makes before it removes
-anything.
+test built to an ephemeral loopback port. Behind them sit the pure leaves the server face also
+exports on its own: `readInventory` refuses an escape with `resolveContained` and prunes with
+`isExcluded`, while `createScratch` refuses one with `requireContained`, the throwing form, and
+reads and compares its allocation with `readIdentity` and `matchesIdentity` before `destroy()`
+removes anything. `createLink` and `removeTree` do the writing under it, and both decide on the
+errno `readErrorCode` reads off an unknown throw.
 
 ```ts
 import { resolveRoot } from '@orkestrel/test'
@@ -129,21 +135,22 @@ Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/s
 //  'src/core/validators.ts']
 ```
 
-Keys are root-relative and `/`-separated whatever the host separator is, though this package's own
-suite runs on POSIX, where that conversion is an identity, so it proves the key shape and not the
-conversion. Keys are inserted in sorted order, and a plain object reads that order back for every
-key that is not integer-like.
+Keys are root-relative and `/`-separated whatever the host separator is. The suite gates that proof
+on a runtime reading of `node:path` rather than on a platform name, so it runs only where the host
+separator differs from `/`. Keys are inserted in sorted order, and a plain object reads that order
+back for every key that is not integer-like.
 
-Two boundaries are worth stating up front, because the two filesystem helpers promise different
-things. `createScratch` allocates its own directory at POSIX mode `0700` — under the host temporary
+`createScratch` and `readInventory` promise different things, and each boundary is worth stating up
+front. `createScratch` allocates its own directory at POSIX mode `0700` — under the host temporary
 directory, or under a `parent` you name — and refuses a path that lexically escapes it. The suite
-asserts those bits on POSIX and proves nothing about a host that emulates them. The mode keeps
-another uid out, and neither a sibling test worker nor the code under test is another uid. It does
-not walk segments for symbolic links. A link inside its own allocation was created by the test
-process, by the code the test drives, or by this package's own `link` — handing that code
-`scratch.path` is the ordinary use of this helper — and a contained path reaches outside the
-allocation through one. The guide's [traversal](guides/test.md#traversal) section states what each
-member does with a link it meets. Naming a `parent` inside a package tree costs one more thing:
+gates that assertion on `supportsMode`, the shipped probe that reads whether permission bits
+round-trip on this host, so it runs only where they do and claims nothing about a host that emulates
+them. The mode keeps another uid out, and neither a sibling test worker nor the code under test is
+another uid. It does not walk segments for symbolic links. A link inside its own allocation was
+created by the test process, by the code the test drives, or by this package's own `link` — handing
+that code `scratch.path` is the ordinary use of this helper — and a contained path reaches outside
+the allocation through one. The guide's [traversal](guides/test.md#traversal) section states what
+each member does with a link it meets. Naming a `parent` inside a package tree costs one more thing:
 while the allocation exists, everything that walks that tree sees it. `destroy()` is unaffected by
 where the allocation sits, because it matches the allocation's identity rather than its path. One
 field of that identity is the host's to supply: where a host reports no real creation time, libuv
@@ -203,8 +210,8 @@ rule deciding what ships and what stays in the package that owns it — see
 
 ## Package
 
-Published as three typed entry points per the `exports` field in `package.json`: `@orkestrel/test`
-for the host-independent core, `@orkestrel/test/browser` for the journey layer, and
+Published as typed entry points per the `exports` field in `package.json`: `@orkestrel/test` for the
+host-independent core, `@orkestrel/test/browser` for the journey layer, and
 `@orkestrel/test/server` for the Node helpers. Core and server ship ESM and CommonJS; the browser
 face ships ESM only, because `vitest/browser` is an ES-only module.
 

@@ -61,7 +61,7 @@ import {
 // proved against raw `node:fs` fixtures in tests/src/server/helpers.test.ts, so here it is a
 // consumer. A broken walk fails parity loudly with missing symbols instead of passing on an empty
 // map, and the fleet's headline capability is exercised by the suite that depends on it.
-const files = readInventory(resolveRoot(import.meta), ['src', 'tests', 'guides'], {
+const files = readInventory(resolveRoot(import.meta), ['README.md', 'src', 'tests', 'guides'], {
 	extensions: ['.ts', '.md'],
 })
 
@@ -115,6 +115,23 @@ function buildMarker(section: string, heading: string): string {
 // sentence, and prose about a fence is not the comment that carries it.
 function carriesMarker(text: string, marker: string): boolean {
 	return text.split('\n').some((line) => line.trim().startsWith(marker))
+}
+
+// A README example states a long result across several comment lines, and where the wrap falls is
+// the formatter's decision rather than the claim. Dropping the comment markers and every space
+// compares what the example says a call returns against what it returns, and leaves a key that was
+// added, removed, or renamed still moving the compared text.
+function normalizeComments(text: string): string {
+	return text
+		.split('\n')
+		.map((line) => (line.startsWith('//') ? line.slice(2) : line))
+		.join('\n')
+		.replaceAll(/\s+/gu, '')
+}
+
+// The shape a README example prints a key list in.
+function renderKeys(keys: readonly string[]): string {
+	return `[${keys.map((key) => `'${key}'`).join(', ')}]`
 }
 
 // The "Copy a JSON value" fence copies an interface-typed value, so its `Snapshot` stands here.
@@ -998,5 +1015,57 @@ describe('guide fences', () => {
 		} finally {
 			scratch.destroy()
 		}
+	})
+})
+
+// The README carries its own `readInventory` example, and until this case the inventory walked
+// `src`, `tests`, and `guides` alone, so the root README was read by nothing and the results it
+// states were never re-derived. Each expectation here comes from the live walk rather than from a
+// literal, so a file added under `src` reddens the README copy the way it already reddens the
+// guide's.
+describe('README examples', () => {
+	const readme = requireValue(files['README.md'], 'Missing README: README.md')
+	const root = resolveRoot(import.meta)
+
+	it('states what each readInventory call it shows really returns', () => {
+		const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['.ts'] })
+		const text = normalizeComments(readme)
+
+		expect(text).toContain(normalizeComments(renderKeys(Object.keys(sources))))
+
+		expect(text).toContain(
+			normalizeComments(JSON.stringify(requireValue(sources['src/core/index.ts']))),
+		)
+
+		expect(text).toContain(
+			normalizeComments(
+				renderKeys(
+					Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] })),
+				),
+			),
+		)
+
+		expect(text).toContain(
+			normalizeComments(
+				renderKeys(
+					Object.keys(
+						readInventory(root, ['src/core'], {
+							extensions: ['.ts'],
+							exclude: ['src/core/index.ts'],
+						}),
+					),
+				),
+			),
+		)
+
+		expect(text).toContain(
+			normalizeComments(
+				renderKeys(
+					Object.keys(
+						readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }),
+					),
+				),
+			),
+		)
 	})
 })

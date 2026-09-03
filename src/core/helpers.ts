@@ -79,7 +79,7 @@ export function dropRegistration(
 /**
  * Waits for a host timer to elapse.
  *
- * @param ms - The delay in milliseconds.
+ * @param ms - The delay in milliseconds. Default: `0`.
  * @returns A promise that resolves after the timer fires.
  */
 export function waitForDelay(ms = 0): Promise<void> {
@@ -376,7 +376,7 @@ export function captureError(thunk: () => unknown): unknown {
  *
  * @typeParam T - The required value type.
  * @param value - The value to check.
- * @param message - The error message used when the value is absent.
+ * @param message - The error message used when the value is absent. Default: `'Value is required'`.
  * @returns The present value.
  */
 export function requireValue<T>(value: T | null | undefined, message = 'Value is required'): T {

@@ -32,8 +32,8 @@ import {
  * @returns The scratch directory and its file operations.
  * @throws When the parent is missing, a symbolic link, or not a directory; when the prefix contains
  * `/` or `\`; or when allocation or seeding fails.
- * @remarks The parent defaults to the host temporary directory. The prefix defaults to
- * `orkestrel-test-`. Seed keys use root-relative paths.
+ * @remarks Default parent: the host temporary directory. Default prefix: `orkestrel-test-`. Seed
+ * keys use root-relative paths.
  */
 export function createScratch(options?: ScratchOptions): ScratchInterface {
 	const parent = resolve(options?.parent ?? tmpdir())

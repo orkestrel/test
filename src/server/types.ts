@@ -37,8 +37,8 @@ export interface ScratchInterface {
 	/**
 	 * Lists the names directly inside a directory in sorted order.
 	 *
-	 * @param target - A relative or absolute directory path contained by the scratch directory. The
-	 * scratch root is used when omitted.
+	 * @param target - A relative or absolute directory path contained by the scratch directory.
+	 * Default: the scratch root.
 	 * @returns The sorted entry names, without their parent paths.
 	 * @throws When the path escapes the scratch directory, the target is missing or is not a
 	 * directory, or the scratch root is a symbolic link or file.

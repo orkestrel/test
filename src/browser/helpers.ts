@@ -33,7 +33,7 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
 }
 
 /**
- * Determines whether a person can click one element where it currently sits.
+ * Determines whether a person can click one element where it sits.
  *
  * @param element - The element to judge.
  * @returns True if the element is connected, visible, laid out with a non-zero box, in the
@@ -393,21 +393,6 @@ export async function fillAccessible(name: string, text: string): Promise<void> 
 }
 
 /**
- * Presses a browser-keyboard sequence using Vitest's installed user-event syntax.
- *
- * @param keys - The keys or key descriptors to press.
- * @returns A promise resolving after the sequence completes.
- *
- * @example
- * ```ts
- * await pressKeys('{ArrowRight}{Enter}')
- * ```
- */
-export async function pressKeys(keys: string): Promise<void> {
-	await userEvent.keyboard(keys)
-}
-
-/**
  * Reaches a named control only through natural forward Tab traversal from the current focus.
  *
  * @param name - The target's exact accessible name.
@@ -517,7 +502,7 @@ export function readPage(): string {
 }
 
 /**
- * Reads the rendered text of the element that currently holds focus.
+ * Reads the rendered text of the element that holds focus.
  *
  * @returns The focused HTML element's trimmed rendered text, including an empty string, or
  * `undefined` when focus rests on a non-HTML element. When nothing holds focus, the browser
@@ -925,31 +910,46 @@ export function mount<T extends Element>(element: T): T {
 }
 
 /**
- * Renders one fixture into the document, from trusted markup or from a tag and its classes.
+ * Renders one fixture into the document from trusted markup.
  *
- * @param first - The fixture markup, or the HTML tag name when `second` is present.
- * @param second - The class list when `first` supplies the tag name.
- * @returns The attached container for the markup form, and the attached element itself for the tag
- * form.
+ * @param markup - The fixture markup to parse.
+ * @returns The attached container holding the fixture's own nodes.
+ *
+ * @remarks
+ * The class list is required in the tag form, which is what keeps the two forms apart: a
+ * one-argument call is always markup.
+ *
+ * This form parses `markup` into a fresh container and returns that container, so the fixture's own
+ * nodes are its children. It attaches to `document.body` and records nothing, so removal is the
+ * caller's, exactly as it is for {@link mount}.
+ *
+ * @example
+ * ```ts
+ * const container = render('<button type="button">Save</button>')
+ * container.remove()
+ * ```
+ */
+export function render(markup: string): HTMLDivElement
+/**
+ * Renders one fixture into the document from a tag name and its class list.
+ *
+ * @param tag - The HTML tag name to create.
+ * @param classes - The class list to place on the created element.
+ * @returns The attached element itself, typed as exactly that tag.
  *
  * @remarks
  * The class list is required in the tag form, which is what keeps the two forms apart: a
  * one-argument call is always markup. A tag with no classes is `mount(build(tag))`.
  *
- * The markup form parses `first` into a fresh container and returns that container, so the fixture's
- * own nodes are its children. The tag form returns the element itself, typed as exactly that tag.
- * Both attach to `document.body` and neither records anything, so removal is the caller's, exactly
- * as it is for {@link mount}.
+ * This form returns the element itself rather than a container. It attaches to `document.body` and
+ * records nothing, so removal is the caller's, exactly as it is for {@link mount}.
  *
  * @example
  * ```ts
- * const container = render('<button type="button">Save</button>')
  * const panel = render('section', 'surface muted')
- * container.remove()
  * panel.remove()
  * ```
  */
-export function render(markup: string): HTMLDivElement
 export function render<K extends keyof HTMLElementTagNameMap>(
 	tag: K,
 	classes: string,
@@ -1387,9 +1387,9 @@ export function readContrast(element: Element, floor?: Color): number {
  *
  * @remarks
  * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
- * `pressKeys`, a real click — and this measures what the browser painted once it landed. A control
- * that is not matching `:focus-visible` when the call is made reports nothing, because no
- * measurement taken then would be about focus.
+ * `userEvent.keyboard` from `vitest/browser`, a real click — and this measures what the browser
+ * painted once it landed. A control that is not matching `:focus-visible` when the call is made
+ * reports nothing, because no measurement taken then would be about focus.
  *
  * Some controls are two elements: one that takes the focus and one a reader can see. A hidden radio
  * beside the label that carries every pixel of its chrome is the case `worn` exists for, so a
@@ -1857,7 +1857,7 @@ export function measureContent(): number {
  * therefore unscaled and lifted to the window's own origin for the shot. The `iframe[data-vitest]`
  * selector and the `--tester-transform`, `--tester-margin-left`, `--viewport-width`, and
  * `--viewport-height` custom properties are the runner's, so a Vitest release that renames any of
- * them reddens the size check below rather than writing a wrong frame.
+ * them reddens the size check that follows rather than writing a wrong frame.
  *
  * Hand the pane straight back with {@link releasePane}. A tester pinned at a viewport taller than
  * the window puts its lower half beyond what a pointer can reach, so an ordinary press then fails
