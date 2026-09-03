@@ -28,9 +28,12 @@ import {
 	isExcluded,
 	isRunning,
 	matchesIdentity,
+	readErrorCode,
+	readIdentity,
 	readInventory,
 	removeTree,
 	requestUpgrade,
+	requireContained,
 	resolveContained,
 	supportsBytes,
 	supportsCase,
@@ -187,6 +190,90 @@ describe('resolveContained', () => {
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}
+	})
+})
+
+describe('requireContained', () => {
+	it('returns the absolute contained target for a relative and an absolute spelling', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-required-'))
+		try {
+			expect(requireContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
+			expect(requireContained(root, join(root, 'nested'))).toBe(join(root, 'nested'))
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it('refuses an escape with the message naming the target it was given', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-required-escape-'))
+		try {
+			expect(() => requireContained(root, '../escape.ts')).toThrow(
+				new Error('Path outside scratch directory: ../escape.ts'),
+			)
+			expect(() => requireContained(root, join(root, '..', 'escape.ts'))).toThrow(
+				`Path outside scratch directory: ${join(root, '..', 'escape.ts')}`,
+			)
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('readIdentity', () => {
+	it('reads the three fields off a real allocation, and matches that allocation', () => {
+		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-'))
+		try {
+			const status = statSync(root)
+			const identity = readIdentity(status)
+
+			expect(identity).toStrictEqual({
+				birth: status.birthtimeMs,
+				device: status.dev,
+				inode: status.ino,
+			})
+			expect(matchesIdentity(identity, readIdentity(lstatSync(root)))).toBe(true)
+		} finally {
+			rmSync(root, { force: true, recursive: true })
+		}
+	})
+
+	it('reads a different allocation as a different identity', () => {
+		const first = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-first-'))
+		const second = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-second-'))
+		try {
+			expect(matchesIdentity(readIdentity(statSync(first)), readIdentity(statSync(second)))).toBe(
+				false,
+			)
+		} finally {
+			rmSync(first, { force: true, recursive: true })
+			rmSync(second, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('readErrorCode', () => {
+	it('reads the code off a real host refusal', () => {
+		const missing = join(mkdtempSync(join(tmpdir(), 'orkestrel-test-code-')), 'absent.txt')
+
+		expect(readErrorCode(captureError(() => readFileSync(missing, 'utf8')))).toBe('ENOENT')
+	})
+
+	it('reads a plain object, and answers undefined for a non-string code', () => {
+		expect(readErrorCode({ code: 'EPERM' })).toBe('EPERM')
+		expect(readErrorCode(Object.assign(new Error('refused'), { code: 'EPERM' }))).toBe('EPERM')
+		expect(readErrorCode(Object.assign(new Error('refused'), { code: 13 }))).toBeUndefined()
+		expect(readErrorCode(new Error('refused'))).toBeUndefined()
+	})
+
+	it('reads a null-prototype record and answers undefined for every value carrying no code', () => {
+		const record: Record<string, unknown> = Object.create(null)
+		record.code = 'EBUSY'
+
+		expect(readErrorCode(record)).toBe('EBUSY')
+		expect(readErrorCode(Object.create(null))).toBeUndefined()
+		expect(readErrorCode(null)).toBeUndefined()
+		expect(readErrorCode(undefined)).toBeUndefined()
+		expect(readErrorCode('EPERM')).toBeUndefined()
 	})
 })
 

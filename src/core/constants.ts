@@ -1,5 +1,5 @@
 /**
- * The attributes a statechart harness publishes, keyed by the fact each one carries.
+ * Names the attributes a statechart harness publishes, keyed by the fact each one carries.
  *
  * @remarks
  * A harness renders its own table and a gate outside the page polls the rendered markup, so these
@@ -28,7 +28,7 @@ export const STATECHART_ATTRIBUTES = Object.freeze({
 })
 
 /**
- * Every value a statechart harness reports through its `status` attribute.
+ * Lists every value a statechart harness reports through its `status` attribute.
  *
  * @remarks
  * `pending` is what a harness carries before a run has produced a result for every row, `idle` is a

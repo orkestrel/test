@@ -16,7 +16,7 @@ import {
  * Determines whether a rectangle lies wholly outside the browser viewport.
  *
  * @param rectangle - The measured client rectangle to inspect.
- * @returns `true` when no part of the rectangle intersects the viewport.
+ * @returns True if no part of the rectangle intersects the viewport; false otherwise.
  *
  * @example
  * ```ts
@@ -36,9 +36,9 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  * Determines whether a person can click one element where it currently sits.
  *
  * @param element - The element to judge.
- * @returns `true` when the element is connected, visible, laid out with a non-zero box, in the
+ * @returns True if the element is connected, visible, laid out with a non-zero box, in the
  * sequential focus order, neither disabled nor marked `aria-disabled="true"`, and outside every
- * `[inert]` subtree; `false` otherwise.
+ * `[inert]` subtree; false otherwise.
  *
  * @remarks
  * This is the one reachability filter the layer applies. `resolveRendered`, `clickAccessibleWithin`,
@@ -73,8 +73,7 @@ export function isReachable(element: Element): boolean {
  * Determines whether the accessibility tree presents one element at all.
  *
  * @param element - The element to judge.
- * @returns `false` when the element is hidden from assistive technology, from sight, or from both;
- * `true` otherwise.
+ * @returns True if the element is presented to assistive technology and to sight; false otherwise.
  *
  * @remarks
  * A control clipped to a zero-size rectangle is still announced, which is the whole point of that
@@ -902,8 +901,8 @@ export function build<K extends keyof HTMLElementTagNameMap>(
  * @remarks
  * What this buys is the composition, not the attachment: the `append` method returns `void`, and
  * this hands the element back, so it fits where an expression is expected. The {@link render} helper
- * returns its fixture through it, and the {@link rgba} helper probes through `mount(build('span'))`.
- * A bare `append` call breaks each of those call sites.
+ * returns its fixture through it, and the {@link parseCSSColor} helper probes through
+ * `mount(build('span'))`. A bare `append` call breaks each of those call sites.
  *
  * Being connected is what the attachment then buys: `getComputedStyle` resolves against the shipped
  * cascade, custom properties inherit from `:root`, and the element lays out a real box. A detached
@@ -1136,20 +1135,20 @@ export function parseColor(value: string): Color | undefined {
  * Refusal is the CSSOM's: an expression it will not parse leaves the probe's inline `color` empty
  * and this returns `undefined`. A `var()` naming an undeclared custom property is not refused,
  * because the cascade accepts it and computes the inherited color, so a test that means to catch a
- * missing token asserts on {@link token} rather than on this.
+ * missing token asserts on {@link readToken} rather than on this.
  *
  * @example
  * ```ts
- * rgba('rebeccapurple') // [102, 51, 153, 1]
- * rgba('not-a-color') // undefined
+ * parseCSSColor('rebeccapurple') // [102, 51, 153, 1]
+ * parseCSSColor('not-a-color') // undefined
  * ```
  */
-export function rgba(value: string): Color | undefined {
+export function parseCSSColor(value: string): Color | undefined {
 	const probe = mount(build('span'))
 	try {
 		probe.style.color = value
 		if (probe.style.color === '') return undefined
-		return parseColor(style(probe, 'color'))
+		return parseColor(readStyle(probe, 'color'))
 	} finally {
 		probe.remove()
 	}
@@ -1160,11 +1159,11 @@ export function rgba(value: string): Color | undefined {
  *
  * @param first - A CSS color expression or an already-parsed color.
  * @param second - A CSS color expression or an already-parsed color.
- * @returns `true` when every channel and the alpha agree within the tolerance; `false` otherwise,
+ * @returns True if every channel and the alpha agree within the tolerance; false otherwise,
  * including when either side names no readable color.
  *
  * @remarks
- * Each string side is resolved through {@link rgba}, so a keyword, a token reference, and the
+ * Each string side is resolved through {@link parseCSSColor}, so a keyword, a token reference, and the
  * `rgb()` the engine computes for either of them compare equal without a test converting anything
  * first. A side that resolves to nothing makes the answer `false` rather than a throw, because this
  * is a predicate.
@@ -1176,13 +1175,13 @@ export function rgba(value: string): Color | undefined {
  *
  * @example
  * ```ts
- * colorEqual('rebeccapurple', 'rgb(102, 51, 153)') // true
- * colorEqual('red', [0, 0, 255, 1]) // false
+ * matchesColor('rebeccapurple', 'rgb(102, 51, 153)') // true
+ * matchesColor('red', [0, 0, 255, 1]) // false
  * ```
  */
-export function colorEqual(first: string | Color, second: string | Color): boolean {
-	const left = typeof first === 'string' ? rgba(first) : first
-	const right = typeof second === 'string' ? rgba(second) : second
+export function matchesColor(first: string | Color, second: string | Color): boolean {
+	const left = typeof first === 'string' ? parseCSSColor(first) : first
+	const right = typeof second === 'string' ? parseCSSColor(second) : second
 	if (left === undefined || right === undefined) return false
 	const tolerance = 0.5
 	const [leftRed, leftGreen, leftBlue, leftAlpha] = left
@@ -1273,7 +1272,7 @@ export function measureContrast(front: Color, back: Color): number {
  * the walk stops at the first fully opaque layer, because nothing above that layer is visible.
  *
  * The stack is what tells a resolved backdrop from an assumed one: the walk reached an opaque
- * surface exactly when its last layer's alpha is `1`. {@link contrast} refuses on that reading,
+ * surface exactly when its last layer's alpha is `1`. {@link readContrast} refuses on that reading,
  * which no comparison of composited colors can replace — 64 half-transparent layers composite to
  * the same channels over opposite floors, because the floor's remaining share falls below the last
  * bit a channel carries.
@@ -1355,11 +1354,11 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * @example
  * ```ts
  * const container = render('<p style="background: #000; color: #fff">Ready</p>')
- * contrast(requireValue(container.firstElementChild)) // 21
- * contrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21, and never refuses
+ * readContrast(requireValue(container.firstElementChild)) // 21
+ * readContrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21, and never refuses
  * ```
  */
-export function contrast(element: Element, floor?: Color): number {
+export function readContrast(element: Element, floor?: Color): number {
 	const foreground = parseColor(getComputedStyle(element).color)
 	if (foreground === undefined) throw new Error('Computed foreground color is unavailable')
 	const layers = readLayers(element)
@@ -1556,8 +1555,8 @@ export function readRules(): readonly CSSRule[] {
  *
  * @remarks
  * This proves a declaration exists in the cascade at all, which is a different question from what an
- * element resolves to: {@link style} reads the winner, and a rule this finds may be overridden by
- * another. Assert on this where the subject is the stylesheet, and on `style` where the subject is
+ * element resolves to: {@link readStyle} reads the winner, and a rule this finds may be overridden by
+ * another. Assert on this where the subject is the stylesheet, and on `readStyle` where the subject is
  * the rendered result.
  *
  * The match is a substring, so `findRule('.card')` finds `.card`, `.card:hover`, and
@@ -1709,10 +1708,10 @@ export function extractStyles(root: ParentNode): readonly string[] {
  *
  * @example
  * ```ts
- * style(button, 'padding-left')
+ * readStyle(button, 'padding-left')
  * ```
  */
-export function style(element: Element, property: string): string {
+export function readStyle(element: Element, property: string): string {
 	return getComputedStyle(element).getPropertyValue(property).trim()
 }
 
@@ -1731,17 +1730,17 @@ export function style(element: Element, property: string): string {
  * presence.
  *
  * Resolution is inheritance, so a token declared on `:root` reads from any mounted descendant and
- * from an unmounted element reads as `''`. Use {@link rootToken} where the declaration is the
+ * from an unmounted element reads as `''`. Use {@link readRootToken} where the declaration is the
  * document's.
  *
  * @example
  * ```ts
- * token(panel, 'surface') // '#ffffff'
- * token(panel, '--surface') // '#ffffff'
+ * readToken(panel, 'surface') // '#ffffff'
+ * readToken(panel, '--surface') // '#ffffff'
  * ```
  */
-export function token(element: Element, name: string): string {
-	return style(element, name.startsWith('--') ? name : `--${name}`)
+export function readToken(element: Element, name: string): string {
+	return readStyle(element, name.startsWith('--') ? name : `--${name}`)
 }
 
 /**
@@ -1751,18 +1750,18 @@ export function token(element: Element, name: string): string {
  * @returns The resolved value, trimmed; an empty string when the document declares no such property.
  *
  * @remarks
- * This is {@link token} against `document.documentElement`, which is where a theme declares its
+ * This is {@link readToken} against `document.documentElement`, which is where a theme declares its
  * tokens and where a `[data-theme]` switch retunes them. It exists as its own name because that
  * element is the one a token question is nearly always about, and naming it at every call site
  * buries the question.
  *
  * @example
  * ```ts
- * rootToken('surface')
+ * readRootToken('surface')
  * ```
  */
-export function rootToken(name: string): string {
-	return token(document.documentElement, name)
+export function readRootToken(name: string): string {
+	return readToken(document.documentElement, name)
 }
 
 /**
@@ -1780,16 +1779,16 @@ export function rootToken(name: string): string {
  *
  * An unparsable value reads as `0` rather than as absence, because every caller of this is measuring
  * and `'auto'`, `'none'`, and `''` each contribute no pixels to what a reader sees. Where the
- * distinction matters, read the text with {@link style} instead.
+ * distinction matters, read the text with {@link readStyle} instead.
  *
  * @example
  * ```ts
- * pixels(button, 'padding-left') // 12
- * pixels(button, 'width') // 0 when the width resolves to `auto`
+ * readPixels(button, 'padding-left') // 12
+ * readPixels(button, 'width') // 0 when the width resolves to `auto`
  * ```
  */
-export function pixels(element: Element, property: string): number {
-	const measured = Number.parseFloat(style(element, property))
+export function readPixels(element: Element, property: string): number {
+	const measured = Number.parseFloat(readStyle(element, property))
 	return Number.isFinite(measured) ? measured : 0
 }
 
@@ -1827,15 +1826,15 @@ export function measureContent(): number {
 	let edge = 0
 	for (const element of document.body.querySelectorAll('*')) {
 		const bottom =
-			element.getBoundingClientRect().bottom + window.scrollY + pixels(element, 'margin-bottom')
+			element.getBoundingClientRect().bottom + window.scrollY + readPixels(element, 'margin-bottom')
 		if (bottom > edge) edge = bottom
 	}
 	return Math.ceil(
 		edge +
-			pixels(document.body, 'padding-bottom') +
-			pixels(document.body, 'margin-bottom') +
-			pixels(document.documentElement, 'padding-bottom') +
-			pixels(document.documentElement, 'margin-bottom'),
+			readPixels(document.body, 'padding-bottom') +
+			readPixels(document.body, 'margin-bottom') +
+			readPixels(document.documentElement, 'padding-bottom') +
+			readPixels(document.documentElement, 'margin-bottom'),
 	)
 }
 

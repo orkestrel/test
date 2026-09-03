@@ -1,11 +1,14 @@
-import type { JSONSafe, RecorderInterface, StateScenario } from '@src/core'
+import type { JSONSafe, RecorderInterface, SignalRegistration, StateScenario } from '@src/core'
 import {
+	buildRetryExhausted,
 	captureError,
+	checkBounds,
 	collect,
 	collectStream,
 	createHostileValues,
 	createRecorder,
 	decodeJSONLines,
+	dropRegistration,
 	executeScenario,
 	executeScenarios,
 	flattenHeaders,
@@ -738,6 +741,93 @@ describe('roundTripJSON', () => {
 			'JSON values must contain finite numbers',
 		)
 		expect(roundTripJSON({ nested: [0, 1.5, -2] })).toStrictEqual({ nested: [0, 1.5, -2] })
+	})
+})
+
+describe('checkBounds', () => {
+	it('accepts a zero and a positive bound', () => {
+		expect(checkBounds('Wait', 0, 0)).toBeUndefined()
+		expect(checkBounds('Wait', 1000, 10)).toBeUndefined()
+	})
+
+	it('names its subject in each refusal and refuses the budget before the interval', () => {
+		expect(() => checkBounds('Retry', -1, 10)).toThrow(
+			new Error('Retry budget must be finite and non-negative'),
+		)
+		expect(() => checkBounds('Event', Number.NaN, 10)).toThrow(
+			new Error('Event budget must be finite and non-negative'),
+		)
+		expect(() => checkBounds('Socket', Number.POSITIVE_INFINITY, 10)).toThrow(
+			new Error('Socket budget must be finite and non-negative'),
+		)
+		expect(() => checkBounds('Scratch', 1000, -1)).toThrow(
+			new Error('Scratch interval must be finite and non-negative'),
+		)
+		expect(() => checkBounds('Upgrade', 1000, Number.NaN)).toThrow(
+			new Error('Upgrade interval must be finite and non-negative'),
+		)
+		// Both bounds are invalid, and the budget is the one named, so the order is fixed.
+		expect(() => checkBounds('Wait', -1, -1)).toThrow(
+			new Error('Wait budget must be finite and non-negative'),
+		)
+	})
+})
+
+describe('buildRetryExhausted', () => {
+	it('returns the error unthrown, carrying the cause by identity', () => {
+		const cause = new Error('registry unreachable')
+		const built = buildRetryExhausted('registry answers', 30, 31, undefined, cause)
+
+		expect(built).toBeInstanceOf(Error)
+		expect(built.message).toBe('Retry "registry answers" did not succeed within 30ms (waited 31ms)')
+		expect(built.cause === cause).toBe(true)
+	})
+
+	it('appends the last value only when the retry produced one', () => {
+		expect(buildRetryExhausted('health answers', 30, 31, '"starting"', undefined).message).toBe(
+			'Retry "health answers" did not succeed within 30ms (waited 31ms) (last value: "starting")',
+		)
+		expect(
+			buildRetryExhausted('health answers', 30, 31, undefined, undefined).cause,
+		).toBeUndefined()
+	})
+})
+
+describe('dropRegistration', () => {
+	it('drops the registration naming the installed listener and aborts its cleanup', () => {
+		const cleanup = new AbortController()
+		const listener: EventListener = () => undefined
+		const installed: EventListenerObject = { handleEvent: () => undefined }
+		const other: EventListenerObject = { handleEvent: () => undefined }
+		const kept: SignalRegistration = [listener, other, false, undefined]
+		const registrations: SignalRegistration[] = [kept, [listener, installed, true, cleanup]]
+
+		const dropped = dropRegistration(registrations, installed)
+
+		expect(dropped?.[1] === installed).toBe(true)
+		expect(dropped?.[2]).toBe(true)
+		expect(cleanup.signal.aborted).toBe(true)
+		expect(registrations).toStrictEqual([kept])
+	})
+
+	it('drops an unscoped registration, which carries no cleanup to abort', () => {
+		const installed: EventListenerObject = { handleEvent: () => undefined }
+		const listener: EventListener = () => undefined
+		const registrations: SignalRegistration[] = [[listener, installed, false, undefined]]
+
+		expect(dropRegistration(registrations, installed)?.[3]).toBeUndefined()
+		expect(registrations).toStrictEqual([])
+	})
+
+	it('answers undefined for a listener the list does not hold and changes nothing', () => {
+		const listener: EventListener = () => undefined
+		const installed: EventListenerObject = { handleEvent: () => undefined }
+		const absent: EventListenerObject = { handleEvent: () => undefined }
+		const registrations: SignalRegistration[] = [[listener, installed, false, undefined]]
+
+		expect(dropRegistration(registrations, absent)).toBeUndefined()
+		expect(registrations.length).toBe(1)
+		expect(dropRegistration([], absent)).toBeUndefined()
 	})
 })
 

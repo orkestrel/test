@@ -4,11 +4,11 @@
  * @typeParam TArgs - The argument tuple the recorded handler accepts.
  */
 export interface RecorderInterface<TArgs extends readonly unknown[]> {
-	/** Every recorded call, oldest first, each entry the arguments of one call. */
+	/** Lists every recorded call, oldest first, each entry the arguments of one call. */
 	readonly calls: readonly TArgs[]
-	/** How many calls have been recorded. */
+	/** Reports how many calls have been recorded. */
 	readonly count: number
-	/** The callback to hand to the code under test. */
+	/** Holds the callback to hand to the code under test. */
 	readonly handler: (...args: TArgs) => void
 	/** Discards the recorded calls and keeps the recorder usable. */
 	clear(): void
@@ -40,21 +40,71 @@ export type RecorderMap<
 	TName extends keyof TMap,
 > = { readonly [K in TName]: RecorderInterface<TMap[K]> }
 
-/** A real abort signal and controller instrumented with its live abort-listener tally. */
+/**
+ * Represents one operation that produced a value.
+ *
+ * @typeParam T - The produced value type.
+ */
+export interface Success<T> {
+	/** Holds the discriminant that names the produced arm. */
+	readonly success: true
+	/** Holds the value the operation produced. */
+	readonly value: T
+}
+
+/**
+ * Represents one operation that raised a failure instead of producing a value.
+ *
+ * @typeParam E - The failure type.
+ */
+export interface Failure<E> {
+	/** Holds the discriminant that names the failed arm. */
+	readonly success: false
+	/** Holds the failure the operation raised. */
+	readonly error: E
+}
+
+/**
+ * Represents the outcome of one operation: the value it produced, or the failure it raised.
+ *
+ * @typeParam T - The produced value type.
+ * @typeParam E - The failure type. Defaults to `Error`.
+ * @remarks `success` is the discriminant, so a caller narrows on it before reading `value` or
+ * `error`. This package declares no runtime dependency, so this is the one outcome contract its own
+ * members read rather than an anonymous union written at each call site.
+ */
+export type Result<T, E = Error> = Success<T> | Failure<E>
+
+/** Holds a real abort signal and controller instrumented with its live abort-listener tally. */
 export interface SignalInterface {
-	/** The controller that owns the signal. */
+	/** Holds the controller that owns the signal. */
 	readonly controller: AbortController
-	/** The instrumented signal. */
+	/** Holds the signal to hand to the code under test. */
 	readonly signal: AbortSignal
-	/** The live abort-listener tally. */
+	/** Reports the live abort-listener tally. */
 	readonly count: number
 }
 
-/** A numbered resource factory with records of every creation and destruction. */
+/**
+ * Represents one abort listener an instrumented signal installed, as its tally holds it.
+ *
+ * @remarks The members are the listener the caller supplied, the listener installed in its place,
+ * the capture flag the pair was registered under, and the controller that removes the scope
+ * subscription installed beside it, which is `undefined` where no other signal scopes the
+ * registration.
+ */
+export type SignalRegistration = readonly [
+	listener: EventListener | EventListenerObject,
+	installed: EventListener | EventListenerObject,
+	capture: boolean,
+	cleanup: AbortController | undefined,
+]
+
+/** Represents a numbered resource factory with records of every creation and destruction. */
 export interface ResourceFactoryInterface {
-	/** The ids returned by `create`, in order. */
+	/** Records the ids returned by `create`, in order. */
 	readonly created: RecorderInterface<readonly [id: number]>
-	/** The ids passed to `destroy`, in order. */
+	/** Records the ids passed to `destroy`, in order. */
 	readonly destroyed: RecorderInterface<readonly [id: number]>
 	/**
 	 * Creates a numbered resource.
@@ -70,12 +120,12 @@ export interface ResourceFactoryInterface {
 	destroy(id: number): void
 }
 
-/** The work one teardown entry performs when the list is destroyed. */
+/** Represents the work one teardown entry performs when the list is destroyed. */
 export type TeardownHandler = () => void | Promise<void>
 
-/** The cleanup a test adds as it goes and runs once, newest first, when it is done. */
+/** Represents the cleanup a test adds as it goes and runs once, newest first, when it is done. */
 export interface TeardownInterface {
-	/** How many handlers are registered. */
+	/** Reports how many handlers are registered. */
 	readonly count: number
 	/**
 	 * Registers a handler to run when the list is destroyed.
@@ -104,17 +154,17 @@ export interface TeardownInterface {
  * consumers do not agree on one. Each states its own numbers in its `@remarks`.
  */
 export interface WaitOptions {
-	/** The elapsed-time limit in milliseconds. */
+	/** Holds the elapsed-time limit in milliseconds. */
 	readonly budget?: number
-	/** The delay between readings in milliseconds. */
+	/** Holds the delay between readings in milliseconds. */
 	readonly interval?: number
-	/** The signal that aborts the wait. */
+	/** Holds the signal that aborts the wait. */
 	readonly signal?: AbortSignal
 }
 
 /** Configures a bounded retry. */
 export interface RetryOptions extends WaitOptions {
-	/** The maximum number of producer calls. When omitted, only the time budget bounds the retry. */
+	/** Caps the number of producer calls. When omitted, only the time budget bounds the retry. */
 	readonly attempts?: number
 }
 
@@ -129,7 +179,7 @@ export type EventSubscriber<TArgs extends readonly unknown[]> = (
 	listener: (...args: TArgs) => void,
 ) => (() => void) | void
 
-/** Any value JSON can represent, so a round trip through JSON preserves the type. */
+/** Covers any value JSON can represent, so a round trip through JSON preserves the type. */
 export type JSONValue =
 	| string
 	| number
@@ -139,8 +189,8 @@ export type JSONValue =
 	| { readonly [key: string]: JSONValue }
 
 /**
- * The JSON-safe projection of a type: every member JSON preserves, mapped to itself, and every
- * member it does not, mapped to `never`.
+ * Represents the JSON-safe projection of a type: every member JSON preserves, mapped to itself, and
+ * every member it does not, mapped to `never`.
  *
  * @typeParam T - The type to project.
  * @remarks Intersect a parameter with this rather than constraining it to `JSONValue`. A `JSONValue`
@@ -184,7 +234,7 @@ export type JSONSafe<T> = unknown extends T
 					: never
 
 /**
- * Any value the host `Headers` constructor accepts.
+ * Covers any value the host `Headers` constructor accepts.
  *
  * @remarks Derived from the host constructor rather than named from a single library, so the type
  * resolves in every project against that project's own `Headers` declaration. The record,
@@ -193,8 +243,8 @@ export type JSONSafe<T> = unknown extends T
 export type HeadersSource = NonNullable<ConstructorParameters<typeof Headers>[0]>
 
 /**
- * One row of a statechart table: the entity's state before an event, the event, and the state that
- * event must leave it in.
+ * Represents one row of a statechart table: the entity's state before an event, the event, and the
+ * state that event must leave it in.
  *
  * @typeParam TState - The states the entity moves between, as a string-literal union.
  * @typeParam TEvent - The events the entity accepts, as a string-literal union.
@@ -202,13 +252,13 @@ export type HeadersSource = NonNullable<ConstructorParameters<typeof Headers>[0]
  * entity does not have fails to typecheck rather than failing at runtime.
  */
 export interface StateTransition<TState extends string, TEvent extends string> {
-	/** The row's name, which is prepended to the message of whatever the row throws. */
+	/** Holds the row's name, which is prepended to the message of whatever the row throws. */
 	readonly name: string
-	/** The state the row arranges before it acts. */
+	/** Holds the state the row arranges before it acts. */
 	readonly from: TState
-	/** The event the row applies to the arranged entity. */
+	/** Holds the event the row applies to the arranged entity. */
 	readonly event: TEvent
-	/** The state the row asserts the entity reached. */
+	/** Holds the state the row asserts the entity reached. */
 	readonly to: TState
 }
 
@@ -224,7 +274,7 @@ export interface StateTransition<TState extends string, TEvent extends string> {
  * next.
  */
 export interface StateScenario<TState extends string, TEvent extends string, TContext> {
-	/** The row this scenario drives. */
+	/** Holds the row this scenario drives. */
 	readonly transition: StateTransition<TState, TEvent>
 	/**
 	 * Puts the entity into the transition's `from` state.

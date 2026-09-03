@@ -6,8 +6,8 @@ import {
 	createSource,
 	fenceImports,
 	findMissing,
-	isExternalLink,
 	missingSymbols,
+	isExternalLink,
 	parseManifest,
 	resolveLink,
 } from '@orkestrel/guide'
