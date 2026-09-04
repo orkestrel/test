@@ -4,9 +4,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
 	createGuide,
 	createSource,
-	fenceImports,
+	extractFenceImports,
 	findMissing,
-	missingSymbols,
+	findMissingSymbols,
 	isExternalLink,
 	parseManifest,
 	resolveLink,
@@ -240,23 +240,25 @@ describe('guides parity', () => {
 			// nothing left to compare.
 			const behavioral = source
 				.exports()
-				.filter((symbol) => symbol.kind === 'interface' && source.methods(symbol.name).length > 0)
+				.filter(
+					(symbol) => symbol.keyword === 'interface' && source.methods(symbol.name).length > 0,
+				)
 				.map((symbol) => symbol.name)
 
 			it('documents every source export', () => {
-				expect(missingSymbols(source.exports(), guide.surface())).toEqual([])
+				expect(findMissingSymbols(source.exports(), guide.surface())).toEqual([])
 			})
 
 			it('documents only real exports', () => {
-				expect(missingSymbols(guide.surface(), source.exports())).toEqual([])
+				expect(findMissingSymbols(guide.surface(), source.exports())).toEqual([])
 			})
 
 			it('exposes every source export through its barrel', () => {
-				expect(missingSymbols(source.exports(), source.surface())).toEqual([])
+				expect(findMissingSymbols(source.exports(), source.surface())).toEqual([])
 			})
 
 			it('declares every barrel symbol directly', () => {
-				expect(missingSymbols(source.surface(), source.exports())).toEqual([])
+				expect(findMissingSymbols(source.surface(), source.exports())).toEqual([])
 			})
 
 			it('documents every behavioral interface', () => {
@@ -294,7 +296,7 @@ describe('guides parity', () => {
 				const imported = guide
 					.fences()
 					.filter((fence) => fence.language === 'ts')
-					.flatMap((fence) => fenceImports(fence.code))
+					.flatMap((fence) => extractFenceImports(fence.code))
 					.filter((row) => row.specifier === specifier || row.specifier.startsWith(`${specifier}/`))
 					.flatMap((row) => [...row.names])
 				expect(imported.length).toBeGreaterThan(0)
