@@ -57,8 +57,8 @@ export function normalizePath(path: string): string {
 }
 
 /**
- * The `guides/test.md` fences carried outside `tests/guides.test.ts`, keyed by the `###` heading
- * that owns the fence and valued by the test file that runs it.
+ * Names the `guides/test.md` fences carried outside `tests/guides.test.ts`, keyed by the `###`
+ * heading that owns the fence and valued by the test file that runs it.
  *
  * @remarks A browser fence needs a document, and the guides project runs in Node with the browser
  * disabled, so each one is carried in the browser suite that owns its subject. The totality guard in

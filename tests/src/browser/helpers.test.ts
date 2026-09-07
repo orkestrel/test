@@ -1932,7 +1932,7 @@ describe('captureFrame', () => {
 
 	it('settles a document whose height converges under a viewport-bound rule', async () => {
 		// `min-height: 50vh` plus a fixed 900-row block is a document whose height is half the pane
-		// plus 900, so it converges on 1800 and never reaches it by restaging at the height just
+		// plus 900, so it converges on 1800 and never reaches it by restaging at the height last
 		// read: each staging closes half the remaining gap. The two readings below are that
 		// approach measured — 1322 under the declared pane, 1561 under a pane staged at 1322 — so a
 		// fixture that stops converging reddens here rather than passing on a document that settles

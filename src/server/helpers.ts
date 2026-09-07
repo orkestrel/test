@@ -159,7 +159,7 @@ export function createLink(path: string, source: string): void {
  * @param path - The absolute directory to remove.
  * @throws The last removal error once {@link REMOVE_TREE_MAX_ATTEMPTS} attempts are exhausted,
  * or immediately for any error whose code is not in {@link REMOVE_TREE_RETRYABLE_CODES}.
- * @remarks On Windows, a directory that a just-exited process still holds as its current
+ * @remarks On Windows, a directory that a recently exited process still holds as its current
  * working directory throws `EPERM` for a short interval after that process exits. Node's own
  * `rmSync` `maxRetries`/`retryDelay` options do not cover this error class on that host: probed
  * against a real held directory, they neither delay nor retry before rethrowing, so the retry
@@ -393,7 +393,7 @@ export async function waitForSocketClose(socket: Socket, options?: WaitOptions):
  * @throws The abort reason, or an `Error` when a bound is invalid or the budget elapses. The
  * exhaustion error carries the last host refusal as its `cause`.
  * @remarks Default budget: `10000` milliseconds. Default interval: `25` milliseconds. A host holds a
- * directory for a short interval after the process that held it exits, and a just-stopped child's
+ * directory for a short interval after the process that held it exits, and a recently stopped child's
  * working directory is the case this exists for, so removal is attempted until the host lets go
  * rather than exactly once. {@link ScratchInterface.destroy} stays synchronous and is unchanged; this
  * is the bounded retry around it. A directory nothing releases still fails, with the host's own

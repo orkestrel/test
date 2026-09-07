@@ -727,7 +727,7 @@ that needs a refusal probes that refusal itself.
 
 A refused `ScratchOptions` key leaves nothing behind, by two different mechanisms. `parent` and
 `prefix` are checked before `mkdtempSync` runs, so a refused value allocates nothing. `files` is
-seeded after the directory exists, so a refused key removes the directory that was just made and
+seeded after the directory exists, so a refused key removes the directory that was recently made and
 rethrows.
 
 `parent` is the existing directory the allocation is created in, and defaults to the host temporary
@@ -736,7 +736,7 @@ starts the generated directory name, and defaults to `orkestrel-test-`; allocati
 contains `/` or `\`, which is what stops a prefix steering the allocation out of its parent. Nothing
 else is refused: a fragment carrying no separator is one path segment, so `release-0..2-` allocates.
 `files` seeds files on allocation, keyed by path below the scratch directory; allocation removes the
-directory it just made and rethrows when a key escapes or the host refuses a write.
+directory it recently made and rethrows when a key escapes or the host refuses a write.
 
 `createLoopback` takes a `node:net` `Server` — `node:http`'s and `node:https`'s both extend it — and
 never constructs one. It listens on port `0` at `127.0.0.1`, waits for the `listening` event, and
@@ -2024,7 +2024,7 @@ outside.destroy()
 ```
 
 `destroy()` is synchronous, and it already outlasts the short `EPERM` a Windows host reports for a
-directory a just-exited child held as its working directory: `removeTree` retries that removal ten
+directory a recently exited child held as its working directory: `removeTree` retries that removal ten
 times 100 milliseconds apart, which bounds the blocking wait at roughly a second. Nothing extra is
 needed for a child the test has already reaped.
 
@@ -2814,7 +2814,7 @@ Each entry names the contracts its file proves. The test names carry the cases.
   quietly, and its frame ends on the fixture's background rather than on the runner's page in the
   row `scrollHeight` rounded away. A full-height panel capped by a media query reflows against the
   taller pane, and its frame covers what the reflow added. A panel holding half the pane over a
-  fixed 900-row block converges on 1800 without ever reaching it by restaging at the height just
+  fixed 900-row block converges on 1800 without ever reaching it by restaging at the height last
   read — 1322, then 1561 — and its frame lands on 1800, which is the fixed point written out rather
   than read back from the capture that staged it. The same panel uncapped grows with every pane and
   reaches the refusal, whose written-out restaging bound reddens when the source's bound moves and

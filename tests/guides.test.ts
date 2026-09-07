@@ -269,8 +269,8 @@ describe('guides parity', () => {
 
 			it('documents every public method on implementing interfaces', () => {
 				for (const group of guide.methods()) {
-					const documented = [...group.methods]
-					const actual = [...source.methods(group.interface)]
+					const documented = group.methods.map((method) => method.name)
+					const actual = source.methods(group.interface).map((method) => method.name)
 					expect(findMissing(documented, actual)).toEqual([])
 					expect(findMissing(actual, documented)).toEqual([])
 				}
