@@ -103,6 +103,11 @@ Imported from `@orkestrel/test`.
 
 #### Types
 
+A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
+members after `plus`, an extended interface's name before `plus` with the members it adds after,
+`alone` after the call-signature members of an interface that declares no data members, and a type
+alias's own type.
+
 | Type                       | Kind      | Shape                                                                                                  | Summary                                                                                                                                        |
 | -------------------------- | --------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WaitOptions`              | interface | `{ budget?, interval?, signal? }`                                                                      | Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and an abort signal.                              |
@@ -125,14 +130,15 @@ Imported from `@orkestrel/test`.
 | `StateTransition`          | interface | `{ name, from, event, to }`                                                                            | Represents one row of a statechart table: the entity's state before an event, the event, and the state that event must leave it in.            |
 | `StateScenario`            | interface | `{ transition }` plus `arrange` / `act` / `assert`                                                     | Drives one `StateTransition` through the three phases that prove it.                                                                           |
 
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature members
-after `plus`, and a type alias's own type. Each interface's call-signature members are listed under
-[Methods](#methods). `Result` defaults `E` to `Error`, where `@orkestrel/contract` publishes the same
-name defaulting to `unknown`; [Limits](#limits) rules that divergence.
+Each interface's call-signature members are listed under [Methods](#methods). `Result` defaults `E`
+to `Error`, where `@orkestrel/contract` publishes the same name defaulting to `unknown`;
+[Limits](#limits) rules that divergence.
 
 #### Constants
 
-| API                     | Kind  | Signature                                                                                                    | Summary                                                                                  |
+A `Shape` cell holds the constant's declared type.
+
+| API                     | Kind  | Shape                                                                                                        | Summary                                                                                  |
 | ----------------------- | ----- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `STATECHART_ATTRIBUTES` | const | `Readonly<Record<'status' \| 'passed' \| 'failed' \| 'total' \| 'scenario' \| 'result' \| 'state', string>>` | Names the attributes a statechart harness publishes, keyed by the fact each one carries. |
 | `STATECHART_STATUSES`   | const | `readonly ['pending', 'idle', 'running', 'passed', 'failed']`                                                | Lists every value a statechart harness reports through its `status` attribute.           |
@@ -223,6 +229,9 @@ whole-document readers take a value or nothing at all, so they name no target ei
 
 #### Types
 
+A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
+members after `plus`, and a type alias's own type.
+
 | Type                 | Kind      | Shape                                                | Summary                                                                                                                                         |
 | -------------------- | --------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Color`              | type      | `readonly [red, green, blue, alpha]`                 | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
@@ -235,12 +244,11 @@ whole-document readers take a value or nothing at all, so they name no target ei
 | `JournalStep`        | interface | `{ action, trigger, result }`                        | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
 | `JournalInterface`   | interface | `{ steps, output }` plus `start` / `stop` / `record` | Records one scenario: every step it took and everything the page said while it ran.                                                             |
 
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature members
-after `plus`, and a type alias's own type.
-
 #### Constants
 
-| API                  | Kind  | Signature                          | Summary                                                                                                    |
+A `Shape` cell holds the constant's declared type.
+
+| API                  | Kind  | Shape                              | Summary                                                                                                    |
 | -------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `ACCESSIBLE_ROLES`   | const | `readonly string[]`                | Names the interactive ARIA roles a bare accessible name is searched across.                                |
 | `CANVAS_COLOR`       | const | `Color`                            | Names the color a browser paints an unstyled document with: opaque white.                                  |
@@ -586,6 +594,10 @@ Imported from `@orkestrel/test/server`.
 
 #### Types
 
+A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
+members after `plus`, an extended interface's name before `plus` with the members it adds after,
+and a type alias's own type, whose arms are written with `or`.
+
 | Type                 | Kind      | Shape                                                                                         | Summary                                                                                         |
 | -------------------- | --------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `ScratchInterface`   | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` | Holds a temporary directory a test owns, writes into, reads back, and removes when it is done.  |
@@ -596,9 +608,6 @@ Imported from `@orkestrel/test/server`.
 | `InventoryOptions`   | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`                             | Configures a source inventory read.                                                             |
 | `UpgradeOptions`     | interface | `WaitOptions` plus `{ path?, protocols? }`                                                    | Configures a client upgrade request.                                                            |
 | `UpgradeResult`      | type      | `{ claimed: true, protocol }` or `{ claimed: false, status }`                                 | Represents what one server did with a client upgrade request.                                   |
-
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature members
-after `plus`, and a type alias's own type, whose arms are written with `or`.
 
 #### Constants
 
@@ -2921,18 +2930,18 @@ Each entry names the contracts its file proves. The test names carry the cases.
   carrying no `name=value` pair read past and still returned.
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the doc ↔ source bijection contract: the
   `## Surface` ↔ source bijection, the barrel ↔ source bijection, the behavioral-interface ↔
-  `## Methods` bijection and each group's
-  members, the fence imports, and link resolution for this guide. It also runs the equality gate:
-  every `Summary` cell against the description paragraph of the declaration it documents, the titled
-  fence against the `@example` block of that title (pinned so the titled pair cannot be retired
-  silently), and the README pitch against this guide's tagline. Beside them it runs the fences
-  themselves and asserts what their comments claim: the recorder's truncating `clear()`, the recorder
-  map keyed by the events a real source emits, the signal tally through every exit it has, the
-  resource numbering, the unchecked boundary's uncallable-method and non-object-target refusals, the
-  header flattening, the wait family's opposite throw directions with the exhaustion message and its
-  `cause`, the statechart table walked against a real disclosure with the failing row's name opening
-  the message and the assertion kept as the `cause`, the cookie jar driven against a real origin, and
-  the HTTP upgrade's refused arm, claimed arm, and budget.
+  `## Methods` bijection and each group's members, the fence imports, and link resolution for this
+  guide. It also runs the equality gate: every `Summary` cell against the description paragraph of
+  the declaration it documents, the titled `Own a temporary directory` fence against the `@example`
+  block of that title (pinned so the titled pair cannot be retired silently), and the README pitch
+  against this guide's tagline. Beside them it runs the fences themselves and asserts what their
+  comments claim: the recorder's truncating `clear()`, the recorder map keyed by the events a real
+  source emits, the signal tally through every exit it has, the resource numbering, the unchecked
+  boundary's uncallable-method and non-object-target refusals, the header flattening, the wait
+  family's opposite throw directions with the exhaustion message and its `cause`, the statechart
+  table walked against a real disclosure with the failing row's name opening the message and the
+  assertion kept as the `cause`, the cookie jar driven against a real origin, and the HTTP upgrade's
+  refused arm, claimed arm, and budget.
 
 ## See also
 
