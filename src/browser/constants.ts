@@ -28,7 +28,7 @@ export const ACCESSIBLE_ROLES: readonly string[] = Object.freeze([
 ])
 
 /**
- * Names the color a browser paints an unstyled document with.
+ * Names the color a browser paints an unstyled document with: opaque white.
  *
  * @remarks
  * This is the floor a backdrop walk ends on wherever the caller wants the browser's own canvas

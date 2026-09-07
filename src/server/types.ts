@@ -83,6 +83,7 @@ export interface ScratchInterface {
 	 * Removes the allocated directory and everything in it when its identity still matches.
 	 *
 	 * @throws When the host refuses to inspect or remove the matching allocation.
+	 * @remarks Idempotent. An identity that no longer matches removes nothing.
 	 */
 	destroy(): void
 }
@@ -157,7 +158,8 @@ export interface CookieJarInterface {
 	 * @returns Those fields unmodified, in the order the response carried them.
 	 * @remarks Selection is by name alone. A field spelling `Max-Age=0` deletes its cookie and every
 	 * other field stores or replaces one, so `Domain`, `Path`, `Expires`, and `Secure` are read past
-	 * rather than honoured. Nothing outlives the jar.
+	 * rather than honoured. A field carrying no `name=value` pair is read past too and still
+	 * returned. Nothing outlives the jar.
 	 */
 	capture(response: Response): readonly string[]
 }

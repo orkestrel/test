@@ -360,6 +360,10 @@ export async function clickDisclosure(name: string): Promise<void> {
  * @param text - The text to type.
  * @returns A promise resolving after every keystroke completes.
  *
+ * @remarks
+ * The text is escaped against the provider's own key syntax, so a literal `{` or `[` is typed
+ * rather than read as the start of a key sequence.
+ *
  * @example
  * ```ts
  * await typeAccessible('Runs', '3')

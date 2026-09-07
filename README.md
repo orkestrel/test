@@ -1,16 +1,13 @@
 # @orkestrel/test
 
-The test helpers the `@orkestrel` fleet kept rewriting, published once. A call recorder that is a
-real callback rather than a spy. A real host delay. A throw-to-value converter and a presence
-narrower, so `!` and `as` stay banned in tests. An async-iterable collector, a stream collector, and
-a JSON copier. A frozen hostile-value corpus for proving guards are total. A cleanup list that gives
-every owned resource back, newest first. A scratch directory the test owns and destroys, a loopback
-port for a server the test built, and a symlink-refusing source-file walker. And the browser journey
-layer, which drives a real interface by role and accessible name through the installed Vitest
-provider. A helper ships here only when enough packages had already written their own; the guide's
-[Limits](guides/test.md#limits) section states that rule, what it excluded, and the one door the
-journey layer came through instead. Add it as a devDependency; nothing here runs in production code.
-Part of the `@orkestrel` line.
+> The test helpers the `@orkestrel` fleet kept rewriting, published once: families of what a test
+> records, what it waits for, and what it owns, with a pair outside all of them and a browser
+> journey layer beside them.
+
+Add it as a devDependency and import the core from `@orkestrel/test`. A helper ships here only when
+enough packages had already written their own; the guide's [Limits](guides/test.md#limits) section
+states that rule, what it excluded, and the one door the journey layer came through instead. Nothing
+here runs in production code. Part of the `@orkestrel` line.
 
 It has **zero runtime dependencies**, and no exported signature names an `@orkestrel/*` type. Both
 rules exist for one reason: a test helper hands its types straight into the consumer's assertions,

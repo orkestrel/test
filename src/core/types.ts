@@ -10,7 +10,11 @@ export interface RecorderInterface<TArgs extends readonly unknown[]> {
 	readonly count: number
 	/** Holds the callback to hand to the code under test. */
 	readonly handler: (...args: TArgs) => void
-	/** Discards the recorded calls and keeps the recorder usable. */
+	/**
+	 * Discards the recorded calls and keeps the recorder usable.
+	 *
+	 * @remarks The list is truncated in place, so a `calls` reference taken earlier empties too.
+	 */
 	clear(): void
 }
 
@@ -18,6 +22,8 @@ export interface RecorderInterface<TArgs extends readonly unknown[]> {
  * Subscribes handlers to a typed event source.
  *
  * @typeParam TMap - The event names and argument tuples the source delivers.
+ * @remarks The subscribe half is all this asks for, so a source that also removes handlers, emits,
+ * or counts subscriptions satisfies it unchanged.
  */
 export interface EventSourceInterface<TMap extends Record<string, readonly unknown[]>> {
 	/**
@@ -71,7 +77,8 @@ export interface Failure<E> {
  * @typeParam E - The failure type. Defaults to `Error`.
  * @remarks `success` is the discriminant, so a caller narrows on it before reading `value` or
  * `error`. This package declares no runtime dependency, so this is the one outcome contract its own
- * members read rather than an anonymous union written at each call site.
+ * members read rather than an anonymous union written at each call site. `E` defaults to `Error`,
+ * where `@orkestrel/contract` publishes the same name defaulting to `unknown`.
  */
 export type Result<T, E = Error> = Success<T> | Failure<E>
 
@@ -110,12 +117,17 @@ export interface ResourceFactoryInterface {
 	 * Creates a numbered resource.
 	 *
 	 * @returns The next monotonically increasing id.
+	 * @remarks The id is the creation record's length plus one, so it counts allocations rather than
+	 * live resources: a destroyed id is never reissued, and clearing `created` restarts the numbering
+	 * at `1`.
 	 */
 	create(): number
 	/**
 	 * Destroys a numbered resource.
 	 *
 	 * @param id - The resource id to destroy.
+	 * @remarks It records the id and nothing else: it frees nothing, refuses nothing, and accepts an
+	 * id that was never created, so a suite asserts on the record rather than on a refusal.
 	 */
 	destroy(id: number): void
 }
@@ -131,6 +143,8 @@ export interface TeardownInterface {
 	 * Registers a handler to run when the list is destroyed.
 	 *
 	 * @param handler - The work to perform.
+	 * @remarks Registration order is what `destroy` reverses, so the newest registration is undone
+	 * first.
 	 */
 	add(handler: TeardownHandler): void
 	/**
@@ -147,7 +161,8 @@ export interface TeardownInterface {
 }
 
 /**
- * Configures a bounded asynchronous wait.
+ * Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and
+ * an abort signal.
  *
  * @remarks
  * A default belongs to the function that reads these bounds rather than to the shape, because the
@@ -162,7 +177,7 @@ export interface WaitOptions {
 	readonly signal?: AbortSignal
 }
 
-/** Configures a bounded retry. */
+/** Configures a bounded retry, adding an optional producer-call limit to a bounded wait's bounds. */
 export interface RetryOptions extends WaitOptions {
 	/** Caps the number of producer calls. When omitted, only the time budget bounds the retry. */
 	readonly attempts?: number
@@ -295,6 +310,7 @@ export interface StateScenario<TState extends string, TEvent extends string, TCo
 	 *
 	 * @param context - The fixture this row drives.
 	 * @param state - The transition's `to` state.
+	 * @remarks Whatever it throws is renamed with the row's name and rethrown.
 	 */
 	assert(context: TContext, state: TState): Promise<void> | void
 }

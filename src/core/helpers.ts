@@ -340,6 +340,8 @@ export async function waitForEvent<TArgs extends readonly unknown[]>(
  * @returns The decoded values in physical-line order.
  * @throws An `Error` naming the malformed physical line, with the native `SyntaxError` as its
  * `cause`.
+ * @remarks An empty line contributes no value, and a trailing carriage return is dropped before the
+ * line is parsed, so text written with either line ending decodes the same.
  */
 export function decodeJSONLines(text: string): readonly unknown[] {
 	const values: unknown[] = []
@@ -372,12 +374,13 @@ export function captureError(thunk: () => unknown): unknown {
 }
 
 /**
- * Requires a value to be present.
+ * Narrows a value away from `null` and `undefined`, throwing when it is absent.
  *
  * @typeParam T - The required value type.
  * @param value - The value to check.
  * @param message - The error message used when the value is absent. Default: `'Value is required'`.
  * @returns The present value.
+ * @throws An `Error` carrying `message` when the value is `null` or `undefined`.
  */
 export function requireValue<T>(value: T | null | undefined, message = 'Value is required'): T {
 	if (value === null || value === undefined) throw new Error(message)

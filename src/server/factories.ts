@@ -34,6 +34,67 @@ import {
  * `/` or `\`; or when allocation or seeding fails.
  * @remarks Default parent: the host temporary directory. Default prefix: `orkestrel-test-`. Seed
  * keys use root-relative paths.
+ *
+ * @example Own a temporary directory
+ * ```ts
+ * import { createScratch } from '@orkestrel/test/server'
+ *
+ * const scratch = createScratch({ prefix: 'guide-', files: { 'src/index.ts': 'export {}\n' } })
+ *
+ * scratch.read('src/index.ts') // 'export {}\n'
+ * scratch.has('src') // true
+ * scratch.read('src') // throws Error: Scratch path is a directory: src
+ * scratch.read('missing.ts') // undefined
+ * scratch.write('../escape.ts', '') // throws Error: Path outside scratch directory: ../escape.ts
+ *
+ * // `write` answers the contained path it wrote, the way `ensure` and `link` answer theirs, so the
+ * // path goes straight to the code under test without joining it again.
+ * scratch.write('src/notes.ts', 'export {}\n') // `${scratch.path}/src/notes.ts`
+ *
+ * // `ensure` is how you get an empty directory, because every `write` creates a file.
+ * scratch.ensure('empty')
+ * scratch.names() // ['empty', 'src']
+ * scratch.names('empty') // []
+ *
+ * // `parent` puts the allocation somewhere other than the host temporary directory.
+ * const child = createScratch({ parent: scratch.path, prefix: 'child-' })
+ * scratch.names().length // 3 — 'empty', 'src', and the child allocation
+ * child.destroy()
+ * scratch.names().length // 2 — the child removed itself and nothing else
+ *
+ * // `link` creates the symbolic link the threat model names, and `read` follows it. A directory
+ * // source runs on a host that creates no symbolic link too; see "Hosts that create no symbolic
+ * // link" for what such a host does with a file source.
+ * const outside = createScratch({ prefix: 'outside-', files: { 'read.ts': 'export {}\n' } })
+ * scratch.link('gate', outside.path) // `${scratch.path}/gate` — the link's own path, not its destination
+ * scratch.read('gate/read.ts') // 'export {}\n' — read through the link, at its destination
+ *
+ * // A link pointing out of the allocation is resolved through, so a contained path acts outside it.
+ * scratch.ensure('gate/made') // `${scratch.path}/gate/made` — the lexical path, not the destination
+ * outside.names() // ['made', 'read.ts'] — the directory was made under `outside.path`
+ * scratch.names('gate') // ['made', 'read.ts'] — the same entries, listed through the link
+ *
+ * // `link` acts at the final segment rather than through it, so `gate` is occupied.
+ * scratch.link('gate', outside.path) // throws Error: EEXIST: file already exists
+ *
+ * // `has` reads the final segment without following it, and `read` follows it.
+ * scratch.link('dangling', 'missing.ts')
+ * scratch.has('dangling') // true — the link is there
+ * scratch.read('dangling') // undefined — what it points at is not
+ *
+ * // `remove` takes one contained entry and acts at the final segment, so a link goes and whatever it
+ * // pointed at stays. A missing target is a no-op.
+ * scratch.remove('dangling')
+ * scratch.has('dangling') // false
+ * scratch.remove('missing.ts') // no throw — there was nothing there
+ * scratch.remove('src') // the directory and everything under it
+ * scratch.names() // ['empty', 'gate']
+ *
+ * scratch.destroy()
+ * scratch.destroy() // no-op — destroy is idempotent
+ * outside.has('made') // true — destroy unlinks `gate` and leaves what it pointed at
+ * outside.destroy()
+ * ```
  */
 export function createScratch(options?: ScratchOptions): ScratchInterface {
 	const parent = resolve(options?.parent ?? tmpdir())

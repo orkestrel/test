@@ -9,7 +9,7 @@
 export type Color = readonly [red: number, green: number, blue: number, alpha: number]
 
 /**
- * Configures one built element.
+ * Configures one built element: its class list, its text, and its attributes.
  *
  * @remarks
  * `classes` is written the way a `class` attribute is written — one space-separated string — so a
@@ -26,7 +26,7 @@ export interface ElementOptions {
 	readonly attributes?: Readonly<Record<string, string>>
 }
 
-/** Configures one captured frame. */
+/** Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots. */
 export interface FrameOptions {
 	/** Holds the frame's path, relative to the calling test file. */
 	readonly path: string
@@ -39,7 +39,8 @@ export interface FrameOptions {
 }
 
 /**
- * Represents one written frame, read back from the file a capture produced.
+ * Represents one written frame read back from the file a capture produced: its size in device
+ * pixels, and the single color its bottom row paints.
  *
  * @remarks
  * The floor is the frame's bottom row, because that row is where coverage shows: a frame shot at a
@@ -58,7 +59,7 @@ export interface FrameReading {
 	readonly floor: string | undefined
 }
 
-/** Represents one theme-and-viewport pair a capture run renders. */
+/** Represents one theme-and-viewport pair a capture run renders, and the document change it needs first. */
 export interface CaptureVariant {
 	/** Holds the variant's name, which is the second half of every filename the run writes. */
 	readonly name: string
@@ -73,7 +74,10 @@ export interface CaptureVariant {
 	readonly apply?: () => void
 }
 
-/** Configures a capture portfolio. */
+/**
+ * Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where
+ * it writes, and whether it writes at all.
+ */
 export interface PortfolioOptions {
 	/**
 	 * Lists every state name the journeys place, declared once. `place` refuses a name absent from
@@ -162,6 +166,8 @@ export interface JournalInterface {
 	 * @param action - What the run did, as one verb.
 	 * @param trigger - The exact thing it did it to.
 	 * @param result - What was observed on the surface after the step landed.
+	 * @remarks The appended step is frozen. A step taken before `start` or after `stop` is not
+	 * recorded at all.
 	 */
 	record(action: string, trigger: string, result: string): void
 }
