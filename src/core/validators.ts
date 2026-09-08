@@ -12,6 +12,18 @@ import type { RecorderMap } from './types.js'
  * wiring each recorder to exactly the event where it stores that recorder. A direct caller must
  * establish the same pairing before it relies on the narrowing. This guard takes the listed events
  * through a reference parameter rather than using the canonical single-value guard form.
+ *
+ * @example
+ * ```ts
+ * import { createRecorder, isRecorderMapComplete } from '@orkestrel/test'
+ *
+ * type ReadyEvents = { readonly ready: readonly [name: string, step: number] }
+ *
+ * const value: unknown = { ready: createRecorder<readonly [name: string, step: number]>() }
+ *
+ * isRecorderMapComplete<ReadyEvents, 'ready'>(value, ['ready']) // true
+ * isRecorderMapComplete<ReadyEvents, 'ready'>({ ready: 1 }, ['ready']) // false
+ * ```
  */
 export function isRecorderMapComplete<
 	TMap extends Record<string, readonly unknown[]>,

@@ -19,6 +19,16 @@ import type {
  * `<subject> interval must be finite and non-negative`.
  * @remarks Every member of the wait family resolves its own defaults first and passes the resolved
  * numbers here, so each keeps its own defaults while one contract states what a bound must be.
+ *
+ * @example
+ * ```ts
+ * import { checkBounds } from '@orkestrel/test'
+ *
+ * checkBounds('Wait', 1000, 10) // undefined
+ *
+ * // Throws Error: Retry budget must be finite and non-negative
+ * checkBounds('Retry', -1, 10)
+ * ```
  */
 export function checkBounds(subject: string, budget: number, interval: number): void {
 	if (!Number.isFinite(budget) || budget < 0) {
@@ -40,6 +50,16 @@ export function checkBounds(subject: string, budget: number, interval: number): 
  * @returns The exhaustion error, unthrown.
  * @remarks Both of `retryUntil`'s elapsed checks raise this one message, so an edit to it lands in
  * one place. The rendered value is appended only when the retry produced one.
+ *
+ * @example
+ * ```ts
+ * import { buildRetryExhausted } from '@orkestrel/test'
+ *
+ * const exhausted = buildRetryExhausted('registry answers', 30, 31, '"starting"', undefined)
+ *
+ * exhausted.message
+ * // 'Retry "registry answers" did not succeed within 30ms (waited 31ms) (last value: "starting")'
+ * ```
  */
 export function buildRetryExhausted(
 	description: string,
@@ -63,6 +83,21 @@ export function buildRetryExhausted(
  * @remarks The dropped registration's cleanup controller is aborted as it leaves, so the scope
  * subscription installed beside it leaves with it. Removing the installed listener from the signal
  * stays with the caller, because only the scope-abort path has one to remove.
+ *
+ * @example
+ * ```ts
+ * import type { SignalRegistration } from '@orkestrel/test'
+ * import { dropRegistration } from '@orkestrel/test'
+ *
+ * const listener: EventListener = () => undefined
+ * const installed: EventListenerObject = { handleEvent: () => undefined }
+ * const cleanup = new AbortController()
+ * const registrations: SignalRegistration[] = [[listener, installed, true, cleanup]]
+ *
+ * dropRegistration(registrations, installed)?.[1] === installed // true
+ * cleanup.signal.aborted // true
+ * dropRegistration(registrations, installed) // undefined
+ * ```
  */
 export function dropRegistration(
 	registrations: SignalRegistration[],
@@ -342,6 +377,16 @@ export async function waitForEvent<TArgs extends readonly unknown[]>(
  * `cause`.
  * @remarks An empty line contributes no value, and a trailing carriage return is dropped before the
  * line is parsed, so text written with either line ending decodes the same.
+ *
+ * @example
+ * ```ts
+ * import { decodeJSONLines } from '@orkestrel/test'
+ *
+ * decodeJSONLines('{"ready":true}\n7\n') // [{ ready: true }, 7]
+ *
+ * // Throws Error: Invalid JSON on line 3
+ * decodeJSONLines('{}\n\n{')
+ * ```
  */
 export function decodeJSONLines(text: string): readonly unknown[] {
 	const values: unknown[] = []

@@ -62,6 +62,16 @@ export function resolveContained(root: string, target: string): string | undefin
  * @remarks This is {@link resolveContained} with the refusal every contained scratch operation makes
  * of an escape, so the check and its one message are stated once. Read `resolveContained` where an
  * escape is an answer rather than a refusal.
+ *
+ * @example
+ * ```ts
+ * import { requireContained } from '@orkestrel/test/server'
+ *
+ * requireContained('/scratch', 'nested/file.txt') // '/scratch/nested/file.txt'
+ *
+ * // Throws Error: Path outside scratch directory: ../escape.ts
+ * requireContained('/scratch', '../escape.ts')
+ * ```
  */
 export function requireContained(root: string, target: string): string {
 	const candidate = resolveContained(root, target)
@@ -74,6 +84,16 @@ export function requireContained(root: string, target: string): string {
  *
  * @param status - The status read from the directory's path.
  * @returns The device, index node, and creation time that together name the allocation.
+ *
+ * @example
+ * ```ts
+ * import { statSync } from 'node:fs'
+ * import { readIdentity } from '@orkestrel/test/server'
+ *
+ * const status = statSync('/scratch')
+ *
+ * readIdentity(status) // { birth: status.birthtimeMs, device: status.dev, inode: status.ino }
+ * ```
  */
 export function readIdentity(status: Stats): ScratchIdentity {
 	return { birth: status.birthtimeMs, device: status.dev, inode: status.ino }
@@ -88,6 +108,16 @@ export function readIdentity(status: Stats): ScratchIdentity {
  * `code`, and one carrying a `code` that is not a string all answer `undefined`. A null-prototype
  * object is read the same way, because the key is tested with `in` rather than through
  * `hasOwnProperty`.
+ *
+ * @example
+ * ```ts
+ * import { readFileSync } from 'node:fs'
+ * import { captureError } from '@orkestrel/test'
+ * import { readErrorCode } from '@orkestrel/test/server'
+ *
+ * readErrorCode(captureError(() => readFileSync('/scratch/absent.txt', 'utf8'))) // 'ENOENT'
+ * readErrorCode(new Error('refused')) // undefined
+ * ```
  */
 export function readErrorCode(error: unknown): string | undefined {
 	return typeof error === 'object' &&
@@ -107,6 +137,17 @@ export function readErrorCode(error: unknown): string | undefined {
  * @remarks All three fields are compared because none of them alone identifies an allocation. A
  * device is shared by every directory on one filesystem, an index node is reused once its directory
  * is removed, and a creation time repeats within the host's timestamp resolution.
+ *
+ * @example
+ * ```ts
+ * import { statSync } from 'node:fs'
+ * import { matchesIdentity, readIdentity } from '@orkestrel/test/server'
+ *
+ * const allocation = readIdentity(statSync('/scratch'))
+ *
+ * matchesIdentity(readIdentity(statSync('/scratch')), allocation) // true
+ * matchesIdentity({ birth: 3, device: 1, inode: 9 }, { birth: 3, device: 1, inode: 2 }) // false
+ * ```
  */
 export function matchesIdentity(current: ScratchIdentity, allocation: ScratchIdentity): boolean {
 	return (
@@ -122,6 +163,14 @@ export function matchesIdentity(current: ScratchIdentity, allocation: ScratchIde
  * @param key - The root-relative key to test.
  * @param exclusions - The normalized root-relative exclusion keys.
  * @returns True if an exclusion names the key or one of its ancestors; false otherwise.
+ *
+ * @example
+ * ```ts
+ * import { isExcluded } from '@orkestrel/test/server'
+ *
+ * isExcluded('src/index.ts', ['src']) // true
+ * isExcluded('src-other/index.ts', ['src']) // false
+ * ```
  */
 export function isExcluded(key: string, exclusions: readonly string[]): boolean {
 	return exclusions.some((rule) => rule === '' || key === rule || key.startsWith(`${rule}/`))
@@ -139,6 +188,17 @@ export function isExcluded(key: string, exclusions: readonly string[]): boolean 
  * `EPERM`, while a directory or missing source is passed to a junction attempt. A missing source is
  * accepted to create a dangling junction. Where the host creates a junction, its stored value is the
  * resolved absolute path.
+ *
+ * @example
+ * ```ts
+ * import { readFileSync } from 'node:fs'
+ * import { createLink } from '@orkestrel/test/server'
+ *
+ * // `/scratch/source` is a directory holding `file.txt`.
+ * createLink('/scratch/linked', '/scratch/source')
+ *
+ * readFileSync('/scratch/linked/file.txt', 'utf8') // 'linked'
+ * ```
  */
 export function createLink(path: string, source: string): void {
 	try {
@@ -166,6 +226,16 @@ export function createLink(path: string, source: string): void {
  * is implemented here with a synchronous sleep instead. Ten attempts 100ms apart bound the wait
  * at roughly one second. A hold that outlasts that second is {@link destroyScratch}'s case, which
  * retries every refusal inside a caller's budget rather than the codes named here.
+ *
+ * @example
+ * ```ts
+ * import { existsSync } from 'node:fs'
+ * import { removeTree } from '@orkestrel/test/server'
+ *
+ * removeTree('/scratch/tree')
+ *
+ * existsSync('/scratch/tree') // false
+ * ```
  */
 export function removeTree(path: string): void {
 	for (let attempt = 1; ; attempt++) {
@@ -308,6 +378,14 @@ export function readInventory(
  *
  * A Linux zombie — a process that has exited and whose parent has not reaped it — still accepts
  * signal `0`, so its `/proc` status is read and a `Z` state reads as false.
+ *
+ * @example
+ * ```ts
+ * import { isRunning } from '@orkestrel/test/server'
+ *
+ * isRunning(process.pid) // true
+ * isRunning(2 ** 31) // false
+ * ```
  */
 export function isRunning(pid: number): boolean {
 	try {
@@ -340,6 +418,20 @@ export function isRunning(pid: number): boolean {
  * every other error ends the wait. The interval is validated for consistency with the wait family but
  * is not used, because this helper parks on the socket's events. Both listeners are removed on every
  * settlement, so a caller may wait on one socket repeatedly.
+ *
+ * @example
+ * ```ts
+ * import { connect, createServer } from 'node:net'
+ * import { createLoopback, waitForSocketClose } from '@orkestrel/test/server'
+ *
+ * const loopback = await createLoopback(createServer((socket) => socket.end()))
+ * const client = connect(loopback.port, '127.0.0.1')
+ *
+ * await waitForSocketClose(client, { budget: 1000 }) // undefined
+ * client.destroyed // true
+ *
+ * await loopback.destroy()
+ * ```
  */
 export async function waitForSocketClose(socket: Socket, options?: WaitOptions): Promise<void> {
 	const budget = options?.budget ?? 1000
@@ -542,6 +634,13 @@ export async function requestUpgrade(
  * The answer is false on a filesystem carrying neither reparse points nor symbolic links. Every call
  * probes and cleans up after itself, so a host whose answer changes is read again rather than
  * remembered.
+ *
+ * @example
+ * ```ts
+ * import { supportsDirectoryLinks } from '@orkestrel/test/server'
+ *
+ * supportsDirectoryLinks() // true where the host creates a symbolic link or a junction
+ * ```
  */
 export function supportsDirectoryLinks(): boolean {
 	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-directory-links-'))
@@ -604,6 +703,13 @@ export function supportsFileLinks(): boolean {
  * it: a POSIX host running as uid `0` stores every bit faithfully and bypasses the access check the
  * bits describe, so a caller that needs a permission to be enforced probes the refusal it needs
  * rather than reading this.
+ *
+ * @example
+ * ```ts
+ * import { supportsMode } from '@orkestrel/test/server'
+ *
+ * supportsMode() // true on a POSIX host, false on Windows
+ * ```
  */
 export function supportsMode(): boolean {
 	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-mode-'))
@@ -630,6 +736,13 @@ export function supportsMode(): boolean {
  * routes the second write onto the first entry, so reading the first back returns the second's
  * contents and the answer is false. The answer is true on a typical POSIX host and false on a
  * case-folding Windows or macOS volume.
+ *
+ * @example
+ * ```ts
+ * import { supportsCase } from '@orkestrel/test/server'
+ *
+ * supportsCase() // true on a case-sensitive volume, false on a case-folding one
+ * ```
  */
 export function supportsCase(): boolean {
 	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-case-'))
@@ -656,6 +769,13 @@ export function supportsCase(): boolean {
  * @remarks Byte `0x80` is an invalid UTF-8 lead byte. POSIX stores the name verbatim and Windows
  * rejects it with `ENOENT`, so the answer is true on POSIX and false on Windows. The path is passed
  * as a `Buffer` because the byte survives no string round trip.
+ *
+ * @example
+ * ```ts
+ * import { supportsBytes } from '@orkestrel/test/server'
+ *
+ * supportsBytes() // true on a POSIX host, false on Windows
+ * ```
  */
 export function supportsBytes(): boolean {
 	const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-bytes-'))
