@@ -51,6 +51,8 @@ repository. The zero-runtime-dependencies contract holds both.
 
 ## Install
 
+Add the package as a development dependency; it ships no runtime code.
+
 ```bash
 npm install --save-dev @orkestrel/test
 ```
@@ -103,10 +105,10 @@ Imported from `@orkestrel/test`.
 
 #### Types
 
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
-members after `plus`, an extended interface's name before `plus` with the members it adds after,
-`alone` after the call-signature members of an interface that declares no data members, and a type
-alias's own type.
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
+member and `plus` introducing its call-signature members, and a type alias's own type literal with
+a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
+it adds after.
 
 | Type                       | Kind      | Shape                                                                                                  | Summary                                                                                                                                        |
 | -------------------------- | --------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,8 +118,8 @@ alias's own type.
 | `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear`                                                               | Records every call made to its handler.                                                                                                        |
 | `EventSourceInterface`     | interface | `on` alone                                                                                             | Subscribes handlers to a typed event source.                                                                                                   |
 | `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }`                                                | Maps event names to recorders for their delivered argument tuples.                                                                             |
-| `Success`                  | interface | `{ success: true, value }`                                                                             | Represents one operation that produced a value.                                                                                                |
-| `Failure`                  | interface | `{ success: false, error }`                                                                            | Represents one operation that raised a failure instead of producing a value.                                                                   |
+| `Success`                  | interface | `{ success, value }`                                                                                   | Represents one operation that produced a value.                                                                                                |
+| `Failure`                  | interface | `{ success, error }`                                                                                   | Represents one operation that raised a failure instead of producing a value.                                                                   |
 | `Result`                   | type      | `Success<T> \| Failure<E>`                                                                             | Represents the outcome of one operation: the value it produced, or the failure it raised.                                                      |
 | `SignalInterface`          | interface | `{ controller, signal, count }`                                                                        | Holds a real abort signal and controller instrumented with its live abort-listener tally.                                                      |
 | `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]`                                                     | Represents one abort listener an instrumented signal installed, as its tally holds it.                                                         |
@@ -151,9 +153,11 @@ state. `pending` is what a harness carries before a run has produced a result fo
 
 #### Validators
 
-| API                     | Kind     | Signature                                                                                      | Summary                                                            |
-| ----------------------- | -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `isRecorderMapComplete` | function | `<TMap, TName>(value: unknown, events: readonly TName[]) => value is RecorderMap<TMap, TName>` | Checks whether a value contains a recorder for every listed event. |
+In a guard table a `Shape` cell holds the type the guard narrows to.
+
+| API                     | Kind     | Shape                      | Summary                                                            |
+| ----------------------- | -------- | -------------------------- | ------------------------------------------------------------------ |
+| `isRecorderMapComplete` | function | `RecorderMap<TMap, TName>` | Checks whether a value contains a recorder for every listed event. |
 
 `isRecorderMapComplete` takes the events as a second parameter rather than reading them off the
 value, because the listed events are what completeness is measured against. It reads each listed key
@@ -229,8 +233,9 @@ whole-document readers take a value or nothing at all, so they name no target ei
 
 #### Types
 
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
-members after `plus`, and a type alias's own type.
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
+member and `plus` introducing its call-signature members, and a type alias's own type literal with
+a union's arms escaped as `\|`.
 
 | Type                 | Kind      | Shape                                                | Summary                                                                                                                                         |
 | -------------------- | --------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -594,20 +599,21 @@ Imported from `@orkestrel/test/server`.
 
 #### Types
 
-A `Shape` cell holds an interface's `readonly` data members in braces and its call-signature
-members after `plus`, an extended interface's name before `plus` with the members it adds after,
-and a type alias's own type, whose arms are written with `or`.
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
+member and `plus` introducing its call-signature members, and a type alias's own type literal with
+a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
+it adds after.
 
 | Type                 | Kind      | Shape                                                                                         | Summary                                                                                         |
 | -------------------- | --------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `ScratchInterface`   | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` | Holds a temporary directory a test owns, writes into, reads back, and removes when it is done.  |
 | `ScratchIdentity`    | interface | `{ device, inode, birth }`                                                                    | Represents the fields that together identify one allocated directory on its host.               |
-| `ScratchOptions`     | interface | `{ parent?: string, prefix?: string, files?: Readonly<Record<string, string>> }`              | Configures a scratch directory allocation.                                                      |
+| `ScratchOptions`     | interface | `{ parent?, prefix?, files? }`                                                                | Configures a scratch directory allocation.                                                      |
 | `LoopbackInterface`  | interface | `{ url, port }` plus `destroy`                                                                | Holds a server a test owns, listening on an ephemeral loopback port until the test releases it. |
 | `CookieJarInterface` | interface | `{ header }` plus `read` / `capture`                                                          | Holds a name-keyed cookie store a test drives one origin with, filled from real responses.      |
-| `InventoryOptions`   | interface | `{ extensions?: readonly string[], exclude?: readonly string[] }`                             | Configures a source inventory read.                                                             |
+| `InventoryOptions`   | interface | `{ extensions?, exclude? }`                                                                   | Configures a source inventory read.                                                             |
 | `UpgradeOptions`     | interface | `WaitOptions` plus `{ path?, protocols? }`                                                    | Configures a client upgrade request.                                                            |
-| `UpgradeResult`      | type      | `{ claimed: true, protocol }` or `{ claimed: false, status }`                                 | Represents what one server did with a client upgrade request.                                   |
+| `UpgradeResult`      | type      | `{ claimed, protocol } \| { claimed, status }`                                                | Represents what one server did with a client upgrade request.                                   |
 
 #### Constants
 
@@ -1585,6 +1591,8 @@ captureError(() => {
 
 ### Narrow without `!` or `as`
 
+`requireValue` passes a falsy value through unchanged and throws only on `null` or `undefined`.
+
 ```ts
 import { requireValue } from '@orkestrel/test'
 
@@ -1647,6 +1655,9 @@ matches. `HeadersSource` is that accepted input, derived from the constructor ra
 a library, so it resolves the same in every project this package compiles under.
 
 ### Drain an async source
+
+`collect` and `collectStream` drain an async iterable and a readable stream into arrays, in yield
+order.
 
 ```ts
 import { collect, collectStream } from '@orkestrel/test'
@@ -1745,6 +1756,9 @@ controller ends a whole file's waits. A budget of `0` still permits the immediat
 a bound that is not finite and non-negative is refused before anything is read.
 
 ### Copy a JSON value
+
+This demonstration builds an interface-typed value, copies it through JSON serialization, and
+shows the guard `roundTripJSON` raises on a non-finite member.
 
 ```ts
 import { captureError, roundTripJSON } from '@orkestrel/test'
@@ -1982,6 +1996,9 @@ readInventory(root, ['src/core/index.ts'], { extensions: ['.ts'], exclude: ['src
 
 ### Own a temporary directory
 
+This demonstration builds a scratch directory seeded with a file, writes and reads inside it,
+refuses an escaping write, and nests one allocation inside another.
+
 ```ts
 import { createScratch } from '@orkestrel/test/server'
 
@@ -2096,6 +2113,9 @@ it('runs its cleanup newest-first', async () => {
 ```
 
 ### Answer a real request on a loopback port
+
+This demonstration starts a real server on an ephemeral loopback port, fetches from it, and closes
+it idempotently.
 
 ```ts
 import { createServer } from 'node:http'
