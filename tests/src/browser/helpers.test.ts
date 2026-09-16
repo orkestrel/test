@@ -67,7 +67,7 @@ import {
 import { createRecorder, createTeardown, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server, userEvent } from 'vitest/browser'
-import { normalizePath } from '../../setup.js'
+import { posixify } from '../../setup.js'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
 const VARIANTS: readonly CaptureVariant[] = [
@@ -1859,9 +1859,9 @@ describe('captureFrame', () => {
 		const written = await captureFrame({ path: `${FRAMES}/page.png`, width: 390, height: 844 })
 		// The provider returns the written path in its host's own separator, and the runner reports
 		// its root with forward slashes on every host, so each side is compared through
-		// `normalizePath` and the comparison reads the file rather than the separator.
-		expect(normalizePath(written)).toBe(
-			normalizePath(`${server.config.root}/tmp/capture/frame/page.png`),
+		// `posixify` and the comparison reads the file rather than the separator.
+		expect(posixify(written)).toBe(
+			posixify(`${server.config.root}/tmp/capture/frame/page.png`),
 		)
 		const onDisk = await commands.readFile(written, 'base64')
 		expect(onDisk.length).toBeGreaterThan(0)

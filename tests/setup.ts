@@ -48,10 +48,10 @@ export function createStreamSource<T>(values: readonly T[]): ReadableStream<T> {
  * maps distinct POSIX paths onto one spelling.
  * @example
  * ```ts
- * expect(normalizePath(written)).toBe(normalizePath(expected))
+ * expect(posixify(written)).toBe(posixify(expected))
  * ```
  */
-export function normalizePath(path: string): string {
+export function posixify(path: string): string {
 	// Rewrites separators only for a recognized Windows path form — a drive-letter
 	// or UNC head — because a backslash is a legal character in a POSIX path and an
 	// unconditional rewrite maps distinct POSIX paths onto one spelling.
