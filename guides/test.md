@@ -119,23 +119,19 @@ it adds after.
 | `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear`                                                               | Records every call made to its handler.                                                                                                        |
 | `EventSourceInterface`     | interface | `{} plus on`                                                                                           | Subscribes handlers to a typed event source.                                                                                                   |
 | `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }`                                                | Maps event names to recorders for their delivered argument tuples.                                                                             |
-| `Success`                  | interface | `{ success, value }`                                                                                   | Represents one operation that produced a value.                                                                                                |
-| `Failure`                  | interface | `{ success, error }`                                                                                   | Represents one operation that raised a failure instead of producing a value.                                                                   |
-| `Result`                   | type      | `Success<T> \| Failure<E>`                                                                             | Represents the outcome of one operation: the value it produced, or the failure it raised.                                                      |
 | `SignalInterface`          | interface | `{ controller, signal, count }`                                                                        | Holds a real abort signal and controller instrumented with its live abort-listener tally.                                                      |
 | `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]`                                                     | Represents one abort listener an instrumented signal installed, as its tally holds it.                                                         |
 | `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy`                                                     | Represents a numbered resource factory with records of every creation and destruction.                                                         |
 | `TeardownInterface`        | interface | `{ count }` plus `add` / `destroy`                                                                     | Represents the cleanup a test adds as it goes and runs once, newest first, when it is done.                                                    |
 | `TeardownHandler`          | type      | `() => void \| Promise<void>`                                                                          | Represents the work one teardown entry performs when the list is destroyed.                                                                    |
-| `JSONValue`                | type      | `string \| number \| boolean \| null \| readonly JSONValue[] \| { readonly [key: string]: JSONValue }` | Covers any value JSON can represent, so a round trip through JSON preserves the type.                                                          |
 | `JSONSafe`                 | type      | `JSONSafe<T>`                                                                                          | Represents the JSON-safe projection of a type: every member JSON preserves, mapped to itself, and every member it does not, mapped to `never`. |
 | `HeadersSource`            | type      | `NonNullable<ConstructorParameters<typeof Headers>[0]>`                                                | Covers any value the host `Headers` constructor accepts.                                                                                       |
 | `StateTransition`          | interface | `{ name, from, event, to }`                                                                            | Represents one row of a statechart table: the entity's state before an event, the event, and the state that event must leave it in.            |
 | `StateScenario`            | interface | `{ transition }` plus `arrange` / `act` / `assert`                                                     | Drives one `StateTransition` through the three phases that prove it.                                                                           |
 
-Each interface's call-signature members are listed under [Methods](#methods). `Result` defaults `E`
-to `Error`, where `@orkestrel/contract` publishes the same name defaulting to `unknown`;
-[Limits](#limits) rules that divergence.
+Each interface's call-signature members are listed under [Methods](#methods). `Result`, `Success`,
+and `Failure` come from `@orkestrel/contract` (mirrored at [`contract.md`](contract.md)) and are not
+re-exported; `retryUntil` reads `Result` internally.
 
 #### Constants
 
