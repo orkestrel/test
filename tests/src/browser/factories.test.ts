@@ -13,7 +13,7 @@ import {
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
-import { posixify } from '../../setup.js'
+import { rewriteWindowsAbsolutePath } from '../../setup.js'
 import { buildFixture, resetFixtures } from '../../setupBrowser.js'
 
 const STATES: readonly string[] = ['start-empty', 'answer-ideal']
@@ -190,8 +190,8 @@ describe('createPortfolio', () => {
 		const written = await portfolio.place('start-empty')
 		// The provider returns the written path in its host's own separator, and the runner reports
 		// its root with forward slashes on every host, so each side is compared through
-		// `posixify` and the comparison reads the file rather than the separator.
-		const expected = posixify(
+		// `rewriteWindowsAbsolutePath` and the comparison reads the file rather than the separator.
+		const expected = rewriteWindowsAbsolutePath(
 			`${server.config.root}/tmp/capture/portfolio/start-empty--dark-390.png`,
 		)
 		expect(applied.count).toBe(1)
@@ -199,10 +199,10 @@ describe('createPortfolio', () => {
 		// reading after it is the viewport this file started at rather than the variant's.
 		expect(window.innerWidth).toBe(width)
 		expect(window.innerHeight).toBe(height)
-		expect(posixify(requireValue(written))).toBe(expected)
+		expect(rewriteWindowsAbsolutePath(requireValue(written))).toBe(expected)
 		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 		expect(portfolio.placements).toStrictEqual(['start-empty'])
-		expect(portfolio.paths.map(posixify)).toStrictEqual([expected])
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
 	})
@@ -220,8 +220,10 @@ describe('createPortfolio', () => {
 			'Capture state "answer-ideal" is already placed',
 		)
 		expect(portfolio.placements).toStrictEqual(['answer-ideal'])
-		expect(portfolio.paths.map(posixify)).toStrictEqual([
-			posixify(`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`),
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([
+			rewriteWindowsAbsolutePath(
+				`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`,
+			),
 		])
 	})
 
@@ -247,8 +249,10 @@ describe('createPortfolio', () => {
 		const surface = await whole.place('start-empty')
 		const element = await part.place('start-empty', requireValue(container.firstElementChild))
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
-		expect(posixify(requireValue(element))).toBe(
-			posixify(`${server.config.root}/tmp/capture/portfolio/start-empty--light-1440.png`),
+		expect(rewriteWindowsAbsolutePath(requireValue(element))).toBe(
+			rewriteWindowsAbsolutePath(
+				`${server.config.root}/tmp/capture/portfolio/start-empty--light-1440.png`,
+			),
 		)
 		const shot = await commands.readFile(requireValue(element), 'base64')
 		expect(shot.length).toBeGreaterThan(0)
@@ -289,11 +293,11 @@ describe('createPortfolio', () => {
 			expect(portfolio.files).toStrictEqual(expandCaptures(states, variants))
 
 			const written = await portfolio.place('start-empty')
-			const expected = posixify(
+			const expected = rewriteWindowsAbsolutePath(
 				`${server.config.root}/tmp/capture/states/start-empty--dark-390.png`,
 			)
 			expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
-			expect(posixify(requireValue(written))).toBe(expected)
+			expect(rewriteWindowsAbsolutePath(requireValue(written))).toBe(expected)
 			expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 			expect(portfolio.placements).toStrictEqual(['start-empty'])
 

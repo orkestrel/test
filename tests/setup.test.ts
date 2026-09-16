@@ -5,7 +5,7 @@ import {
 	createAsyncSource,
 	createStreamSource,
 	isSerializableRecord,
-	posixify,
+	rewriteWindowsAbsolutePath,
 	ROUTED_FENCES,
 } from './setup.js'
 
@@ -41,23 +41,25 @@ describe('createStreamSource', () => {
 	})
 })
 
-describe('posixify', () => {
+describe('rewriteWindowsAbsolutePath', () => {
 	it('rewrites a drive-letter path to forward slashes', () => {
-		expect(posixify('C:\\Users\\dev\\project')).toBe('C:/Users/dev/project')
+		expect(rewriteWindowsAbsolutePath('C:\\Users\\dev\\project')).toBe('C:/Users/dev/project')
 	})
 
 	it('rewrites a UNC path to forward slashes', () => {
-		expect(posixify('\\\\server\\share\\file.txt')).toBe('//server/share/file.txt')
+		expect(rewriteWindowsAbsolutePath('\\\\server\\share\\file.txt')).toBe(
+			'//server/share/file.txt',
+		)
 	})
 
 	it('leaves a POSIX path carrying a literal backslash unchanged', () => {
 		// A backslash is a legal character in a POSIX filename, so a path that merely contains
 		// one — and carries neither a drive-letter nor a UNC head — must not be rewritten.
-		expect(posixify('/home/dev/weird\\name')).toBe('/home/dev/weird\\name')
+		expect(rewriteWindowsAbsolutePath('/home/dev/weird\\name')).toBe('/home/dev/weird\\name')
 	})
 
 	it('leaves an already-forward-slashed path unchanged', () => {
-		expect(posixify('/home/dev/project')).toBe('/home/dev/project')
+		expect(rewriteWindowsAbsolutePath('/home/dev/project')).toBe('/home/dev/project')
 	})
 })
 

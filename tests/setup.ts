@@ -36,10 +36,10 @@ export function createStreamSource<T>(values: readonly T[]): ReadableStream<T> {
 }
 
 /**
- * Rewrites every backslash in a path to a forward slash.
+ * Rewrites a Windows absolute path to forward slashes.
  *
  * @param path - The path to rewrite.
- * @returns The path written with forward slashes alone.
+ * @returns The path written with forward slashes when it is a Windows absolute path; otherwise `path` unchanged.
  * @remarks A provider returns a path in the separator its host writes, while a tool reporting its
  * own root normalizes that root to forward slashes on every host. Rewrite each side before
  * comparing them, so the comparison reads the file the path names rather than the host's
@@ -48,10 +48,10 @@ export function createStreamSource<T>(values: readonly T[]): ReadableStream<T> {
  * maps distinct POSIX paths onto one spelling.
  * @example
  * ```ts
- * expect(posixify(written)).toBe(posixify(expected))
+ * expect(rewriteWindowsAbsolutePath(written)).toBe(rewriteWindowsAbsolutePath(expected))
  * ```
  */
-export function posixify(path: string): string {
+export function rewriteWindowsAbsolutePath(path: string): string {
 	// Rewrites separators only for a recognized Windows path form — a drive-letter
 	// or UNC head — because a backslash is a legal character in a POSIX path and an
 	// unconditional rewrite maps distinct POSIX paths onto one spelling.
