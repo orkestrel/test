@@ -9,7 +9,8 @@ enough packages had already written their own; the guide's [Limits](guides/test.
 states that rule, what it excluded, and the one door the journey layer came through instead. Nothing
 here runs in production code. Part of the `@orkestrel` line.
 
-It has **zero runtime dependencies**, and no exported signature names an `@orkestrel/*` type. Both
+This package runtime-depends on `@orkestrel/contract` for the outcome type `retryUntil` reads
+internally. That type is not re-exported. No exported signature names an `@orkestrel/*` type. Both
 rules exist for one reason: a test helper hands its types straight into the consumer's assertions,
 and a second copy of a package inside its own repository makes the compiler read one type as two.
 

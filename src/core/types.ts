@@ -46,42 +46,6 @@ export type RecorderMap<
 	TName extends keyof TMap,
 > = { readonly [K in TName]: RecorderInterface<TMap[K]> }
 
-/**
- * Represents one operation that produced a value.
- *
- * @typeParam T - The produced value type.
- */
-export interface Success<T> {
-	/** Holds the discriminant that names the produced arm. */
-	readonly success: true
-	/** Holds the value the operation produced. */
-	readonly value: T
-}
-
-/**
- * Represents one operation that raised a failure instead of producing a value.
- *
- * @typeParam E - The failure type.
- */
-export interface Failure<E> {
-	/** Holds the discriminant that names the failed arm. */
-	readonly success: false
-	/** Holds the failure the operation raised. */
-	readonly error: E
-}
-
-/**
- * Represents the outcome of one operation: the value it produced, or the failure it raised.
- *
- * @typeParam T - The produced value type.
- * @typeParam E - The failure type. Defaults to `Error`.
- * @remarks `success` is the discriminant, so a caller narrows on it before reading `value` or
- * `error`. This package declares no runtime dependency, so this is the one outcome contract its own
- * members read rather than an anonymous union written at each call site. `E` defaults to `Error`,
- * where `@orkestrel/contract` publishes the same name defaulting to `unknown`.
- */
-export type Result<T, E = Error> = Success<T> | Failure<E>
-
 /** Holds a real abort signal and controller instrumented with its live abort-listener tally. */
 export interface SignalInterface {
 	/** Holds the controller that owns the signal. */
@@ -193,15 +157,6 @@ export interface RetryOptions extends WaitOptions {
 export type EventSubscriber<TArgs extends readonly unknown[]> = (
 	listener: (...args: TArgs) => void,
 ) => (() => void) | void
-
-/** Covers any value JSON can represent, so a round trip through JSON preserves the type. */
-export type JSONValue =
-	| string
-	| number
-	| boolean
-	| null
-	| readonly JSONValue[]
-	| { readonly [key: string]: JSONValue }
 
 /**
  * Represents the JSON-safe projection of a type: every member JSON preserves, mapped to itself, and

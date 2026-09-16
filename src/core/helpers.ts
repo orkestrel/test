@@ -1,13 +1,25 @@
+import type { Result } from '@orkestrel/contract'
 import type {
 	EventSubscriber,
 	HeadersSource,
 	JSONSafe,
-	Result,
 	RetryOptions,
 	SignalRegistration,
 	StateScenario,
 	WaitOptions,
 } from './types.js'
+import {
+	attempt,
+	isArray,
+	isDefined,
+	isError,
+	isFiniteNumber,
+	isFunction,
+	isInteger,
+	isNumber,
+	isObject,
+	isSymbol,
+} from '@orkestrel/contract'
 
 /**
  * Checks the resolved bounds one bounded wait runs under.
@@ -31,10 +43,10 @@ import type {
  * ```
  */
 export function checkBounds(subject: string, budget: number, interval: number): void {
-	if (!Number.isFinite(budget) || budget < 0) {
+	if (!isFiniteNumber(budget) || budget < 0) {
 		throw new Error(`${subject} budget must be finite and non-negative`)
 	}
-	if (!Number.isFinite(interval) || interval < 0) {
+	if (!isFiniteNumber(interval) || interval < 0) {
 		throw new Error(`${subject} interval must be finite and non-negative`)
 	}
 }
@@ -197,7 +209,7 @@ export async function retryUntil<T>(
 	const interval = options?.interval ?? 10
 	const attempts = options?.attempts
 	checkBounds('Retry', budget, interval)
-	if (attempts !== undefined && (!Number.isInteger(attempts) || attempts < 1)) {
+	if (isDefined(attempts) && (!isInteger(attempts) || attempts < 1)) {
 		throw new Error('Retry attempts must be a positive integer')
 	}
 
@@ -410,12 +422,8 @@ export function decodeJSONLines(text: string): readonly unknown[] {
  * @returns The thrown value, or `undefined` when the thunk completes.
  */
 export function captureError(thunk: () => unknown): unknown {
-	try {
-		thunk()
-	} catch (error) {
-		return error
-	}
-	return undefined
+	const outcome = attempt(thunk)
+	return outcome.success ? undefined : outcome.error
 }
 
 /**
@@ -428,7 +436,7 @@ export function captureError(thunk: () => unknown): unknown {
  * @throws An `Error` carrying `message` when the value is `null` or `undefined`.
  */
 export function requireValue<T>(value: T | null | undefined, message = 'Value is required'): T {
-	if (value === null || value === undefined) throw new Error(message)
+	if (!isDefined(value)) throw new Error(message)
 	return value
 }
 
@@ -478,10 +486,10 @@ export async function collectStream<T>(stream: ReadableStream<T>): Promise<reado
  */
 export function roundTripJSON<T>(value: T & JSONSafe<T>): T {
 	const serialized = JSON.stringify(value, (_key, current) => {
-		if (current === undefined || typeof current === 'function' || typeof current === 'symbol') {
+		if (current === undefined || isFunction(current) || isSymbol(current)) {
 			throw new Error('JSON values must not contain undefined, functions, or symbols')
 		}
-		if (typeof current === 'number' && !Number.isFinite(current)) {
+		if (isNumber(current) && !isFiniteNumber(current)) {
 			throw new Error('JSON values must contain finite numbers')
 		}
 		return current
@@ -490,12 +498,12 @@ export function roundTripJSON<T>(value: T & JSONSafe<T>): T {
 	const pending: unknown[] = [parsed]
 	while (pending.length > 0) {
 		const current = pending.pop()
-		if (typeof current === 'number' && !Number.isFinite(current)) {
+		if (isNumber(current) && !isFiniteNumber(current)) {
 			throw new Error('JSON values must contain finite numbers')
 		}
-		if (Array.isArray(current)) {
+		if (isArray(current)) {
 			for (const child of current) pending.push(child)
-		} else if (typeof current === 'object' && current !== null) {
+		} else if (isObject(current)) {
 			for (const child of Object.values(current)) pending.push(child)
 		}
 	}
@@ -548,8 +556,7 @@ export async function executeScenario<TState extends string, TEvent extends stri
 		await scenario.act(context, transition.event)
 		await scenario.assert(context, transition.to)
 	} catch (cause) {
-		const message =
-			cause instanceof Error ? cause.message : `threw a non-error ${typeof cause} value`
+		const message = isError(cause) ? cause.message : `threw a non-error ${typeof cause} value`
 		throw new Error(`${transition.name}: ${message}`, { cause })
 	}
 }

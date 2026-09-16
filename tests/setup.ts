@@ -1,3 +1,5 @@
+import { isObject } from '@orkestrel/contract'
+
 /**
  * Creates an async generator that yields each of the given values in order.
  *
@@ -88,7 +90,7 @@ export const ROUTED_FENCES: Readonly<Record<string, string>> = Object.freeze({
  * @returns Whether `value` is a serializable record with the default object prototype.
  */
 export function isSerializableRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-	if (typeof value !== 'object' || value === null) return false
+	if (!isObject(value)) return false
 
 	try {
 		if (Object.getPrototypeOf(value) !== Object.prototype) return false

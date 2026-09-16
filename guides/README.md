@@ -18,7 +18,8 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## Dependency reference
 
-This package has **no runtime dependencies**, so no runtime dependency is mirrored here.
+This package has a runtime dependency on `@orkestrel/contract`, so that package's guide is mirrored
+at [`contract.md`](contract.md). No other runtime dependency is mirrored.
 
 [`guide.md`](guide.md) is a byte-identical mirror of the guide for `@orkestrel/guide` — the
 devDependency powering this repository's guides-parity suite ([`tests/guides.test.ts`](../tests/guides.test.ts)).

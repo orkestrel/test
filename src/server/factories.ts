@@ -5,6 +5,7 @@ import type {
 	ScratchInterface,
 	ScratchOptions,
 } from './types.js'
+import { isFunction, isNumber, isObject } from '@orkestrel/contract'
 import { once } from 'node:events'
 import {
 	lstatSync,
@@ -212,12 +213,7 @@ export async function createLoopback(server: Server): Promise<LoopbackInterface>
 	await once(server, 'listening')
 
 	const address = server.address()
-	if (
-		typeof address !== 'object' ||
-		address === null ||
-		!('port' in address) ||
-		typeof address.port !== 'number'
-	) {
+	if (!isObject(address) || !('port' in address) || !isNumber(address.port)) {
 		throw new Error(`Loopback address must have a numeric port; found ${String(address)}`)
 	}
 
@@ -229,7 +225,7 @@ export async function createLoopback(server: Server): Promise<LoopbackInterface>
 		destroy() {
 			if (destruction === undefined) {
 				destruction = new Promise<void>((resolveClose, rejectClose) => {
-					if ('closeAllConnections' in server && typeof server.closeAllConnections === 'function') {
+					if ('closeAllConnections' in server && isFunction(server.closeAllConnections)) {
 						server.closeAllConnections()
 					}
 					server.close((error) => {

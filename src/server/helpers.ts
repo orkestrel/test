@@ -25,6 +25,7 @@ import { request as requestHTTP } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isObject, isString } from '@orkestrel/contract'
 import { checkBounds, waitForDelay } from '@src/core'
 import {
 	REMOVE_TREE_MAX_ATTEMPTS,
@@ -120,12 +121,7 @@ export function readIdentity(status: Stats): ScratchIdentity {
  * ```
  */
 export function readErrorCode(error: unknown): string | undefined {
-	return typeof error === 'object' &&
-		error !== null &&
-		'code' in error &&
-		typeof error.code === 'string'
-		? error.code
-		: undefined
+	return isObject(error) && 'code' in error && isString(error.code) ? error.code : undefined
 }
 
 /**
@@ -274,7 +270,7 @@ export function readInventory(
 	targets: readonly string[],
 	options?: InventoryOptions,
 ): Readonly<Record<string, string>> {
-	const supplied = resolve(typeof root === 'string' ? root : fileURLToPath(root))
+	const supplied = resolve(isString(root) ? root : fileURLToPath(root))
 	const rootStatus = lstatSync(supplied)
 	if (rootStatus.isSymbolicLink()) throw new Error('Root is a symbolic link')
 	if (!rootStatus.isDirectory()) throw new Error('Root is not a directory')

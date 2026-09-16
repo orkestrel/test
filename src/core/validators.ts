@@ -1,4 +1,5 @@
 import type { RecorderMap } from './types.js'
+import { holds, isArray, isFunction, isObject } from '@orkestrel/contract'
 
 /**
  * Checks whether a value contains a recorder for every listed event.
@@ -29,18 +30,13 @@ export function isRecorderMapComplete<
 	TMap extends Record<string, readonly unknown[]>,
 	TName extends keyof TMap,
 >(value: unknown, events: readonly TName[]): value is RecorderMap<TMap, TName> {
-	try {
-		if (typeof value !== 'object' || value === null) return false
+	return holds(() => {
+		if (!isObject(value)) return false
 		return events.every((event) => {
 			if (!Object.hasOwn(value, event)) return false
 			const recorder = Reflect.get(value, event)
-			if (typeof recorder !== 'object' || recorder === null) return false
-			return (
-				typeof Reflect.get(recorder, 'handler') === 'function' &&
-				Array.isArray(Reflect.get(recorder, 'calls'))
-			)
+			if (!isObject(recorder)) return false
+			return isFunction(Reflect.get(recorder, 'handler')) && isArray(Reflect.get(recorder, 'calls'))
 		})
-	} catch {
-		return false
-	}
+	})
 }
