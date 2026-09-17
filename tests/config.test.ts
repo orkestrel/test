@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import {
 	existsSync,
 	globSync,
+	lstatSync,
 	mkdtempSync,
 	mkdirSync,
 	readdirSync,
@@ -62,6 +63,33 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+// The `src` axis a declaration roll-up reads, derived from a recognized source environment that is
+// a physical directory rather than from a `src` entry of any shape. A regular file, an empty
+// directory, a directory holding no recognized environment, a symbolic link, and an entry this host
+// refuses to inspect each leave a workspace publishing nothing, and reading the entry alone would
+// put every one of them under the face proof. The inspection is caught rather than excused by
+// option: `throwIfNoEntry` excuses an absent path alone and rethrows a permission refusal, and a
+// throw on this line is a collection error that takes this whole file down in that target rather
+// than failing one case. `isPhysicalDirectory` reads the same two facts off an `lstat` and returns
+// false for every inspection error, and this reads them the same way. This is the derivation
+// `targetToEnvironments` uses, which filters the environment names by a contained physical
+// directory, and it answers the same question `blueprintToScripts`
+// answers from a blueprint's own `src` list. A workspace declaring app environments alone publishes
+// no library, so it vendors no `configs/src/` face wrapper and has no roll-up to measure. A face
+// proof is conditioned on this axis rather than on a face wrapper: a workspace that declares the
+// axis and vendors no wrapper carries the defect such a proof reports, so that workspace must still
+// fail the proof. The manifest cases read the same fact from their own `private` flag and name it
+// `manifestPublishes` for the source that decides it there; this reads the axis on disk, so a
+// workspace whose manifest and shape disagree fails one of the two rather than neither.
+const publishes = ['core', 'browser', 'server'].some((environment) => {
+	try {
+		const entry = lstatSync(resolve(root, 'src', environment))
+		return entry.isDirectory() && !entry.isSymbolicLink()
+	} catch {
+		return false
+	}
+})
 
 // A declaration roll-up loads the extractor package, which only a workspace publishing source from
 // `src` installs. The resolution below is the mechanism its proof is conditioned on.
@@ -199,8 +227,8 @@ describe('root configuration', () => {
 			setup: ['./tests/setup.ts'],
 		})
 		// A row that is a configuration rather than a factory. Every generated
-		// workspace registers the factory itself, so this shape is required here
-		// rather than observed: the proof exercises that resolution wherever it runs
+		// workspace registers the factory itself, so this shape is required by the
+		// expectation rather than observed: the proof exercises that resolution wherever it runs
 		// instead of only where a hand-written configuration happens to produce it.
 		expected.set('concrete', { include: 'tests/concrete.test.ts', setup: ['./tests/setup.ts'] })
 
@@ -530,7 +558,7 @@ describe('root configuration', () => {
 		if (typeof scripts !== 'object' || scripts === null) {
 			throw new Error('The package manifest carries no scripts')
 		}
-		const publishes = Object.getOwnPropertyDescriptor(manifest, 'private')?.value !== true
+		const manifestPublishes = Object.getOwnPropertyDescriptor(manifest, 'private')?.value !== true
 		const test = Object.getOwnPropertyDescriptor(scripts, 'test')?.value
 		const config = Object.getOwnPropertyDescriptor(scripts, 'test:config')?.value
 		const distribution = Object.getOwnPropertyDescriptor(scripts, 'test:distribution')?.value
@@ -576,9 +604,9 @@ describe('root configuration', () => {
 		)
 		expect(typeof test === 'string' && test.includes('test:distribution')).toBe(false)
 		expect(typeof publish === 'string' && publish.includes('npm run test:distribution')).toBe(
-			hasDistribution && publishes,
+			hasDistribution && manifestPublishes,
 		)
-		expect(typeof publish === 'string').toBe(publishes)
+		expect(typeof publish === 'string').toBe(manifestPublishes)
 		expect(integration).toBe(
 			hasIntegration
 				? 'vitest run --config vite.config.ts --no-cache --reporter=dot --project integration'
@@ -610,10 +638,10 @@ describe('root configuration', () => {
 				: undefined,
 		)
 		expect(typeof test === 'string' && test.includes('npm run test:service')).toBe(
-			hasService && !publishes,
+			hasService && !manifestPublishes,
 		)
 		expect(typeof publish === 'string' && publish.includes('npm run test:service')).toBe(
-			hasService && publishes,
+			hasService && manifestPublishes,
 		)
 	})
 
@@ -626,14 +654,14 @@ describe('root configuration', () => {
 		if (typeof scripts !== 'object' || scripts === null) {
 			throw new Error('The package manifest carries no scripts')
 		}
-		const publishes = Object.getOwnPropertyDescriptor(manifest, 'private')?.value !== true
+		const manifestPublishes = Object.getOwnPropertyDescriptor(manifest, 'private')?.value !== true
 		const prepack = Object.getOwnPropertyDescriptor(scripts, 'prepack')?.value
-		expect(prepack).toBe(publishes ? 'npm run build' : undefined)
+		expect(prepack).toBe(manifestPublishes ? 'npm run build' : undefined)
 
 		const controlled = { ...scripts, prepack: 'npm run control' }
 		expect(() => {
 			const control = Object.getOwnPropertyDescriptor(controlled, 'prepack')?.value
-			expect(control).toBe(publishes ? 'npm run build' : undefined)
+			expect(control).toBe(manifestPublishes ? 'npm run build' : undefined)
 		}).toThrow(/expected/u)
 	})
 
@@ -2150,54 +2178,81 @@ describe('configuration helpers', () => {
 		}
 	})
 
-	it('reads the compiler scope and fixed extractor override a declaration roll-up requires', () => {
+	// The scope reading applies only where the workspace publishes source from `src`, which is what
+	// `publishes` reads, and the name ends at that mechanism. An absent face project is the defect
+	// this case exists to report rather than a second reason to excuse it, so a workspace holding
+	// the axis and vendoring no `configs/src/` wrapper reaches the throw inside the body.
+	// A skip raises the run's skipped count where a guard inside the case would
+	// raise its passed count with nothing measured. Every generated workspace runs its projects
+	// under `--reporter=dot`, which prints a skip as an unnamed `-`, so the case name and the
+	// condition in it are read by re-running the project with a reporter that names skipped cases.
+	it.skipIf(!publishes)(
+		'reads the compiler scope a declaration roll-up requires [inapplicable where src holds no recognized environment directory]',
+		() => {
+			const compiler = createRequire(import.meta.url).resolve('typescript/bin/tsc')
+			// The order mirrors ENVIRONMENTS in src/core/constants.ts; a server-only workspace vendors
+			// no core project, so this walks to the first face the workspace actually carries.
+			const faces = ['core', 'browser', 'server']
+			const face = faces.find((candidate) =>
+				existsSync(resolve(root, `configs/src/tsconfig.${candidate}.json`)),
+			)
+			if (face === undefined) throw new Error('The workspace declares no face project')
+			const project = resolve(root, `configs/src/tsconfig.${face}.json`)
+			const declared: unknown = JSON.parse(readFileSync(project, 'utf8'))
+			if (typeof declared !== 'object' || declared === null) {
+				throw new Error(`The ${face} project is not a TypeScript configuration record`)
+			}
+			const declaredOptions: unknown = Object.getOwnPropertyDescriptor(
+				declared,
+				'compilerOptions',
+			)?.value
+			if (typeof declaredOptions !== 'object' || declaredOptions === null) {
+				throw new Error(`The ${face} project carries no compiler options`)
+			}
+			const declaredLib: unknown = Object.getOwnPropertyDescriptor(declaredOptions, 'lib')?.value
+			const declaredTypes: unknown = Object.getOwnPropertyDescriptor(
+				declaredOptions,
+				'types',
+			)?.value
+			if (!configHelpers.isStringList(declaredLib) || !configHelpers.isStringList(declaredTypes)) {
+				throw new Error(`The ${face} project declares no lib or types`)
+			}
+			const declaredRootDir: unknown = Object.getOwnPropertyDescriptor(
+				declaredOptions,
+				'rootDir',
+			)?.value
+			if (typeof declaredRootDir !== 'string') {
+				throw new Error(`The ${face} project declares no rootDir`)
+			}
+			const expectedRoot = resolve(dirname(project), declaredRootDir)
+
+			const scope = configHelpers.parseProjectScope(
+				configHelpers.readCompilerOutput(compiler, ['--showConfig', '-p', project]),
+				project,
+			)
+			if (scope === undefined) throw new Error(`The ${face} project resolved no compiler scope`)
+			// The compiler lowercases every resolved library name, so the committed project is the
+			// second mechanism this reading is compared against rather than the reading itself.
+			expect(scope.lib.map((entry) => entry.toLowerCase())).toStrictEqual(
+				declaredLib.map((entry) => entry.toLowerCase()),
+			)
+			expect(scope.types).toStrictEqual(declaredTypes)
+			expect(scope.root).toBe(expectedRoot)
+		},
+	)
+
+	// No reading in this case reads anything under `configs/src/`, so each one applies to a workspace
+	// on either axis. The refusals are decided by the text handed to them; the compiler refusal by a
+	// path no workspace shape carries; the manifest name, the module resolution, and the extractor
+	// guard by files and packages a workspace carries on either axis. They sit apart from the
+	// preceding scope reading for that reason: the skip that excuses an app-only workspace from
+	// reading a face project must not excuse it from the helpers behind the roll-up, which it
+	// vendors whether or not it publishes.
+	it('reads the refusals, guards, overrides, and rewrites a declaration roll-up requires from every workspace', () => {
 		const compiler = createRequire(import.meta.url).resolve('typescript/bin/tsc')
-		// The order mirrors ENVIRONMENTS in src/core/constants.ts; a server-only workspace vendors
-		// no core project, so this walks to the first face the workspace actually carries.
-		const faces = ['core', 'browser', 'server']
-		const face = faces.find((candidate) =>
-			existsSync(resolve(root, `configs/src/tsconfig.${candidate}.json`)),
-		)
-		if (face === undefined) throw new Error('The workspace declares no face project')
-		const project = resolve(root, `configs/src/tsconfig.${face}.json`)
-		const declared: unknown = JSON.parse(readFileSync(project, 'utf8'))
-		if (typeof declared !== 'object' || declared === null) {
-			throw new Error(`The ${face} project is not a TypeScript configuration record`)
-		}
-		const declaredOptions: unknown = Object.getOwnPropertyDescriptor(
-			declared,
-			'compilerOptions',
-		)?.value
-		if (typeof declaredOptions !== 'object' || declaredOptions === null) {
-			throw new Error(`The ${face} project carries no compiler options`)
-		}
-		const declaredLib: unknown = Object.getOwnPropertyDescriptor(declaredOptions, 'lib')?.value
-		const declaredTypes: unknown = Object.getOwnPropertyDescriptor(declaredOptions, 'types')?.value
-		if (!configHelpers.isStringList(declaredLib) || !configHelpers.isStringList(declaredTypes)) {
-			throw new Error(`The ${face} project declares no lib or types`)
-		}
-		const declaredRootDir: unknown = Object.getOwnPropertyDescriptor(
-			declaredOptions,
-			'rootDir',
-		)?.value
-		if (typeof declaredRootDir !== 'string') {
-			throw new Error(`The ${face} project declares no rootDir`)
-		}
-		const expectedRoot = resolve(dirname(project), declaredRootDir)
-
-		const scope = configHelpers.parseProjectScope(
-			configHelpers.readCompilerOutput(compiler, ['--showConfig', '-p', project]),
-			project,
-		)
-		if (scope === undefined) throw new Error(`The ${face} project resolved no compiler scope`)
-		// The compiler lowercases every resolved library name, so the committed project is the
-		// second mechanism this reading is compared against rather than the reading itself.
-		expect(scope.lib.map((entry) => entry.toLowerCase())).toStrictEqual(
-			declaredLib.map((entry) => entry.toLowerCase()),
-		)
-		expect(scope.types).toStrictEqual(declaredTypes)
-		expect(scope.root).toBe(expectedRoot)
-
+		// Any project path resolves these, because each reading is refused by the text before the
+		// path is read. The root project is the one file every workspace carries.
+		const project = resolve(root, 'tsconfig.json')
 		expect(configHelpers.parseProjectScope('not a configuration', project)).toBeUndefined()
 		expect(
 			configHelpers.parseProjectScope('{"compilerOptions":{"lib":[],"types":[]}}', project),
@@ -2205,11 +2260,12 @@ describe('configuration helpers', () => {
 		expect(
 			configHelpers.parseProjectScope('{"compilerOptions":{"lib":[1],"rootDir":"."}}', project),
 		).toBeUndefined()
+		// The compiler's own refusal, read from a path no workspace shape carries.
 		expect(() =>
 			configHelpers.readCompilerOutput(compiler, [
 				'--showConfig',
 				'-p',
-				resolve(root, 'configs/src/tsconfig.absent.json'),
+				resolve(root, 'configs/tsconfig.absent.json'),
 			]),
 		).toThrow('The declaration compiler failed')
 
