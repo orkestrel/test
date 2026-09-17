@@ -90,7 +90,7 @@
 		"@orkestrel/guide": "^0.0.20",
 		"@orkestrel/probe": "^0.0.16",
 		"@orkestrel/scaffold": "^0.0.71",
-		"@types/node": "^26.5.1",
+		"@types/node": "^26.6.1",
 		"@vitest/browser-playwright": "^4.1.11",
 		"oxfmt": "^0.68.0",
 		"oxlint": "^1.83.0",
