@@ -1,4 +1,18 @@
-import type { CaptureVariant, Color, ElementOptions, FrameOptions, FrameReading } from './types.js'
+import type { WaitOptions } from '@src/core'
+import type {
+	CaptureVariant,
+	CensusFixture,
+	CensusReading,
+	Color,
+	ContrastFixture,
+	ElementOptions,
+	EscapeFixture,
+	FrameOptions,
+	FrameReading,
+	StateOptions,
+} from './types.js'
+import { isError, isString } from '@orkestrel/contract'
+import { captureError, checkBounds, waitForAbort, waitForCondition } from '@src/core'
 import { commands, page, userEvent } from 'vitest/browser'
 import {
 	ACCESSIBLE_ROLES,
@@ -50,6 +64,13 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  * refuses it. Nothing here asks about the viewport: `resolveAccessible` scrolls a wholly
  * off-viewport target into view and measures that separately with {@link isOutsideViewport}.
  *
+ * Inside a shadow tree it answers for the element's own facts, in an open root and a closed one
+ * alike: the box, the focus order, `:disabled`, and `aria-disabled` are all the element's. The
+ * `[inert]` ancestor is the one read that stops at the boundary, because `closest` never leaves the
+ * element's own tree, so a host marked `[inert]` is invisible here. What the flat tree decides still
+ * reaches the subject — a host the document does not lay out takes the element off the page and this
+ * refuses it. Ask the host separately where an ancestor attribute is the subject.
+ *
  * @example
  * ```ts
  * isReachable(requireValue(container.querySelector('button')))
@@ -87,6 +108,13 @@ export function isReachable(element: Element): boolean {
  * own, so a control inside a closed drawer reports itself as laid out. `checkVisibility` answers
  * for the box tree, and `visibility` inherits, so between them an ancestor cannot hide a control
  * from a reader and leave it standing in a description.
+ *
+ * Inside a shadow tree it answers for the element's own facts, in an open root and a closed one
+ * alike. The `aria-hidden` ancestor is the one read that stops at the boundary, because `closest`
+ * never leaves the element's own tree, so a host marked `aria-hidden="true"` is invisible here and
+ * this reports `true` for a subject a reader is never told about. `checkVisibility` and the computed
+ * `visibility` read the flat tree, so a host the document does not lay out still takes the element
+ * off the page. Ask the host separately where an ancestor attribute is the subject.
  *
  * @example
  * ```ts
@@ -463,6 +491,38 @@ export async function fillAccessible(name: string, text: string): Promise<void> 
 }
 
 /**
+ * Sends a key sequence to whatever holds focus, and refuses to send it to nothing.
+ *
+ * @param keys - The sequence in the provider's own key syntax, such as `{Enter}` or `{Escape}`.
+ * @returns A promise resolving after every keystroke completes.
+ * @throws When the document body holds focus, or nothing does.
+ *
+ * @remarks
+ * The refusal is the whole of what this adds over `userEvent.keyboard`. A key sent while focus sits
+ * on the body reaches no control, and every assertion after it reads the surface the key never
+ * touched — which is the false green a guarded keyboard step exists to catch. Bring focus about
+ * first through {@link traverseAccessible}, {@link clickAccessible}, or {@link typeAccessible}, and
+ * send the sequence here.
+ *
+ * Escaping is the caller's, because the sequence is the subject: `{` opens a key name and `[` opens
+ * a code name. Reach for {@link typeAccessible} where the text is the subject and the syntax is in
+ * the way.
+ *
+ * @example
+ * ```ts
+ * await traverseAccessible('Evaluate')
+ * await pressKeys('{Enter}')
+ * ```
+ */
+export async function pressKeys(keys: string): Promise<void> {
+	const focused = document.activeElement
+	if (focused === null || focused === document.body) {
+		throw new Error(`Key sequence "${keys}" was sent with nothing focused`)
+	}
+	await userEvent.keyboard(keys)
+}
+
+/**
  * Reaches a named control only through natural forward Tab traversal from the current focus.
  *
  * @param name - The target's exact accessible name.
@@ -616,6 +676,52 @@ export function readValue(role: string, name: string): string {
 		throw new Error(`Interactive target "${name}" does not carry a value`)
 	}
 	return control.value
+}
+
+/**
+ * Reads the refusal one named target answers with, or nothing when it resolves.
+ *
+ * @param name - The target's exact accessible name.
+ * @returns The refusal sentence {@link resolveRendered} raised, or `undefined` when it resolved.
+ * @throws Whatever the resolver threw that is not an `Error`.
+ *
+ * @example
+ * ```ts
+ * readRefusal('Save changes') // undefined — the control resolves
+ * readRefusal('Menu') // 'Interactive target "Menu" is not visible and focus-reachable'
+ * ```
+ */
+export function readRefusal(name: string): string | undefined
+/**
+ * Reads the refusal one named target answers with under an exact role, or nothing when it resolves.
+ *
+ * @param role - The target's exact ARIA role.
+ * @param name - The target's exact accessible name.
+ * @returns The refusal sentence {@link resolveRendered} raised, or `undefined` when it resolved.
+ * @throws Whatever the resolver threw that is not an `Error`.
+ *
+ * @remarks
+ * Absent, present-but-gated, and ambiguous are different findings about an interface, and the
+ * layer keeps their sentences distinct, so a journey asserting on the one it means needs the
+ * sentence rather than a boolean. This fixes the resolver, translates the `unknown` a `catch` binds
+ * into `string | undefined`, and rethrows anything that is not an `Error` — a value no resolver
+ * raises, and one a caller reading a message would otherwise lose.
+ *
+ * It resolves rather than acts, so a target it reports `undefined` for is one an acting verb
+ * reaches. Assert on the exact sentence: a comparison against a substring passes for a refusal
+ * about a different condition.
+ *
+ * @example
+ * ```ts
+ * readRefusal('tab', 'Drafts') // undefined — the tab resolves under its role
+ * ```
+ */
+export function readRefusal(role: string, name: string): string | undefined
+export function readRefusal(first: string, second?: string): string | undefined {
+	const thrown = captureError(() => resolveRendered(first, second))
+	if (thrown === undefined) return undefined
+	if (isError(thrown)) return thrown.message
+	throw thrown
 }
 
 /**
@@ -912,6 +1018,192 @@ export function describeFocus(element: Element): string {
  */
 export function waitForFrame(): Promise<void> {
 	return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+/**
+ * Waits until one named control announces a state, or stops announcing it.
+ *
+ * @param name - The control's exact accessible name.
+ * @param state - The state, spelled as {@link readStates} reports it.
+ * @param options - The time bounds, the abort signal, and the direction.
+ * @returns The states the control announced when the wait resolved.
+ * @throws The resolver's own refusal, the abort reason, or an `Error` when a bound is invalid or
+ * the state is not reached within the budget.
+ *
+ * @example
+ * ```ts
+ * await clickAccessible('Pin note')
+ * await waitForState('Pin note', 'pressed=true')
+ * ```
+ */
+export function waitForState(
+	name: string,
+	state: string,
+	options?: StateOptions,
+): Promise<readonly string[]>
+/**
+ * Waits until one control of an exact role announces a state, or stops announcing it.
+ *
+ * @param role - The control's exact ARIA role.
+ * @param name - The control's exact accessible name.
+ * @param state - The state, spelled as {@link readStates} reports it.
+ * @param options - The time bounds, the abort signal, and the direction.
+ * @returns The states the control announced when the wait resolved.
+ * @throws The resolver's own refusal, the abort reason, or an `Error` when a bound is invalid or
+ * the state is not reached within the budget.
+ *
+ * @remarks
+ * The control is resolved afresh on every reading, because a framework replaces the node between
+ * one render and the next: the subject is the role and the name, never one element. That also means
+ * the resolver's own voices reach the caller unchanged — a control that leaves the document
+ * mid-wait refuses as absent rather than timing out as unannounced, which is the more useful
+ * finding.
+ *
+ * {@link waitForCondition} owns the poll, so the bounds and the abort reason are that helper's.
+ * Default budget: `1000` milliseconds. Default interval: `10` milliseconds. The exhaustion message
+ * names the control and the state, and carries the last states read, so a wait that ran out says
+ * what the control was announcing instead.
+ *
+ * This is the published replacement for a settle keyed to a framework's own class names. Where a
+ * surface announces nothing, the finding is the surface's: give the control its `aria-expanded`,
+ * `aria-pressed`, or `aria-busy` rather than reading the classes a stylesheet happens to use.
+ *
+ * @example
+ * ```ts
+ * await clickDisclosure('Advanced')
+ * await waitForState('button', 'Advanced', 'collapsed', { absent: true })
+ * ```
+ */
+export function waitForState(
+	role: string,
+	name: string,
+	state: string,
+	options?: StateOptions,
+): Promise<readonly string[]>
+export async function waitForState(
+	first: string,
+	second: string,
+	third?: string | StateOptions,
+	fourth?: StateOptions,
+): Promise<readonly string[]> {
+	const keyed = isString(third)
+	const role = keyed ? first : undefined
+	const name = keyed ? second : first
+	const state = keyed ? third : second
+	const options = keyed ? fourth : third
+	const absent = options?.absent ?? false
+	const description = `"${name}" to ${absent ? 'stop announcing' : 'announce'} "${state}"`
+	let observed: readonly string[] = []
+	try {
+		await waitForCondition(
+			description,
+			() => {
+				observed = readStates(
+					role === undefined ? resolveRendered(name) : resolveRendered(role, name),
+				)
+				return observed.includes(state) !== absent
+			},
+			options,
+		)
+	} catch (cause) {
+		// Only the poll's own exhaustion has a last observation worth adding. A resolver refusal and an
+		// abort reason arrive here by identity and leave the same way, so the exhaustion is recognized
+		// by the sentence `waitForCondition` writes for this description, which no voice shares.
+		if (isError(cause) && cause.message.startsWith(`Condition "${description}" did not hold`)) {
+			throw new Error(`${cause.message} (last states: ${JSON.stringify(observed)})`, { cause })
+		}
+		throw cause
+	}
+	return observed
+}
+
+/**
+ * Waits until every finite animation on one element and its subtree has stopped moving.
+ *
+ * @param element - The element whose own animations and descendants' animations to wait on.
+ * @param options - The time bounds and the abort signal.
+ * @returns A promise resolving once no finite animation is still running.
+ * @throws An `Error` when the element is not in a document, when a bound is invalid, or when an
+ * animation is still running at the budget; or the abort reason.
+ *
+ * @remarks
+ * A reading taken while paint is moving reports an interpolated frame — a `background-color` at a
+ * fraction of its alpha, a `color` part way between two values — that no state of the interface
+ * ever paints. This waits for the paint a person sees, whichever state it settles in.
+ *
+ * It parks on each animation's own `finished` promise rather than re-reading on a timer, and reads
+ * the list again after each completion or cancellation, so an animation a finishing one starts is
+ * waited on too.
+ *
+ * Some animations are left out, and each exclusion is a decision rather than an oversight. An animation
+ * whose effect declares infinite iterations never finishes, so a spinner that runs forever is a
+ * finding about the reading rather than a wait to lengthen. A finished animation filling its target
+ * stays in the list a browser reports and is already at rest. A paused animation is at rest too,
+ * and nothing here resumes it.
+ *
+ * The bounds are the wait family's, validated the same way. Default budget: `1000` milliseconds.
+ * The interval is validated for consistency with the family and is not used, because this parks on
+ * the animations. A detached element is refused rather than reported settled, because an element in
+ * no document runs no animation and would answer `true` to every wait.
+ *
+ * @example
+ * ```ts
+ * await clickAccessible('Dark')
+ * await waitForAnimations(document.body)
+ * ```
+ */
+export async function waitForAnimations(element: Element, options?: WaitOptions): Promise<void> {
+	const budget = options?.budget ?? 1000
+	const interval = options?.interval ?? 10
+	checkBounds('Animation', budget, interval)
+	if (!element.isConnected) throw new Error('Animation subject is not connected')
+	const signal = options?.signal
+	const label = readName(element)
+	const subject = `${readRole(element) ?? element.localName}${label.length > 0 ? ` "${label}"` : ''}`
+	const start = performance.now()
+	let expired = false
+	let aborted: Promise<void> | undefined
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const expiry = new Promise<void>((resolve) => {
+		timer = setTimeout(() => {
+			expired = true
+			resolve()
+		}, budget)
+	})
+	try {
+		while (true) {
+			signal?.throwIfAborted()
+			const running = element.getAnimations({ subtree: true }).filter((animation) => {
+				const iterations = animation.effect?.getTiming().iterations ?? 1
+				return animation.playState === 'running' && Number.isFinite(iterations)
+			})
+			if (running.length === 0) return
+			const elapsed = performance.now() - start
+			if (expired || elapsed >= budget) {
+				const names = running.map((animation) => {
+					if (animation instanceof CSSAnimation) return animation.animationName
+					if (animation instanceof CSSTransition) return animation.transitionProperty
+					return animation.id
+				})
+				throw new Error(
+					`Animation "${subject}" did not settle within ${budget}ms (waited ${elapsed}ms): ${names.join(', ')}`,
+				)
+			}
+			const pending: Array<Promise<unknown>> = running.map((animation) =>
+				animation.finished.catch(() => undefined),
+			)
+			pending.push(expiry)
+			if (signal !== undefined) {
+				// Installed on the first park rather than up front, so a wait that finds nothing running
+				// leaves no listener on a signal the caller still owns.
+				aborted ??= waitForAbort(signal)
+				pending.push(aborted)
+			}
+			await Promise.race(pending)
+		}
+	} finally {
+		if (timer !== undefined) clearTimeout(timer)
+	}
 }
 
 /**
@@ -1573,6 +1865,43 @@ export function readClasses(root: ParentNode): ReadonlySet<string> {
 }
 
 /**
+ * Takes the authored-class census of one subtree against the cascade this document loaded.
+ *
+ * @param root - The subtree to walk. A detached element and a `DocumentFragment` both work.
+ * @returns The population walked, every class token the markup carries, and every one of them no
+ * loaded stylesheet declares; both lists sorted.
+ * @throws An `Error` when the walk reads no element at all.
+ *
+ * @remarks
+ * This is {@link readClasses} differenced against {@link readCascade}, with the population reported
+ * beside the difference. The population is what makes the reading falsifiable: an empty walk
+ * reports no undeclared token, and so does a subtree whose every class the cascade declares, so a
+ * check reading `undeclared` alone passes for a census that read nothing. The empty walk is refused
+ * outright for the same reason.
+ *
+ * The root counts when it is an `Element`, so a `DocumentFragment` contributes its descendants
+ * alone. Both lists are sorted rather than left in sighting order, because a census is compared
+ * against a previous one or against an expected list, and document order is not a fact about the
+ * classes.
+ *
+ * @example
+ * ```ts
+ * readCensus(container).undeclared // ['lead'] — no loaded stylesheet declares it
+ * ```
+ */
+export function readCensus(root: ParentNode): CensusReading {
+	const elements = (root instanceof Element ? 1 : 0) + root.querySelectorAll('*').length
+	if (elements === 0) throw new Error('Class census walked no element')
+	const declared = readCascade()
+	const tokens = [...readClasses(root)].sort()
+	return Object.freeze({
+		elements,
+		tokens: Object.freeze(tokens),
+		undeclared: Object.freeze(tokens.filter((token) => !declared.has(token))),
+	})
+}
+
+/**
  * Collects every rule the stylesheets loaded into this document hold, nested grouping rules
  * included.
  *
@@ -2211,4 +2540,179 @@ export function expandCaptures(
 		for (const variant of variants) files.push(`${state}--${variant.name}.png`)
 	}
 	return files
+}
+
+/**
+ * Builds the refusal a host withholding a storage operation raises.
+ *
+ * @param operation - The withheld operation, named as the `Storage` interface names it.
+ * @param key - The storage key the operation addressed. Omit it for an operation that takes none.
+ * @returns The refusal, unthrown.
+ *
+ * @remarks
+ * A browser with site data blocked, a sandboxed frame, and a hardened privacy mode all raise a
+ * `DOMException` named `SecurityError` from the storage object rather than answering, so this is
+ * the voice rather than a message of this package's. {@link createStorage} raises it from every
+ * operation the permission withholds; it is exported because a fixture implementing `Storage` some
+ * other way needs the same voice rather than a second spelling of it.
+ *
+ * @example
+ * ```ts
+ * buildDenial('getItem', 'theme').message // 'Access is denied for getItem "theme"'
+ * buildDenial('length').name // 'SecurityError'
+ * ```
+ */
+export function buildDenial(operation: string, key?: string): DOMException {
+	return new DOMException(
+		`Access is denied for ${operation}${key === undefined ? '' : ` "${key}"`}`,
+		'SecurityError',
+	)
+}
+
+/**
+ * Builds a detached translucent stack whose composited and flat contrast readings straddle one bar.
+ *
+ * @param bar - The contrast ratio `refused` and `accepted` must sit on opposite sides of.
+ * @returns The opaque root carrying the tint, and the refused and accepted foregrounds under it.
+ * @throws An `Error` when no grey foreground puts the two readings on opposite sides of the bar.
+ *
+ * @remarks
+ * A contrast instrument that never composites still clears every fixture painting its own opaque
+ * background, so this is the control that makes {@link readContrast}'s ancestor walk and alpha
+ * blend the thing under test. The stack is an opaque floor, a translucent tint over it, and two
+ * grey foregrounds inside the tint. `refused` reads under the bar composited and at or over it
+ * flat, and `accepted` reads the other way about, so no single non-compositing reading satisfies
+ * both.
+ *
+ * The greys are searched rather than written down, so the control follows the bar it was asked for.
+ * A bar at or under `1` is refused because every contrast ratio reaches `1`, and a bar above what
+ * the tinted surface can reach is refused because no foreground clears it — each refusal names the
+ * bar rather than returning a stack that proves nothing.
+ *
+ * The nodes are detached, so nothing is mounted for you. Append `root` to the surface you are
+ * reading, take both readings, and remove it: a computed color needs the document, and a fixture
+ * left behind is the next test's resolver ambiguity.
+ *
+ * @example
+ * ```ts
+ * const control = buildContrast(4.5)
+ * mount(control.root)
+ * readContrast(control.refused) < 4.5 // true
+ * readContrast(control.accepted) >= 4.5 // true
+ * control.root.remove()
+ * ```
+ */
+export function buildContrast(bar: number): ContrastFixture {
+	const tint: Color = [0, 0, 0, 0.06]
+	const backdrop = blendColor(tint, CANVAS_COLOR)
+	const flattened: Color = [tint[0], tint[1], tint[2], 1]
+	let refusedChannel: number | undefined
+	let acceptedChannel: number | undefined
+	for (let channel = 0; channel <= 255; channel += 1) {
+		const front: Color = [channel, channel, channel, 1]
+		const composited = measureContrast(front, backdrop)
+		const flat = measureContrast(front, flattened)
+		if (refusedChannel === undefined && composited < bar && flat >= bar) refusedChannel = channel
+		if (acceptedChannel === undefined && composited >= bar && flat < bar) acceptedChannel = channel
+	}
+	if (refusedChannel === undefined || acceptedChannel === undefined) {
+		throw new Error(`Contrast control cannot straddle the bar ${bar}`)
+	}
+	const root = build('div', {
+		attributes: {
+			style: `background-color: rgb(${CANVAS_COLOR[0]}, ${CANVAS_COLOR[1]}, ${CANVAS_COLOR[2]})`,
+		},
+	})
+	const tinted = build('div', {
+		attributes: {
+			style: `background-color: rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${tint[3]})`,
+		},
+	})
+	const refused = build('p', {
+		text: 'Composited contrast control',
+		attributes: {
+			style: `color: rgb(${refusedChannel}, ${refusedChannel}, ${refusedChannel})`,
+		},
+	})
+	const accepted = build('p', {
+		text: 'Composited contrast survivor',
+		attributes: {
+			style: `color: rgb(${acceptedChannel}, ${acceptedChannel}, ${acceptedChannel})`,
+		},
+	})
+	tinted.append(refused, accepted)
+	root.append(tinted)
+	return Object.freeze({ root, refused, accepted })
+}
+
+/**
+ * Builds detached markup carrying one style escape of each kind, plus the sheet a project allows.
+ *
+ * @param permitted - The `id` the caller's reading exempts, placed on the third element.
+ * @returns The detached root, the inline escape, the embedded escape, and the exempt sheet.
+ *
+ * @remarks
+ * {@link extractStyles} has two branches — an inline `style` attribute and a `<style>` element —
+ * and a reading fed only the first never exercises the second. The exempt sheet is the other half
+ * of the control: a project that allows one standalone stylesheet writes an exemption for its id,
+ * and a reading that passes by refusing every `<style>` element clears the two escapes and fails
+ * that exemption.
+ *
+ * The declaration `inline`, `embedded`, and `permitted` carry is this package's, so assert on which
+ * elements are reported rather than on what they declare.
+ *
+ * The nodes are detached and stay that way: `extractStyles` takes any `ParentNode`, so the reading
+ * runs without mounting, and an embedded sheet that reached the document would join the cascade
+ * every other reading measures against.
+ *
+ * @example
+ * ```ts
+ * const control = buildEscapes('project-stylesheet')
+ * extractStyles(control.root).length // 3 — the inline escape, the embedded sheet, and the exempt one
+ * ```
+ */
+export function buildEscapes(permitted: string): EscapeFixture {
+	const declaration = 'color: rgb(1, 2, 3)'
+	const root = build('div')
+	const inline = build('p', {
+		text: 'Inline escape control',
+		attributes: { style: declaration },
+	})
+	const embedded = build('style')
+	embedded.textContent = `.escape-embedded { ${declaration} }`
+	const exempt = build('style', { attributes: { id: permitted } })
+	exempt.textContent = `#escape-permitted { ${declaration} }`
+	root.append(inline, embedded, exempt)
+	return Object.freeze({ root, inline, embedded, permitted: exempt })
+}
+
+/**
+ * Builds detached markup carrying one undeclared class token on HTML and another on SVG.
+ *
+ * @returns The detached root, the token the HTML element carries, and the one the SVG carries.
+ *
+ * @remarks
+ * The SVG element is the trap a census has to survive: `className` on an SVG element is an
+ * `SVGAnimatedString` rather than a string, so a reader splitting that value finds nothing and
+ * reports one undeclared token where two are carried. {@link readCensus} reads every element
+ * through `classList`, and this is the control that proves it.
+ *
+ * The two tokens are returned rather than written into a caller's expectation, so a cascade that
+ * later declares one of these names moves the fixture and the assertion together.
+ *
+ * @example
+ * ```ts
+ * const control = buildCensus()
+ * readCensus(control.root).undeclared // [control.mark, control.token], sorted
+ * ```
+ */
+export function buildCensus(): CensusFixture {
+	const token = 'census-authored-token'
+	const mark = 'census-authored-mark'
+	const root = build('div')
+	root.append(build('p', { classes: token, text: 'Authored class control' }))
+	const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+	glyph.setAttribute('class', mark)
+	root.append(glyph)
+	return Object.freeze({ root, token, mark })
 }

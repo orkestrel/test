@@ -1,8 +1,13 @@
 import type { CaptureVariant, Color } from '@src/browser'
+import type { JourneyVariant } from '@src/core'
 import {
 	ACCESSIBLE_ROLES,
 	blendColor,
 	build,
+	buildCensus,
+	buildContrast,
+	buildDenial,
+	buildEscapes,
 	CANVAS_COLOR,
 	CAPTURE_PANE,
 	captureFrame,
@@ -32,8 +37,10 @@ import {
 	mount,
 	parseColor,
 	parseCSSColor,
+	pressKeys,
 	readBackdrop,
 	readCascade,
+	readCensus,
 	readClasses,
 	readContrast,
 	readFocus,
@@ -44,6 +51,7 @@ import {
 	readPage,
 	readPerception,
 	readPixels,
+	readRefusal,
 	readRing,
 	readRole,
 	readRootToken,
@@ -63,7 +71,9 @@ import {
 	traverseAccessible,
 	typeAccessible,
 	typeInput,
+	waitForAnimations,
 	waitForFrame,
+	waitForState,
 } from '@src/browser'
 import { createRecorder, createTeardown, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -417,6 +427,39 @@ describe('isReachable', () => {
 			'Native disclosure "Sealed" is not visible and focus-reachable',
 		)
 	})
+
+	// The reading answers for the element's own facts inside a shadow tree, in an open root and a
+	// closed one alike, and the ancestor reads stop at the boundary: `closest` never leaves the
+	// element's own tree, so an `[inert]` host is invisible to it while a host the flat tree does not
+	// lay out still takes the element off the page.
+	it('answers for a shadow subject and stops at the boundary for an ancestor attribute', () => {
+		const container = buildFixture(
+			'<div id="plain" style="width: 200px; height: 60px"></div>' +
+				'<div id="sealed" style="width: 200px; height: 60px"></div>' +
+				'<div id="halted" inert style="width: 200px; height: 60px"></div>' +
+				'<div id="folded" style="display: none"></div>',
+		)
+		const rows: ReadonlyArray<{
+			readonly id: string
+			readonly mode: ShadowRootMode
+			readonly reachable: boolean
+		}> = [
+			{ id: 'plain', mode: 'open', reachable: true },
+			{ id: 'sealed', mode: 'closed', reachable: true },
+			{ id: 'halted', mode: 'open', reachable: true },
+			{ id: 'folded', mode: 'open', reachable: false },
+		]
+		for (const row of rows) {
+			const host = requireValue(container.querySelector(`#${row.id}`))
+			const root = host.attachShadow({ mode: row.mode })
+			root.innerHTML = '<button type="button" style="width: 120px; height: 40px">Open</button>'
+			const inner = requireValue(root.querySelector('button'))
+			expect(inner.closest('[inert]')).toBeNull()
+			expect(`${row.id} reachable=${String(isReachable(inner))}`).toBe(
+				`${row.id} reachable=${String(row.reachable)}`,
+			)
+		}
+	})
 })
 
 describe('isRendered', () => {
@@ -447,6 +490,38 @@ describe('isRendered', () => {
 		expect(() => resolveRendered('Skip to content')).toThrow(
 			'Interactive target "Skip to content" is not visible and focus-reachable',
 		)
+	})
+
+	// The same boundary `isReachable` meets: the element's own facts are read inside a shadow tree
+	// whatever the mode, and `closest` never leaves that tree, so an `aria-hidden` host is invisible
+	// to this reading while a host the flat tree does not lay out is not.
+	it('answers for a shadow subject and stops at the boundary for an ancestor attribute', () => {
+		const container = buildFixture(
+			'<div id="plain" style="width: 200px; height: 60px"></div>' +
+				'<div id="sealed" style="width: 200px; height: 60px"></div>' +
+				'<div id="muted" aria-hidden="true" style="width: 200px; height: 60px"></div>' +
+				'<div id="folded" style="display: none"></div>',
+		)
+		const rows: ReadonlyArray<{
+			readonly id: string
+			readonly mode: ShadowRootMode
+			readonly rendered: boolean
+		}> = [
+			{ id: 'plain', mode: 'open', rendered: true },
+			{ id: 'sealed', mode: 'closed', rendered: true },
+			{ id: 'muted', mode: 'open', rendered: true },
+			{ id: 'folded', mode: 'open', rendered: false },
+		]
+		for (const row of rows) {
+			const host = requireValue(container.querySelector(`#${row.id}`))
+			const root = host.attachShadow({ mode: row.mode })
+			root.innerHTML = '<button type="button" style="width: 120px; height: 40px">Open</button>'
+			const inner = requireValue(root.querySelector('button'))
+			expect(inner.closest('[aria-hidden="true"]')).toBeNull()
+			expect(`${row.id} rendered=${String(isRendered(inner))}`).toBe(
+				`${row.id} rendered=${String(row.rendered)}`,
+			)
+		}
 	})
 })
 
@@ -759,6 +834,61 @@ describe('fillAccessible', () => {
 	})
 })
 
+describe('pressKeys', () => {
+	it('sends the sequence to the control that holds focus', async () => {
+		const container = buildFixture('<button type="button">Evaluate</button>')
+		const button = requireValue(container.querySelector('button'))
+		const recorder = createRecorder<[event: KeyboardEvent]>()
+		button.addEventListener('keydown', (event) => {
+			recorder.handler(event)
+		})
+		await traverseAccessible('Evaluate')
+
+		await pressKeys('{Enter}')
+
+		expect(recorder.count).toBe(1)
+		expect(requireValue(recorder.calls[0])[0].key).toBe('Enter')
+		expect(document.activeElement).toBe(button)
+	})
+
+	// The control: the body holding focus is what a page looks like before anything takes it, and a
+	// key sent there reaches nothing while every assertion after it still runs. A refusal is what
+	// separates this from the provider's own keyboard verb.
+	it('refuses a sequence sent while nothing but the body holds focus', async () => {
+		const container = buildFixture('<button type="button">Evaluate</button>')
+		const recorder = createRecorder<[event: KeyboardEvent]>()
+		requireValue(container.querySelector('button')).addEventListener('keydown', (event) => {
+			recorder.handler(event)
+		})
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+		expect(document.activeElement).toBe(document.body)
+
+		await expect(pressKeys('{Escape}')).rejects.toThrow(
+			'Key sequence "{Escape}" was sent with nothing focused',
+		)
+		expect(recorder.count).toBe(0)
+	})
+
+	// guides/test.md → Patterns → "Send a key to what holds focus". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('reaches the traversed control and refuses the same sequence sent to nothing', async () => {
+		const container = buildFixture('<button type="button">Evaluate</button>')
+		const recorder = createRecorder<[event: KeyboardEvent]>()
+		requireValue(container.querySelector('button')).addEventListener('keydown', (event) => {
+			recorder.handler(event)
+		})
+
+		await traverseAccessible('Evaluate')
+		await pressKeys('{Enter}')
+		expect(recorder.count).toBe(1)
+
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+		await expect(pressKeys('{Escape}')).rejects.toThrow(
+			'Key sequence "{Escape}" was sent with nothing focused',
+		)
+	})
+})
+
 describe('traverseAccessible', () => {
 	it('reaches a named control through forward Tab alone', async () => {
 		const container = buildFixture(
@@ -876,6 +1006,48 @@ describe('readValue', () => {
 		expect(() => readValue('button', 'Save')).toThrow(
 			'Interactive target "Save" does not carry a value',
 		)
+	})
+})
+
+describe('readRefusal', () => {
+	// guides/test.md → Patterns → "Read the refusal instead of catching it". A browser fence carries
+	// in this directory because the guides project runs with the browser disabled.
+	it('reads the absent, the gated, and the ambiguous voices, and nothing for a target that resolves', () => {
+		buildFixture(
+			'<button type="button">Save changes</button>' +
+				'<button type="button" style="display: none">Menu</button>' +
+				'<div role="tablist"><button type="button" role="tab" id="tab-drafts">Drafts</button></div>' +
+				'<div role="tabpanel" tabindex="0" aria-labelledby="tab-drafts">Two drafts waiting</div>',
+		)
+
+		expect(readRefusal('Save changes')).toBeUndefined()
+		expect(readRefusal('Menu')).toBe('Interactive target "Menu" is not visible and focus-reachable')
+		expect(readRefusal('Nowhere')).toBe('No interactive element has the accessible name "Nowhere"')
+		expect(readRefusal('Drafts')).toBe('Interactive target "Drafts" is ambiguous across 2 elements')
+		expect(readRefusal('tab', 'Drafts')).toBeUndefined()
+	})
+
+	// The control for the rethrow: every refusal the resolver has is an `Error`, so the branch that
+	// hands anything else straight back is reached with a fixture element whose own `tabIndex` getter
+	// refuses with a string. The element is this test's own and nothing the package owns is stood in
+	// for; `isReachable` reads that property while filtering the resolver's matches.
+	it('rethrows what the resolver threw when it is not an Error', () => {
+		const container = buildFixture('<button type="button">Hostile</button>')
+		const button = requireValue(container.querySelector('button'))
+		Object.defineProperty(button, 'tabIndex', {
+			get() {
+				throw 'the host refused the reading'
+			},
+		})
+
+		let caught: unknown
+		try {
+			readRefusal('Hostile')
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe('the host refused the reading')
 	})
 })
 
@@ -1174,6 +1346,201 @@ describe('waitForFrame', () => {
 		})
 		await waitForFrame()
 		expect(painted).toBe(true)
+	})
+})
+
+describe('waitForState', () => {
+	// The state flips on a timer rather than on the act, so the poll really goes from false to true:
+	// a reading taken once after the act would pass whether or not anything waited.
+	it('resolves after a timer flips the state and returns what the control announced', async () => {
+		const container = buildFixture('<button type="button" aria-pressed="false">Pin note</button>')
+		const button = requireValue(container.querySelector('button'))
+		const pending = setTimeout(() => button.setAttribute('aria-pressed', 'true'), 30)
+		try {
+			expect(
+				await waitForState('Pin note', 'pressed=true', { budget: 2000, interval: 5 }),
+			).toStrictEqual(['pressed=true'])
+		} finally {
+			clearTimeout(pending)
+		}
+	})
+
+	it('resolves the control afresh on every reading, so a replaced node is still the subject', async () => {
+		const container = buildFixture('<button type="button" aria-pressed="false">Pin note</button>')
+		const pending = setTimeout(() => {
+			container.innerHTML = '<button type="button" aria-pressed="true">Pin note</button>'
+		}, 30)
+		try {
+			expect(
+				await waitForState('Pin note', 'pressed=true', { budget: 2000, interval: 5 }),
+			).toStrictEqual(['pressed=true'])
+		} finally {
+			clearTimeout(pending)
+		}
+	})
+
+	it('waits for the state to go away under absent', async () => {
+		const container = buildFixture('<button type="button" aria-expanded="true">Filters</button>')
+		const button = requireValue(container.querySelector('button'))
+		const pending = setTimeout(() => button.setAttribute('aria-expanded', 'false'), 30)
+		try {
+			expect(
+				await waitForState('button', 'Filters', 'expanded', {
+					absent: true,
+					budget: 2000,
+					interval: 5,
+				}),
+			).toStrictEqual(['collapsed'])
+		} finally {
+			clearTimeout(pending)
+		}
+	})
+
+	it('names the control, the state, and the last states read when it never arrives', async () => {
+		buildFixture('<button type="button" aria-pressed="false">Pin note</button>')
+
+		const thrown = await waitForState('Pin note', 'pressed=true', {
+			budget: 10,
+			interval: 5,
+		}).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toContain(
+			'Condition ""Pin note" to announce "pressed=true"" did not hold within 10ms',
+		)
+		expect(failure.message).toContain('(last states: ["pressed=false"])')
+	})
+
+	// The resolver's own finding is the more useful one, so it reaches the caller rather than being
+	// spent as one unsatisfying reading and reported as a timeout.
+	it('propagates the resolver refusal rather than timing out on it', async () => {
+		buildFixture('<button type="button" aria-pressed="false">Pin note</button>')
+
+		await expect(waitForState('Unpin note', 'pressed=true', { budget: 2000 })).rejects.toThrow(
+			'No interactive element has the accessible name "Unpin note"',
+		)
+	})
+
+	it('refuses an invalid bound through the wait family', async () => {
+		buildFixture('<button type="button" aria-pressed="false">Pin note</button>')
+
+		await expect(waitForState('Pin note', 'pressed=true', { budget: Number.NaN })).rejects.toThrow(
+			'Wait budget must be finite and non-negative',
+		)
+	})
+
+	// guides/test.md → Patterns → "Wait for what a control announces". A browser fence carries in
+	// this directory because the guides project runs with the browser disabled.
+	it('settles a pressed control after the act and a folded one after it collapses', async () => {
+		const container = buildFixture(
+			'<button type="button" aria-pressed="false">Pin note</button>' +
+				'<button type="button" aria-expanded="true">Filters</button>',
+		)
+		const [pin, filters] = container.querySelectorAll('button')
+		requireValue(pin).addEventListener('click', () => {
+			setTimeout(() => requireValue(pin).setAttribute('aria-pressed', 'true'), 20)
+		})
+		requireValue(filters).addEventListener('click', () => {
+			setTimeout(() => requireValue(filters).setAttribute('aria-expanded', 'false'), 20)
+		})
+
+		await clickAccessible('Pin note')
+		expect(await waitForState('Pin note', 'pressed=true')).toStrictEqual(['pressed=true'])
+
+		await clickAccessible('Filters')
+		expect(await waitForState('button', 'Filters', 'expanded', { absent: true })).toStrictEqual([
+			'collapsed',
+		])
+	})
+})
+
+describe('waitForAnimations', () => {
+	it('resolves after a transition on a descendant ends', async () => {
+		buildStylesheet('.settle-box { width: 10px; transition: width 80ms linear }')
+		const container = buildFixture('<section><div class="settle-box"></div></section>')
+		const section = requireValue(container.querySelector('section'))
+		const box = requireValue(container.querySelector<HTMLElement>('.settle-box'))
+
+		// A transition starts from a resolved value, so the starting width is read before it is
+		// written. Without that read the browser has nothing to interpolate from and paints the new
+		// width outright, which is a fact about starting transitions rather than about this wait.
+		expect(readStyle(box, 'width')).toBe('10px')
+		box.style.width = '200px'
+		expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+
+		await waitForAnimations(section, { budget: 2000 })
+
+		expect(section.getAnimations({ subtree: true })).toHaveLength(0)
+		expect(readPixels(box, 'width')).toBe(200)
+	})
+
+	it('names the subject and the animation still running when the budget runs out', async () => {
+		buildStylesheet('.slow-box { width: 10px; transition: width 5000ms linear }')
+		const container = buildFixture(
+			'<section aria-label="Ledger"><div class="slow-box"></div></section>',
+		)
+		const section = requireValue(container.querySelector('section'))
+		const box = requireValue(container.querySelector<HTMLElement>('.slow-box'))
+		expect(readStyle(box, 'width')).toBe('10px')
+		box.style.width = '200px'
+
+		const thrown = await waitForAnimations(section, { budget: 20 }).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toContain('Animation "region "Ledger"" did not settle within 20ms')
+		expect(failure.message).toContain('width')
+	})
+
+	// The control for the exclusion: an animation declaring infinite iterations is still running when
+	// this resolves, so a wait that emptied the list outright would have timed out here instead.
+	it('resolves while an animation declaring infinite iterations is still running', async () => {
+		buildStylesheet(
+			'@keyframes settle-spin { from { opacity: 1 } to { opacity: 0.2 } }' +
+				'.settle-spin { animation: settle-spin 60ms linear infinite }',
+		)
+		const container = buildFixture('<section><span class="settle-spin">Working</span></section>')
+		const section = requireValue(container.querySelector('section'))
+		expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+
+		await waitForAnimations(section, { budget: 50 })
+
+		expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+	})
+
+	it('refuses a subject the document does not hold', async () => {
+		await expect(waitForAnimations(build('div'))).rejects.toThrow(
+			'Animation subject is not connected',
+		)
+	})
+
+	it('refuses an invalid bound through the wait family', async () => {
+		const container = buildFixture('<section></section>')
+
+		await expect(
+			waitForAnimations(requireValue(container.querySelector('section')), { budget: -1 }),
+		).rejects.toThrow('Animation budget must be finite and non-negative')
+	})
+
+	// guides/test.md → Patterns → "Wait for the paint to stop moving". A browser fence carries in
+	// this directory because the guides project runs with the browser disabled.
+	it('reads the settled paint rather than the frame a transition was passing through', async () => {
+		buildStylesheet(
+			'.settle-panel { background-color: rgb(255, 255, 255); color: rgb(190, 190, 190);' +
+				' transition: color 120ms linear }' +
+				'.settle-panel.settle-done { color: rgb(0, 0, 0) }',
+		)
+		const container = buildFixture('<section class="settle-panel">Ready</section>')
+		const panel = requireValue(container.querySelector('section'))
+
+		expect(readStyle(panel, 'color')).toBe('rgb(190, 190, 190)')
+		panel.classList.add('settle-done')
+		const moving = readContrast(panel)
+
+		await waitForAnimations(panel, { budget: 2000 })
+		const settled = readContrast(panel)
+
+		expect(settled).toBeGreaterThan(moving)
+		expect(readStyle(panel, 'color')).toBe('rgb(0, 0, 0)')
 	})
 })
 
@@ -2653,5 +3020,212 @@ describe('extractStyles', () => {
 			'<p class="lead" style="color: red">Ready</p>',
 			'<style>.late { color: blue }</style>',
 		])
+	})
+})
+
+describe('readCensus', () => {
+	it('reports the population, the sorted tokens, and the undeclared ones', () => {
+		buildStylesheet('.census-declared { padding: 8px }')
+		const control = buildCensus()
+		const container = buildFixture('<section class="census-declared"></section>')
+		const section = requireValue(container.querySelector('section'))
+		section.append(control.root)
+
+		const reading = readCensus(section)
+
+		expect(reading.elements).toBe(4)
+		expect(reading.tokens).toStrictEqual(['census-declared', control.mark, control.token].sort())
+		expect(reading.undeclared).toStrictEqual([control.mark, control.token])
+	})
+
+	it('sorts the tokens rather than reporting them in document order', () => {
+		const container = buildFixture('<div class="zeta"><span class="alpha"></span></div>')
+
+		expect(readCensus(container).tokens).toStrictEqual(['alpha', 'zeta'])
+	})
+
+	// The two readings a population check cannot tell apart without `elements`: markup whose every
+	// class the cascade declares, and a walk that read nothing at all. The first reports an empty
+	// difference and the second is refused outright.
+	it('reports nothing undeclared where the cascade declares every carried class', () => {
+		buildStylesheet('.census-known { color: red }')
+		const container = buildFixture('<p class="census-known">Ready</p>')
+
+		const reading = readCensus(container)
+
+		expect(reading.elements).toBe(2)
+		expect(reading.tokens).toStrictEqual(['census-known'])
+		expect(reading.undeclared).toStrictEqual([])
+	})
+
+	it('refuses a walk that reads no element', () => {
+		expect(() => readCensus(document.createDocumentFragment())).toThrow(
+			'Class census walked no element',
+		)
+	})
+
+	// guides/test.md → Patterns → "Take an authored-class census". A browser fence carries in this
+	// directory because the guides project runs with the browser disabled.
+	it('counts the walked elements and reports both undeclared tokens the control carries', () => {
+		buildStylesheet('.census-screen { padding: 8px }')
+		const container = buildFixture('<section class="census-screen"></section>')
+		const screen = requireValue(container.querySelector('section'))
+		const control = buildCensus()
+		screen.append(control.root)
+
+		const census = readCensus(screen)
+
+		expect(census.elements).toBe(4)
+		expect(census.undeclared).toStrictEqual([control.mark, control.token])
+	})
+})
+
+describe('buildDenial', () => {
+	it('names the operation and the key in the voice a denied origin raises', () => {
+		const keyed = buildDenial('getItem', 'theme')
+
+		expect(keyed).toBeInstanceOf(DOMException)
+		expect(keyed.name).toBe('SecurityError')
+		expect(keyed.message).toBe('Access is denied for getItem "theme"')
+		expect(buildDenial('length').message).toBe('Access is denied for length')
+	})
+})
+
+describe('buildContrast', () => {
+	it('straddles the bar composited while the flat reading disagrees for both foregrounds', () => {
+		const control = buildContrast(4.5)
+		mount(control.root)
+		try {
+			expect(readContrast(control.refused)).toBeLessThan(4.5)
+			expect(readContrast(control.accepted)).toBeGreaterThanOrEqual(4.5)
+
+			// The rival reading: the first painted background, taken at full strength. It answers the
+			// opposite pair, which is what no single non-compositing reading can satisfy.
+			const tint = requireValue(
+				parseColor(readStyle(requireValue(control.refused.parentElement), 'background-color')),
+			)
+			const flat: Color = [tint[0], tint[1], tint[2], 1]
+			const refused = requireValue(parseColor(readStyle(control.refused, 'color')))
+			const accepted = requireValue(parseColor(readStyle(control.accepted, 'color')))
+
+			expect(measureContrast(refused, flat)).toBeGreaterThanOrEqual(4.5)
+			expect(measureContrast(accepted, flat)).toBeLessThan(4.5)
+		} finally {
+			control.root.remove()
+		}
+	})
+
+	// A stack written down once cannot straddle every bar: a grey clearing 4.5 flat falls well under
+	// 15 flat, so this bar is the control for the search actually following its argument.
+	it('follows the bar it was asked for rather than one written into the stack', () => {
+		const strict = buildContrast(15)
+		mount(strict.root)
+		try {
+			expect(readContrast(strict.refused)).toBeLessThan(15)
+			expect(readContrast(strict.accepted)).toBeGreaterThanOrEqual(15)
+
+			const tint = requireValue(
+				parseColor(readStyle(requireValue(strict.refused.parentElement), 'background-color')),
+			)
+			const flat: Color = [tint[0], tint[1], tint[2], 1]
+
+			expect(
+				measureContrast(requireValue(parseColor(readStyle(strict.refused, 'color'))), flat),
+			).toBeGreaterThanOrEqual(15)
+			expect(
+				measureContrast(requireValue(parseColor(readStyle(strict.accepted, 'color'))), flat),
+			).toBeLessThan(15)
+		} finally {
+			strict.root.remove()
+		}
+	})
+
+	it('refuses a bar no stack can straddle at either end', () => {
+		expect(() => buildContrast(21)).toThrow('Contrast control cannot straddle the bar 21')
+		expect(() => buildContrast(1)).toThrow('Contrast control cannot straddle the bar 1')
+	})
+
+	// guides/test.md → Patterns → "Control a reading before you trust it". A browser fence carries
+	// in this directory because the guides project runs with the browser disabled.
+	it('reads a composited stack, carries both style escapes, and refuses an unreachable bar', () => {
+		const contrast = buildContrast(4.5)
+		mount(contrast.root)
+		try {
+			expect(readContrast(contrast.refused)).toBeLessThan(4.5)
+			expect(readContrast(contrast.accepted)).toBeGreaterThanOrEqual(4.5)
+		} finally {
+			contrast.root.remove()
+		}
+
+		const escapes = buildEscapes('project-stylesheet')
+		expect(extractStyles(escapes.root)).toHaveLength(3)
+
+		expect(() => buildContrast(21)).toThrow('Contrast control cannot straddle the bar 21')
+	})
+})
+
+describe('buildEscapes', () => {
+	it('carries both escapes and the sheet the caller exempts by id', () => {
+		const control = buildEscapes('project-stylesheet')
+
+		const reported = extractStyles(control.root)
+
+		expect(reported).toStrictEqual([
+			control.inline.outerHTML,
+			control.embedded.outerHTML,
+			control.permitted.outerHTML,
+		])
+		expect(reported.filter((markup) => !markup.includes('id="project-stylesheet"'))).toStrictEqual([
+			control.inline.outerHTML,
+			control.embedded.outerHTML,
+		])
+	})
+
+	it('leaves the root detached, so an embedded sheet never joins the cascade', () => {
+		const control = buildEscapes('project-stylesheet')
+
+		expect(control.root.isConnected).toBe(false)
+		expect(readCascade().has('escape-embedded')).toBe(false)
+	})
+})
+
+describe('buildCensus', () => {
+	it('carries one token on HTML and another on an SVG whose class list is no string', () => {
+		const control = buildCensus()
+		const glyph = requireValue(control.root.querySelector('svg'))
+
+		expect(typeof glyph.className).not.toBe('string')
+		expect(glyph.getAttribute('class')).toBe(control.mark)
+		expect([...readClasses(control.root)].sort()).toStrictEqual([control.mark, control.token])
+	})
+})
+
+describe('the browser barrel', () => {
+	it('resolves every published journey name from the specifier a consumer imports', async () => {
+		const browser = await import('@orkestrel/test/browser')
+		const core = await import('@orkestrel/test')
+
+		for (const published of [
+			browser.pressKeys,
+			browser.waitForState,
+			browser.waitForAnimations,
+			browser.readRefusal,
+			browser.readCensus,
+			browser.buildDenial,
+			browser.buildContrast,
+			browser.buildEscapes,
+			browser.buildCensus,
+			browser.createStorage,
+		]) {
+			expect(published).toBeTypeOf('function')
+		}
+		expect(core.waitForText).toBeTypeOf('function')
+	})
+
+	it('takes a bare journey variant wherever a capture variant is asked for', () => {
+		const declared: JourneyVariant = { name: 'dark-390', width: 390, height: 844 }
+		const variants: readonly CaptureVariant[] = [declared]
+
+		expect(expandCaptures(['start'], variants)).toStrictEqual(['start--dark-390.png'])
 	})
 })

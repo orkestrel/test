@@ -243,6 +243,7 @@ await new GuideCommand({
 		waitForAbort,
 		waitForCondition,
 		waitForEvent,
+		waitForText,
 	} = await import('@src/core')
 	const {
 		createCookieJar,
@@ -672,6 +673,37 @@ await new GuideCommand({
 				true,
 			)
 			expect(error.cause === unreachable).toBe(true)
+		})
+
+		// guides/test.md → Patterns → "Wait for a sentence to arrive". The fence's reading is a
+		// variable a pair of real timers moves, which is the smallest reading that passes through the
+		// frame carrying both sentences at once, and that frame is the one `absent` waits past.
+		it('resolves on the reading that carries the arrival without the departure', async () => {
+			let painted = 'Signed out'
+			const arriving = setTimeout(() => {
+				painted = 'Signed out Signed in'
+			}, 10)
+			const settled = setTimeout(() => {
+				painted = 'Signed in'
+			}, 30)
+			try {
+				expect(
+					await waitForText('the session line replaces the prompt', () => painted, 'Signed in', {
+						absent: 'Signed out',
+						budget: 2000,
+					}),
+				).toBe('Signed in')
+			} finally {
+				clearTimeout(arriving)
+				clearTimeout(settled)
+			}
+
+			const refused: unknown = await waitForText('anything', () => painted, '').catch(
+				(reason: unknown) => reason,
+			)
+			expect(requireValue(refused instanceof Error ? refused : undefined).message).toBe(
+				'Text expectation must not be empty',
+			)
 		})
 
 		// guides/test.md → Patterns → "Copy a JSON value".

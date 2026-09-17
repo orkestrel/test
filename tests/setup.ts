@@ -81,6 +81,13 @@ export const ROUTED_FENCES: Readonly<Record<string, string>> = Object.freeze({
 	'Read a written frame back': 'tests/src/browser/helpers.test.ts',
 	'Record a browser journal': 'tests/src/browser/factories.test.ts',
 	'Place a capture portfolio': 'tests/src/browser/factories.test.ts',
+	'Send a key to what holds focus': 'tests/src/browser/helpers.test.ts',
+	'Wait for what a control announces': 'tests/src/browser/helpers.test.ts',
+	'Wait for the paint to stop moving': 'tests/src/browser/helpers.test.ts',
+	'Read the refusal instead of catching it': 'tests/src/browser/helpers.test.ts',
+	'Take an authored-class census': 'tests/src/browser/helpers.test.ts',
+	'Control a reading before you trust it': 'tests/src/browser/helpers.test.ts',
+	'Withhold a store the way a host does': 'tests/src/browser/factories.test.ts',
 })
 
 /**

@@ -22,6 +22,7 @@ import {
 	waitForCondition,
 	waitForDelay,
 	waitForEvent,
+	waitForText,
 } from '@src/core'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { createAsyncSource, createStreamSource } from '../../setup.js'
@@ -202,6 +203,125 @@ describe('waitForCondition', () => {
 		await expect(
 			waitForCondition('invalid interval', () => true, { interval: -1 }),
 		).rejects.toThrow('Wait interval')
+	})
+})
+
+describe('waitForText', () => {
+	it('resolves on the first reading that contains the sentence', async () => {
+		const readings = ['Loading', 'Loading', 'Two entries waiting']
+		let reads = 0
+
+		const settled = await waitForText(
+			'the ledger arrives',
+			() => {
+				const reading = readings[Math.min(reads, readings.length - 1)] ?? ''
+				reads += 1
+				return reading
+			},
+			'Two entries',
+			{ interval: 0 },
+		)
+
+		expect(settled).toBe('Two entries waiting')
+		expect(reads).toBe(3)
+	})
+
+	// The containing reading is the control: it satisfies the default and must not satisfy `exact`,
+	// so a reading that merely carries the sentence cannot pass for one that is the sentence.
+	it('demands the whole reading under exact', async () => {
+		await expect(
+			waitForText('the heading settles', () => 'Ledger totals', 'Ledger', {
+				budget: 5,
+				interval: 10,
+				exact: true,
+			}),
+		).rejects.toThrow('Condition "the heading settles" did not hold within 5ms')
+
+		await expect(
+			waitForText('the heading settles', () => 'Ledger', 'Ledger', { exact: true }),
+		).resolves.toBe('Ledger')
+	})
+
+	// A screen replacing one sentence with another passes through a frame carrying both, so the
+	// reading that carries the arrival and the departure together must not satisfy the wait.
+	it('waits past a reading that still carries the departing sentence', async () => {
+		const readings = ['Signed out', 'Signed out Signed in', 'Signed in']
+		let reads = 0
+
+		const settled = await waitForText(
+			'the session replaces the prompt',
+			() => {
+				const reading = readings[Math.min(reads, readings.length - 1)] ?? ''
+				reads += 1
+				return reading
+			},
+			'Signed in',
+			{ absent: 'Signed out', interval: 0 },
+		)
+
+		expect(settled).toBe('Signed in')
+		expect(reads).toBe(3)
+	})
+
+	it('refuses an empty expectation and an empty departure', async () => {
+		await expect(waitForText('anything', () => 'Ready', '')).rejects.toThrow(
+			new Error('Text expectation must not be empty'),
+		)
+		await expect(waitForText('anything', () => 'Ready', 'Ready', { absent: '' })).rejects.toThrow(
+			new Error('Text expectation must not be empty'),
+		)
+	})
+
+	it('propagates a reader throw unchanged', async () => {
+		const thrown = new Error('the region is not rendered')
+		let caught: unknown
+		try {
+			await waitForText(
+				'the region arrives',
+				() => {
+					throw thrown
+				},
+				'Ready',
+			)
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(thrown)
+	})
+
+	it('names the wait and the budget when the sentence never arrives', async () => {
+		await expect(
+			waitForText('the ledger arrives', () => 'Loading', 'Two entries', {
+				budget: 5,
+				interval: 10,
+			}),
+		).rejects.toThrow('Condition "the ledger arrives" did not hold within 5ms')
+	})
+
+	it('rejects an aborted wait with the signal reason', async () => {
+		const controller = new AbortController()
+		const reason = new Error('journey aborted')
+		setTimeout(() => controller.abort(reason), 0)
+
+		let caught: unknown
+		try {
+			await waitForText('the ledger arrives', () => 'Loading', 'Two entries', {
+				budget: 100,
+				interval: 20,
+				signal: controller.signal,
+			})
+		} catch (error) {
+			caught = error
+		}
+
+		expect(caught).toBe(reason)
+	})
+
+	it('refuses an invalid bound through the wait family', async () => {
+		await expect(
+			waitForText('invalid budget', () => 'Ready', 'Ready', { budget: Number.NaN }),
+		).rejects.toThrow('Wait budget')
 	})
 })
 

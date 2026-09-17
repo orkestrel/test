@@ -6,6 +6,7 @@ import type {
 	RetryOptions,
 	SignalRegistration,
 	StateScenario,
+	TextWaitOptions,
 	WaitOptions,
 } from './types.js'
 import {
@@ -182,6 +183,63 @@ export async function waitForCondition(
 		}
 		await waitForDelay(interval)
 	}
+}
+
+/**
+ * Waits until a reading of text carries an expected sentence.
+ *
+ * @param description - The wait described in a timeout error.
+ * @param read - The synchronous reading to take, such as the text of one named region.
+ * @param text - The sentence the reading must carry.
+ * @param options - The time bounds, the abort signal, the exactness switch, and the departure.
+ * @returns The first reading that satisfies the expectation.
+ * @throws The reader's thrown value, the abort reason, or an `Error` when `text` or `absent` is
+ * empty, a bound is invalid, or the expectation is not met within the budget.
+ * @remarks
+ * The reading is a parameter rather than a target this resolves, so the same wait serves a whole
+ * page, one named region, and a value a host-independent test computes. Scope it as narrowly as the
+ * claim: a wait over the whole page resolves on the sentence wherever it lands.
+ *
+ * {@link waitForCondition} owns the poll, so the bounds, the timeout voice, and the abort reason are
+ * that helper's, and a reader that throws stops the wait rather than counting as a reading that did
+ * not satisfy it. Default budget: `1000` milliseconds. Default interval: `10` milliseconds.
+ *
+ * An empty expectation is refused rather than satisfied by the first reading, because every string
+ * contains the empty string and every reading equals it only when the screen is blank.
+ *
+ * @example
+ * ```ts
+ * import { waitForText } from '@orkestrel/test'
+ *
+ * await waitForText('the ledger arrives', () => panel.innerText, 'Two entries')
+ *
+ * // Throws Error: Text expectation must not be empty
+ * await waitForText('anything', () => panel.innerText, '')
+ * ```
+ */
+export async function waitForText(
+	description: string,
+	read: () => string,
+	text: string,
+	options?: TextWaitOptions,
+): Promise<string> {
+	if (text.length === 0) throw new Error('Text expectation must not be empty')
+	const absent = options?.absent
+	if (absent !== undefined && absent.length === 0) {
+		throw new Error('Text expectation must not be empty')
+	}
+	const exact = options?.exact ?? false
+	let reading = ''
+	await waitForCondition(
+		description,
+		() => {
+			reading = read()
+			const carries = exact ? reading === text : reading.includes(text)
+			return carries && (absent === undefined || !reading.includes(absent))
+		},
+		options,
+	)
+	return reading
 }
 
 /**

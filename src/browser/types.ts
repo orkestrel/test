@@ -1,3 +1,5 @@
+import type { JourneyVariant, WaitOptions } from '@src/core'
+
 /**
  * Represents one rendered color as straight sRGB channels and its alpha.
  *
@@ -59,14 +61,16 @@ export interface FrameReading {
 	readonly floor: string | undefined
 }
 
-/** Represents one theme-and-viewport pair a capture run renders, and the document change it needs first. */
-export interface CaptureVariant {
-	/** Holds the variant's name, which is the second half of every filename the run writes. */
-	readonly name: string
-	/** Holds the viewport width in pixels. */
-	readonly width: number
-	/** Holds the viewport height in pixels. */
-	readonly height: number
+/**
+ * Adds to a journey variant the document change a capture run applies before resizing.
+ *
+ * @remarks
+ * The name, the width, and the height come from {@link JourneyVariant}, which a project
+ * configuration can serialize and hand to the suite that renders it. The change this adds is a
+ * function, so it belongs to the suite rather than to that configuration: a variant a configuration
+ * declares and a variant a capture run renders are the same row read at two depths.
+ */
+export interface CaptureVariant extends JourneyVariant {
 	/**
 	 * Holds the document change this variant needs before the viewport is resized — a theme
 	 * attribute, a density class, a language direction. Omit it when the variant is a viewport alone.
@@ -170,4 +174,123 @@ export interface JournalInterface {
 	 * recorded at all.
 	 */
 	record(action: string, trigger: string, result: string): void
+}
+
+/**
+ * Configures a bounded wait over the states a control announces.
+ *
+ * @remarks
+ * The direction is a boolean because a state is either announced or it is not, and both directions
+ * are the same wait over the same reading. The time bounds and the abort signal come from
+ * {@link WaitOptions} and mean there what they mean everywhere else.
+ */
+export interface StateOptions extends WaitOptions {
+	/** Determines the direction: `true` waits until the state is gone, `false` until it appears. */
+	readonly absent?: boolean
+}
+
+/**
+ * Configures an inert `Storage`: its seed, which operations the host permits, and its quota.
+ *
+ * @remarks
+ * Every member describes a condition a real origin produces. A withheld read or write is what a
+ * browser with site data blocked raises from the storage object, and a quota is what an origin with
+ * no room left raises from `setItem`. Omit a member and the store behaves as an ordinary origin
+ * does: seeded with nothing, permitting everything, and bounded by nothing.
+ */
+export interface StorageOptions {
+	/** Holds the entries the store starts with, keyed by storage key. */
+	readonly values?: Readonly<Record<string, string>>
+	/** Determines whether the host permits reads. Default: `true`. */
+	readonly reads?: boolean
+	/** Determines whether the host permits writes. Default: `true`. */
+	readonly writes?: boolean
+	/** Caps the accepted `setItem` calls. When omitted, nothing bounds the store. */
+	readonly quota?: number
+}
+
+/**
+ * Holds a store the host can withhold and later grant.
+ *
+ * @remarks
+ * The name carries `Web` because `@orkestrel/database` owns `StorageInterface` for the operations a
+ * driver's transaction scope offers, and the fleet gives one bare exported name one owning package.
+ * This one is the Web Storage surface a browser publishes on `localStorage`, plus the grant a
+ * person allowing site data performs.
+ */
+export interface WebStorageInterface extends Storage {
+	/** Grants the reads and the writes the host withheld, and replenishes no quota. */
+	permit(): void
+}
+
+/**
+ * Reports an authored-class census: the population walked, the tokens found, and the undeclared.
+ *
+ * @remarks
+ * The population is reported beside the finding because an empty walk satisfies every difference
+ * check: a census that read no element reports no undeclared token, and so does a census over
+ * markup whose every class the cascade declares. Assert on `elements` as well as on `undeclared`
+ * and the two cannot be confused.
+ */
+export interface CensusReading {
+	/** Reports how many elements the walk read, the root included when it is an element. */
+	readonly elements: number
+	/** Lists every class token the markup carries, sorted. */
+	readonly tokens: readonly string[]
+	/** Lists every carried token no loaded stylesheet declares, sorted. */
+	readonly undeclared: readonly string[]
+}
+
+/**
+ * Holds a detached translucent stack whose flat and composited readings disagree across one bar.
+ *
+ * @remarks
+ * `refused` and `accepted` are the control a composited-contrast reading owes: the composited
+ * reading refuses one and the flat reading clears it, and the other way about for the second. A reader that takes the
+ * nearest declared background at full strength answers the opposite pair, so no single
+ * non-compositing reading satisfies both.
+ */
+export interface ContrastFixture {
+	/** Holds the opaque floor carrying the translucent tint; append this to read either foreground. */
+	readonly root: HTMLElement
+	/** Holds the foreground whose composited reading falls under the bar. */
+	readonly refused: HTMLElement
+	/** Holds the foreground whose composited reading reaches the bar. */
+	readonly accepted: HTMLElement
+}
+
+/**
+ * Holds detached markup a style-escape reading must find, and the one it must leave alone.
+ *
+ * @remarks
+ * `inline`, `embedded`, and `permitted` are the branches a style-escape reading has: an inline
+ * attribute, an embedded element, and the sheet a project deliberately allows. A reading that passes
+ * by refusing every `<style>` element clears the escapes and fails the exemption.
+ */
+export interface EscapeFixture {
+	/** Holds the detached root carrying the inline escape, the embedded escape, and the exempt sheet. */
+	readonly root: HTMLElement
+	/** Holds the element carrying an inline `style` attribute. */
+	readonly inline: HTMLElement
+	/** Holds the embedded `<style>` element. */
+	readonly embedded: HTMLElement
+	/** Holds the `<style>` element carrying the exempt id the caller named. */
+	readonly permitted: HTMLElement
+}
+
+/**
+ * Holds detached markup an authored-class census must report as undeclared.
+ *
+ * @remarks
+ * One token rides on an HTML element and the other on an SVG element, because `className` on an SVG
+ * element is an `SVGAnimatedString` rather than a string: a census splitting that value finds
+ * nothing and reports one token where two are carried.
+ */
+export interface CensusFixture {
+	/** Holds the detached root carrying both marked elements. */
+	readonly root: HTMLElement
+	/** Holds the class token the HTML element carries. */
+	readonly token: string
+	/** Holds the class token the SVG element carries. */
+	readonly mark: string
 }

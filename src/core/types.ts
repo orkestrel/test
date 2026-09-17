@@ -148,6 +148,23 @@ export interface RetryOptions extends WaitOptions {
 }
 
 /**
+ * Configures a bounded wait over a reading of text.
+ *
+ * @remarks
+ * The two members are the arrival a wait is for and the departure it must see first. A screen that
+ * replaces one sentence with another passes through a moment carrying both, so a wait that names
+ * only the arrival can resolve on the frame the old sentence is still painted in. Name the
+ * replaced sentence in `absent` and the wait resolves on the reading that carries one and not the
+ * other.
+ */
+export interface TextWaitOptions extends WaitOptions {
+	/** Determines whether the reading must equal the text rather than contain it. */
+	readonly exact?: boolean
+	/** Holds a sentence the reading must no longer carry when the wait resolves. */
+	readonly absent?: string
+}
+
+/**
  * Subscribes a listener to one event source.
  *
  * @typeParam TArgs - The argument tuple the event delivers.
@@ -211,6 +228,25 @@ export type JSONSafe<T> = unknown extends T
  * entries-array, and `Headers` forms all satisfy it.
  */
 export type HeadersSource = NonNullable<ConstructorParameters<typeof Headers>[0]>
+
+/**
+ * Represents one theme-and-viewport pair in the form a project configuration can serialize.
+ *
+ * @remarks
+ * A capture matrix is declared twice — once in the configuration that registers one test project
+ * per variant, and once in the suite that renders them — so this is the shape the two agree on.
+ * Every member is data a JSON file can carry, which is what keeps it reachable from a
+ * configuration; the browser environment's `CaptureVariant` extends it with the document change a
+ * capture applies, which a configuration cannot carry.
+ */
+export interface JourneyVariant {
+	/** Holds the variant's name, which is the second half of every filename a capture run writes. */
+	readonly name: string
+	/** Holds the viewport width in pixels. */
+	readonly width: number
+	/** Holds the viewport height in pixels. */
+	readonly height: number
+}
 
 /**
  * Represents one row of a statechart table: the entity's state before an event, the event, and the

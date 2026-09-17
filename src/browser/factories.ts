@@ -3,8 +3,11 @@ import type {
 	JournalStep,
 	PortfolioInterface,
 	PortfolioOptions,
+	StorageOptions,
+	WebStorageInterface,
 } from './types.js'
-import { captureFrame, expandCaptures } from './helpers.js'
+import { isInteger } from '@orkestrel/contract'
+import { buildDenial, captureFrame, expandCaptures } from './helpers.js'
 
 /**
  * Creates one real pointer event, ready to dispatch.
@@ -261,6 +264,86 @@ export function createJournal(): JournalInterface {
 		record(action, trigger, result) {
 			if (intercepted === undefined) return
 			steps.push(Object.freeze({ action, trigger, result }))
+		},
+	}
+}
+
+/**
+ * Creates an inert `Storage` a host can withhold, grant, and run out of room in.
+ *
+ * @param options - The seed, the read and write permissions, and the quota.
+ * @returns A store carrying the Web Storage surface plus the grant.
+ * @throws An `Error` when `quota` is not a non-negative integer.
+ *
+ * @remarks
+ * Conditions a real origin produces are unreachable from a test otherwise: a browser with
+ * site data blocked refuses every operation the permission withholds, an origin with no room left
+ * refuses `setItem`, and a person allowing site data grants what was withheld. This makes each of
+ * them reachable against a real `Storage` surface rather than a shaped object.
+ *
+ * It is backed by a map of its own and patches nothing: `localStorage` and `sessionStorage` are
+ * untouched, no `storage` event is dispatched, and the store is reached only by the code the test
+ * hands it to. Reach for {@link clearStorage} where the real browser surfaces are the subject.
+ *
+ * `length`, `key`, and `getItem` are reads; `clear`, `removeItem`, and `setItem` are writes. A
+ * withheld operation raises {@link buildDenial}'s `SecurityError`, and `permit` lifts both
+ * permissions at once, the way a person allowing site data lifts them. Reads answer from what the
+ * store actually accepted, so a journey reads what the application kept while the host was refusing.
+ *
+ * `quota` counts accepted `setItem` calls rather than bytes, because the number of writes is what a
+ * journey scripts and a byte budget is the browser's own arithmetic. `removeItem` consumes none of
+ * it, and `permit` replenishes none of it: room and permission are different refusals, and a test
+ * that granted the permission still meets the full origin.
+ *
+ * @example
+ * ```ts
+ * const storage = createStorage({ values: { theme: 'dark' }, writes: false })
+ * storage.getItem('theme') // 'dark'
+ * storage.permit()
+ * storage.setItem('theme', 'light')
+ * ```
+ */
+export function createStorage(options?: StorageOptions): WebStorageInterface {
+	const quota = options?.quota
+	if (quota !== undefined && (!isInteger(quota) || quota < 0)) {
+		throw new Error('Storage quota must be a non-negative integer')
+	}
+	const values = new Map<string, string>(Object.entries(options?.values ?? {}))
+	let reads = options?.reads ?? true
+	let writes = options?.writes ?? true
+	let room = quota
+	return {
+		get length() {
+			if (!reads) throw buildDenial('length')
+			return values.size
+		},
+		permit() {
+			reads = true
+			writes = true
+		},
+		clear() {
+			if (!writes) throw buildDenial('clear')
+			values.clear()
+		},
+		getItem(key) {
+			if (!reads) throw buildDenial('getItem', key)
+			return values.get(key) ?? null
+		},
+		key(index) {
+			if (!reads) throw buildDenial('key')
+			return [...values.keys()][index] ?? null
+		},
+		removeItem(key) {
+			if (!writes) throw buildDenial('removeItem', key)
+			values.delete(key)
+		},
+		setItem(key, value) {
+			if (!writes) throw buildDenial('setItem', key)
+			if (room !== undefined) {
+				if (room === 0) throw new DOMException(`No room is left for ${key}`, 'QuotaExceededError')
+				room -= 1
+			}
+			values.set(key, value)
 		},
 	}
 }

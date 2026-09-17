@@ -1,5 +1,6 @@
 import type { CaptureVariant } from '@src/browser'
 import {
+	buildDenial,
 	CAPTURE_PANE,
 	clickAccessible,
 	createChannel,
@@ -7,10 +8,11 @@ import {
 	createJournal,
 	createPointerEvent,
 	createPortfolio,
+	createStorage,
 	expandCaptures,
 	readPerception,
 } from '@src/browser'
-import { createRecorder, requireValue } from '@src/core'
+import { captureError, createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../setup.js'
@@ -588,5 +590,131 @@ describe('createJournal', () => {
 		}
 		expect(refused).toBe('Draft refused')
 		expect(console.log).toBe(original)
+	})
+})
+
+describe('createStorage', () => {
+	it('reads back its seed and accepts every operation by default', () => {
+		const storage = createStorage({ values: { theme: 'dark', scale: '2' } })
+
+		expect(storage.length).toBe(2)
+		expect(storage.getItem('theme')).toBe('dark')
+		expect(storage.getItem('absent')).toBeNull()
+		expect(storage.key(0)).toBe('theme')
+		expect(storage.key(9)).toBeNull()
+
+		storage.setItem('theme', 'light')
+		expect(storage.getItem('theme')).toBe('light')
+
+		storage.removeItem('scale')
+		expect(storage.length).toBe(1)
+
+		storage.clear()
+		expect(storage.length).toBe(0)
+	})
+
+	it('refuses every withheld operation in the voice a denied origin raises', () => {
+		const storage = createStorage({ values: { theme: 'dark' }, reads: false, writes: false })
+
+		const denied = captureError(() => storage.getItem('theme'))
+		expect(denied).toBeInstanceOf(DOMException)
+		const refusal = requireValue(denied instanceof DOMException ? denied : undefined)
+		expect(refusal.name).toBe('SecurityError')
+		expect(refusal.message).toBe('Access is denied for getItem "theme"')
+
+		expect(() => storage.length).toThrow('Access is denied for length')
+		expect(() => storage.key(0)).toThrow('Access is denied for key')
+		expect(() => storage.clear()).toThrow('Access is denied for clear')
+		expect(() => storage.removeItem('theme')).toThrow('Access is denied for removeItem "theme"')
+		expect(() => storage.setItem('theme', 'light')).toThrow('Access is denied for setItem "theme"')
+	})
+
+	// Reads answer from what the store actually accepted, so a journey reads what the application
+	// kept while the host was refusing.
+	it('grants both permissions at once and answers from what the store kept', () => {
+		const storage = createStorage({ values: { theme: 'dark' }, reads: false, writes: false })
+
+		storage.permit()
+
+		expect(storage.getItem('theme')).toBe('dark')
+		storage.setItem('scale', '2')
+		expect(storage.length).toBe(2)
+	})
+
+	it('spends its quota on accepted writes alone', () => {
+		const storage = createStorage({ quota: 2 })
+
+		storage.setItem('first', '1')
+		storage.removeItem('first')
+		storage.setItem('second', '2')
+
+		const full = captureError(() => storage.setItem('third', '3'))
+		expect(full).toBeInstanceOf(DOMException)
+		const refusal = requireValue(full instanceof DOMException ? full : undefined)
+		expect(refusal.name).toBe('QuotaExceededError')
+		expect(refusal.message).toBe('No room is left for third')
+		expect(storage.getItem('second')).toBe('2')
+		expect(storage.getItem('third')).toBeNull()
+	})
+
+	// The control for the two refusals being different: granting the permission leaves the origin as
+	// full as it was, so a store that replenished on `permit` would accept this write.
+	it('replenishes no room when the permission is granted', () => {
+		const storage = createStorage({ quota: 1, writes: false })
+
+		expect(() => storage.setItem('first', '1')).toThrow('Access is denied for setItem "first"')
+
+		storage.permit()
+		storage.setItem('first', '1')
+
+		expect(() => storage.setItem('second', '2')).toThrow('No room is left for second')
+
+		// Spending the room before the grant is what separates the two refusals: a store that handed
+		// the room back with the permission would accept the second write here.
+		const spent = createStorage({ quota: 1 })
+		spent.setItem('only', '1')
+		spent.permit()
+
+		expect(() => spent.setItem('another', '2')).toThrow('No room is left for another')
+	})
+
+	it('refuses a quota that is not a non-negative integer', () => {
+		for (const quota of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+			expect(captureError(() => createStorage({ quota }))).toStrictEqual(
+				new Error('Storage quota must be a non-negative integer'),
+			)
+		}
+		expect(createStorage({ quota: 0 }).length).toBe(0)
+	})
+
+	// The control for the inertness claim: a store this package hands out is not the browser's own,
+	// so a write here leaves `localStorage` exactly as it was.
+	it('patches nothing the document already holds', () => {
+		localStorage.setItem('journey-real', 'kept')
+		try {
+			const storage = createStorage()
+			storage.setItem('journey-real', 'replaced')
+
+			expect(localStorage.getItem('journey-real')).toBe('kept')
+			expect(storage.getItem('journey-real')).toBe('replaced')
+		} finally {
+			localStorage.removeItem('journey-real')
+		}
+	})
+
+	// guides/test.md → Patterns → "Withhold a store the way a host does". A browser fence carries in
+	// this directory because the guides project runs with the browser disabled.
+	it('withholds a read, grants it, and then runs out of room', () => {
+		const storage = createStorage({ values: { theme: 'dark' }, reads: false, quota: 1 })
+
+		expect(() => storage.getItem('theme')).toThrow('Access is denied for getItem "theme"')
+
+		storage.permit()
+		expect(storage.getItem('theme')).toBe('dark')
+
+		storage.setItem('theme', 'light')
+		expect(() => storage.setItem('scale', '2')).toThrow('No room is left for scale')
+
+		expect(buildDenial('length').name).toBe('SecurityError')
 	})
 })
