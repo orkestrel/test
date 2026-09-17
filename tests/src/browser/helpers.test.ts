@@ -501,14 +501,79 @@ describe('readHit', () => {
 		expect(isReachable(target)).toBe(true)
 	})
 
-	it('reports nothing for a centre that lands outside the viewport', () => {
+	// Neither element has a box to aim at: the clipped control collapses to a point on its rail's
+	// own corner, and the folded one reports the zero rectangle at the origin. The reader hit-tests
+	// each point like any other, which is why the gates run before a caller trusts what it names.
+	it('names whatever paints at a collapsed box, because it never asks for layout', () => {
 		const container = buildFixture(
-			'<button type="button" style="position: fixed; top: 120px; left: -400px; width: 200px; height: 40px">' +
-				'Open</button>',
+			'<div id="rail" style="position: fixed; top: 120px; left: 120px; width: 200px; height: 60px">' +
+				'<button type="button" id="clipped" style="width: 0; height: 0; padding: 0; border: 0; overflow: hidden">' +
+				'Skip to content</button></div>' +
+				'<div style="display: none"><button type="button" id="folded">Folded</button></div>',
 		)
-		const target = requireValue(container.querySelector('button'))
-		expect(isOutsideViewport(target.getBoundingClientRect())).toBe(true)
-		expect(readHit(target)).toBeUndefined()
+		const clipped = requireValue(container.querySelector('#clipped'))
+		expect(clipped.getBoundingClientRect().width).toBe(0)
+		expect(isRendered(clipped)).toBe(true)
+		expect(isReachable(clipped)).toBe(false)
+		const clippedHit = requireValue(readHit(clipped))
+		expect(clippedHit.id).toBe('rail')
+		expect(clipped.contains(clippedHit)).toBe(false)
+
+		const folded = requireValue(container.querySelector('#folded'))
+		const box = folded.getBoundingClientRect()
+		expect(box.width).toBe(0)
+		expect(box.left).toBe(0)
+		expect(isRendered(folded)).toBe(false)
+		expect(readHit(folded)).toBe(document.body)
+	})
+
+	// The hit test runs against the owner document, so it stops at the shadow boundary and names the
+	// host. The mode changes nothing — a closed root is no less visible to it than an open one — and
+	// a caller that wants the encapsulated node asks the element's own root for its reading instead.
+	it('names the host for an element inside a shadow tree, open root and closed alike', () => {
+		const container = buildFixture(
+			'<div id="host" style="position: fixed; top: 120px; left: 120px; width: 200px; height: 60px"></div>' +
+				'<div id="sealed" style="position: fixed; top: 200px; left: 120px; width: 200px; height: 60px"></div>',
+		)
+		const hosts: ReadonlyArray<{ readonly id: string; readonly mode: ShadowRootMode }> = [
+			{ id: 'host', mode: 'open' },
+			{ id: 'sealed', mode: 'closed' },
+		]
+		for (const { id, mode } of hosts) {
+			const host = requireValue(container.querySelector(`#${id}`))
+			const root = host.attachShadow({ mode })
+			root.innerHTML =
+				'<button type="button" style="width: 120px; height: 40px; margin: 10px">Open</button>'
+			const inner = requireValue(root.querySelector('button'))
+			const hit = requireValue(readHit(inner))
+			expect(hit).toBe(host)
+			expect(inner.contains(hit)).toBe(false)
+			const box = inner.getBoundingClientRect()
+			const centre = root.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+			expect(centre).toBe(inner)
+		}
+	})
+
+	// Where the centre lands is the whole question, and whether the box still reaches the viewport is
+	// a different one. The second arrangement separates them: its right edge is at 20, so
+	// `isOutsideViewport` reports false while the centre sits at -30 and the hit test refuses it.
+	it('reports nothing where the centre lies outside the viewport, whatever the box does', () => {
+		const container = buildFixture(
+			'<button type="button" id="gone" style="position: fixed; top: 120px; left: -400px; width: 200px; height: 40px">' +
+				'Gone</button>' +
+				'<button type="button" id="edge" style="position: fixed; top: 200px; left: -80px; width: 100px; height: 40px">' +
+				'Edge</button>',
+		)
+		const gone = requireValue(container.querySelector('#gone'))
+		expect(isOutsideViewport(gone.getBoundingClientRect())).toBe(true)
+		expect(readHit(gone)).toBeUndefined()
+
+		const edge = requireValue(container.querySelector('#edge'))
+		const box = edge.getBoundingClientRect()
+		expect(box.right).toBe(20)
+		expect(isOutsideViewport(box)).toBe(false)
+		expect(isReachable(edge)).toBe(true)
+		expect(readHit(edge)).toBeUndefined()
 	})
 })
 

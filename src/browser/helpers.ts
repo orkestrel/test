@@ -102,31 +102,60 @@ export function isRendered(element: Element): boolean {
 }
 
 /**
- * Reads the element a pointer aimed at one element's bounding-box centre reaches.
+ * Reads the topmost element at one element's bounding-box centre.
  *
- * @param element - The element whose bounding-box centre is aimed at.
- * @returns The element the document hit-tests at that point, or `undefined` where the point lands
- * on nothing.
+ * @param element - The element whose bounding-box centre is the point to read.
+ * @returns The element the owner document's hit test names at that point, or `undefined` where the
+ * point lies outside that viewport or reaches nothing.
  *
  * @remarks
- * A driver clicks an element's bounding-box centre, and so does a thumb aimed at the middle of what
- * it sees. That point is not always on the element, and two arrangements take it away in ways
- * {@link isReachable} cannot see: a sticky masthead covering a control that was scrolled to, and a
- * wrapped inline target, whose per-line rectangles leave a gap the single bounding box spans and
- * whose centre falls in that gap on the ancestor. `isReachable` reads `checkVisibility`, geometry,
- * and the focus order, and each arrangement passes all three while the click misses.
+ * This reads one point and nothing else: the centre of the element's own bounding box, hit-tested
+ * against `element.ownerDocument`. That point is where a thumb aimed at the middle of what it sees
+ * lands, and the arrangements that take it away are the ones {@link isReachable} cannot see: a
+ * sticky masthead covering a control that was scrolled to, and a wrapped inline target, whose
+ * per-line rectangles leave a gap the single bounding box spans and whose centre falls in that gap
+ * on the ancestor. `isReachable` reads `checkVisibility`, geometry, and the focus order, and each
+ * arrangement passes all three while a click at that point misses.
  *
- * It returns the node rather than a verdict, because the node is the diagnosis: a caller rules on
- * reachability with `element.contains(hit)` and names the cover from what came back — the list item
- * rather than the link, the masthead rather than the control. Read `undefined` as the centre
- * hitting nothing at all, which is also what a centre outside the viewport reads as; measure that
- * question with {@link isOutsideViewport} instead.
+ * It does not predict where the installed driver clicks. `playwright-core@1.63.0` clips each
+ * content quad to the viewport, drops every quad left without area, and takes the midpoint of the
+ * first quad that survives — `_clickablePoint` at `playwright-core/lib/coreBundle.js:20084`,
+ * reached from the locator `click` the Vitest provider delegates to. For the wrapped target the
+ * first surviving quad is the first line box, so the driver aims inside the link while this centre
+ * sits in the gap. Read a result as the answer for the point this names, and for no other.
+ *
+ * It returns the node rather than a verdict, because the node is the diagnosis: a caller narrows
+ * the result, rules on `link.contains(hit)`, and names what came back — the list item rather than
+ * the link, the masthead rather than the control.
+ *
+ * Pass {@link isRendered} and {@link isReachable} before reading, because neither answer means
+ * anything on an element that failed them. An element the document does not render measures a zero
+ * rectangle at the origin, and a zero-area element measures a point on its own edge; each is
+ * hit-tested like any other point and names whatever paints there — the surrounding container for
+ * a control clipped inside one, and the document body for a rectangle collapsed at the origin.
+ * `contains` is then false, and a caller that skipped the gates reports a cover that is not there.
+ *
+ * A returned node carries silences of its own. A cover painted with `pointer-events: none` is
+ * absent from the hit test, so the reading names the element underneath it and the caller reads
+ * reachable for a cover a person can see. An element inside a shadow tree retargets, in an open
+ * root and a closed one alike: the document-level hit test names the host, the inner element does
+ * not contain the host, and the caller reads the element's own host as a cover. Ask
+ * `element.getRootNode()` for its own `elementFromPoint` where the subject sits in a shadow tree.
+ *
+ * `undefined` carries one silence: a centre outside the viewport reads the same as a centre that
+ * reaches nothing. {@link isOutsideViewport} does not separate them, because it asks whether the
+ * whole rectangle misses the viewport while this asks where one point lands — a rectangle at
+ * `left: -80` with `width: 100` has its right edge at 20, so that predicate reports false while the
+ * centre at -30 reads `undefined` here. The two also measure different windows: the predicate reads
+ * the global `window`, and this reads `element.ownerDocument`. Compare the centre against that
+ * document's own viewport where the distinction is the subject.
  *
  * @example
  * ```ts
  * const link = requireValue(container.querySelector('a'))
  * const hit = readHit(link)
- * link.contains(hit) // false for a wrapped link whose centre sits between its line boxes
+ * // False for a wrapped link whose centre sits between its line boxes.
+ * hit !== undefined && link.contains(hit)
  * ```
  */
 export function readHit(element: Element): Element | undefined {
