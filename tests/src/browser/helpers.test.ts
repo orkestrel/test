@@ -460,6 +460,93 @@ describe('isReachable', () => {
 			)
 		}
 	})
+
+	// A dialog announcing `aria-modal="true"` promises that the rest of the page is out of reach, so
+	// the control a person cannot get to is the one the resolver used to count. The name is carried
+	// twice deliberately: splitting one control's name across the page and the dialog is the
+	// workaround a consumer writes when the layer counts the covered copy.
+	it('refuses a control an open modal leaves behind and resolves the one the dialog holds', async () => {
+		const container = buildFixture(
+			'<header><a id="masthead" href="#start">Get started</a></header>' +
+				'<div role="dialog" aria-modal="true" aria-label="Menu">' +
+				'<button type="button">Close</button>' +
+				'<a id="menu" href="#start">Get started</a>' +
+				'</div>',
+		)
+		const masthead = requireValue(container.querySelector('#masthead'))
+		const menu = requireValue(container.querySelector('#menu'))
+		expect(isReachable(masthead)).toBe(false)
+		expect(isReachable(menu)).toBe(true)
+		expect(resolveAccessible('Get started')).toBe(menu)
+		expect(readRefusal('Get started')).toBeUndefined()
+		// Focus arrives the way an open dialog offers it, which is also what gives the page the real
+		// input focus a Tab needs: the dialog holds focus, and forward traversal from there reaches
+		// the dialog's own control rather than the masthead carrying the same name.
+		await clickAccessible('Close')
+		expect(await traverseAccessible('Get started')).toBe(menu)
+	})
+
+	it('accepts a control beside a dialog that is not modal and beside a modal the page withholds', () => {
+		const container = buildFixture(
+			'<header><a id="masthead" href="#start">Get started</a></header>' +
+				'<div role="dialog" aria-label="Plain"><a href="#start">Plain</a></div>' +
+				'<div role="dialog" aria-modal="true" aria-label="Folded" style="display: none">' +
+				'<a href="#start">Folded</a></div>' +
+				'<div role="dialog" aria-modal="true" aria-label="Blanked" style="visibility: hidden">' +
+				'<a href="#start">Blanked</a></div>',
+		)
+		const masthead = requireValue(container.querySelector('#masthead'))
+		expect(isReachable(masthead)).toBe(true)
+		expect(resolveAccessible('Get started')).toBe(masthead)
+	})
+
+	// Containment is the flat tree's, so the innermost open modal rules and a host inside it carries
+	// its own shadow content along.
+	it('follows containment through a nested modal and across a shadow boundary', () => {
+		const container = buildFixture(
+			'<a id="page" href="#start">Page</a>' +
+				'<div role="dialog" aria-modal="true" aria-label="Outer">' +
+				'<a id="outer" href="#start">Outer</a>' +
+				'<div role="dialog" aria-modal="true" aria-label="Inner">' +
+				'<a id="inner" href="#start">Inner</a>' +
+				'<div id="host" style="width: 200px; height: 60px"></div>' +
+				'</div></div>',
+		)
+		const root = requireValue(container.querySelector('#host')).attachShadow({ mode: 'closed' })
+		root.innerHTML = '<button type="button" style="width: 120px; height: 40px">Shadow</button>'
+		const rows: ReadonlyArray<{ readonly id: string; readonly reachable: boolean }> = [
+			{ id: 'page', reachable: false },
+			{ id: 'outer', reachable: false },
+			{ id: 'inner', reachable: true },
+		]
+		for (const row of rows) {
+			const element = requireValue(container.querySelector(`#${row.id}`))
+			expect(`${row.id} reachable=${String(isReachable(element))}`).toBe(
+				`${row.id} reachable=${String(row.reachable)}`,
+			)
+		}
+		expect(isReachable(requireValue(root.querySelector('button')))).toBe(true)
+	})
+
+	// The two arrangements the read cannot see, recorded here so the documented bound reddens with
+	// the code. A native dialog opened through `showModal` carries no `aria-modal` attribute, and a
+	// modal declared inside a shadow tree is outside what a document query returns.
+	it('reports a control reachable beside a native modal and beside a shadow-declared modal', () => {
+		const container = buildFixture(
+			'<a id="page" href="#start">Page</a>' +
+				'<dialog><a href="#start">Native</a></dialog>' +
+				'<div id="host" style="width: 200px; height: 60px"></div>',
+		)
+		const root = requireValue(container.querySelector('#host')).attachShadow({ mode: 'open' })
+		root.innerHTML =
+			'<div role="dialog" aria-modal="true" aria-label="Sealed" style="width: 120px; height: 40px">' +
+			'<a href="#start">Sealed</a></div>'
+		const native = requireValue(container.querySelector('dialog'))
+		native.showModal()
+		expect(native.matches(':modal')).toBe(true)
+		expect(isReachable(requireValue(container.querySelector('#page')))).toBe(true)
+		native.close()
+	})
 })
 
 describe('isRendered', () => {

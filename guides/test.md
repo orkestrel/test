@@ -1356,13 +1356,22 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     element, the `hidden` attribute, a hidden input, and a `display` or `visibility` that takes it
     off the page. `isReachable` reads geometry, and adds connectedness, a visibility check that
     honours opacity, a non-zero box, the sequential focus order, `:disabled` and `aria-disabled`, and
-    the `[inert]` ancestor. A control clipped to a
-    zero-size rectangle is the case that separates them: the accessibility tree still announces it,
-    so `isRendered` accepts it and `isReachable` refuses it. `isReachable` is the one reachability
-    filter the layer applies — `resolveRendered`, `clickAccessibleWithin`, and `clickDisclosure` each
-    narrow their own candidates and then keep the ones it accepts — so a journey meets one rule
-    rather than near-copies of it. Neither asks about the viewport; `resolveAccessible` scrolls a
-    wholly off-viewport target into view and measures that separately with `isOutsideViewport`.
+    the `[inert]` ancestor. It adds one reading the element's own facts cannot carry: an open modal
+    dialog. A shown `[aria-modal="true"]` element that does not contain the subject refuses it,
+    because a pointer, a Tab, and a reader honouring that attribute all stop at the dialog while the
+    covered control stays connected, laid out, and focusable. The dialog is put through `isRendered`,
+    so a drawer parked at `visibility: hidden` excludes nothing, and containment follows the flat
+    tree, so the innermost dialog rules and a host it holds carries its shadow content with it.
+    Applying that inside the predicate is what keeps the resolver, the ambiguity count, the Tab
+    trail, and every acting verb agreeing with the person in front of the dialog, and it is what
+    takes away the name splitting a consumer writes to keep a covered control out of the count. A
+    control clipped to a zero-size rectangle is the case that separates them: the accessibility tree
+    still announces it, so `isRendered` accepts it and `isReachable` refuses it. `isReachable` is the
+    one reachability filter the layer applies — `resolveRendered`, `clickAccessibleWithin`, and
+    `clickDisclosure` each narrow their own candidates and then keep the ones it accepts — so a
+    journey meets one rule rather than near-copies of it. Neither asks about the viewport;
+    `resolveAccessible` scrolls a wholly off-viewport target into view and measures that separately
+    with `isOutsideViewport`.
     `readHit` reads beside that pair rather than filtering with it. It hit-tests one point — the
     element's own bounding-box centre — which is how it sees what neither predicate can: a cover
     over a control they both accept, and a wrapped inline target whose centre falls between its line
@@ -1597,6 +1606,13 @@ the helper rather than to the host, and each names what to reach for instead.
   subject: a host the document does not lay out takes the element off the page, and both predicates
   refuse it. Read a `true` for a shadow subject as the element's own answer, and ask the host
   separately where an ancestor attribute is the subject.
+- **`isReachable` finds an open modal through the `aria-modal` attribute in the element's own
+  document.** Two arrangements carry no such attribute there, and each leaves the page behind it
+  reachable: a native `<dialog>` opened with `showModal`, which a browser makes modal without
+  marking it, and a dialog declared inside a shadow tree, which a document query does not return.
+  Containment itself does cross a boundary, because the subject's host chain is judged beside the
+  subject, so a dialog holding a host holds that host's shadow content too. Read `:modal` or the
+  dialog's own root where a native or shadow-declared dialog is the subject.
 - **`waitForAnimations` waits on the animations a browser reports as running.** A finished animation
   filling its target stays in the list and is already at rest, a paused one is at rest too and
   nothing here resumes it, and an animation declaring infinite iterations never finishes. Each is
@@ -3332,11 +3348,16 @@ Each entry names the contracts its file proves. The test names carry the cases.
   that stays there, and `isOutsideViewport` takes a rectangle wholly beyond each edge and one
   straddling an edge. `isReachable` takes a plain control and each condition it drops, a control the
   document no longer holds, a focusable SVG against an element from a foreign namespace, and the
-  refused summary that proves it is the one filter the acting verbs apply; `isRendered` takes each
-  removal a browser honours and, as the split from `isReachable`, a zero-size announced control. Each
-  predicate also takes a subject inside an open and a closed shadow root beside a host that carries
-  its own ancestor attribute — `[inert]` for one and `aria-hidden` for the other — and a host the flat
-  tree does not lay out, which pins where the boundary falls for each.
+  refused summary that proves it is the one filter the acting verbs apply. It takes the open modal
+  dialog through the readings that fix it: the masthead control the dialog leaves behind against the
+  same name inside it, which resolves and traverses unambiguously; the control a plain dialog, a
+  folded modal, and a blanked modal each leave standing, as the control; the nested dialog and the
+  shadow subject that pin containment on the flat tree; and the native `showModal` dialog and the
+  shadow-declared modal it reports nothing about, which is the bound the guide states. `isRendered`
+  takes each removal a browser honours and, as the split from `isReachable`, a zero-size announced
+  control. Each predicate also takes a subject inside an open and a closed shadow root beside a host
+  that carries its own ancestor attribute — `[inert]` for one and `aria-hidden` for the other — and a
+  host the flat tree does not lay out, which pins where the boundary falls for each.
   `pressKeys` takes a sequence reaching the control a traversal focused and, as the control, the same
   sequence refused while the document body holds focus with no keystroke recorded. `waitForState`
   takes a state a timer flips after the act, a node replaced mid-wait and still resolved by role and

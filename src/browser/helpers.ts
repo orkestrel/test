@@ -51,8 +51,9 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  *
  * @param element - The element to judge.
  * @returns True if the element is connected, visible, laid out with a non-zero box, in the
- * sequential focus order, neither disabled nor marked `aria-disabled="true"`, and outside every
- * `[inert]` subtree; false otherwise.
+ * sequential focus order, neither disabled nor marked `aria-disabled="true"`, outside every
+ * `[inert]` subtree, and inside every shown `[aria-modal="true"]` element its document carries;
+ * false otherwise.
  *
  * @remarks
  * This is the one reachability filter the layer applies. `resolveRendered`, `clickAccessibleWithin`,
@@ -63,6 +64,22 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  * zero-size rectangle is announced and is not clickable, so `isRendered` accepts it and this
  * refuses it. Nothing here asks about the viewport: `resolveAccessible` scrolls a wholly
  * off-viewport target into view and measures that separately with {@link isOutsideViewport}.
+ *
+ * An open modal dialog takes the page behind it away, and the element's own facts cannot report
+ * that: the covered control stays connected, laid out, focusable, and outside every `[inert]`
+ * subtree while a pointer, a Tab, and a reader honouring `aria-modal` all stop at the dialog. So
+ * this asks the document for its `[aria-modal="true"]` elements, puts each through
+ * {@link isRendered}, and refuses the subject wherever a shown one does not contain it. A closed
+ * dialog is hidden and excludes nothing, which is why the visibility reading is the announced one
+ * rather than a bare `checkVisibility` call: a drawer parked at `visibility: hidden` is still laid
+ * out. Nesting needs no separate rule, because an element inside the innermost dialog sits inside
+ * every dialog around it.
+ *
+ * Containment follows the flat tree, so a subject inside a shadow tree is judged by its host chain
+ * as well as itself and a dialog holding the host holds its shadow content too. Two arrangements
+ * stay outside the read: a native `<dialog>` opened with `showModal` carries no `aria-modal`
+ * attribute, and a dialog declared inside a shadow tree is not in what a document query returns.
+ * Each leaves the page behind it reachable here.
  *
  * Inside a shadow tree it answers for the element's own facts, in an open root and a closed one
  * alike: the box, the focus order, `:disabled`, and `aria-disabled` are all the element's. The
@@ -78,6 +95,12 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  */
 export function isReachable(element: Element): boolean {
 	if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return false
+	const chain: Element[] = [element]
+	let root = element.getRootNode()
+	while (root instanceof ShadowRoot) {
+		chain.push(root.host)
+		root = root.host.getRootNode()
+	}
 	const rectangle = element.getBoundingClientRect()
 	return (
 		element.isConnected &&
@@ -86,7 +109,10 @@ export function isReachable(element: Element): boolean {
 		rectangle.height > 0 &&
 		element.tabIndex >= 0 &&
 		!element.matches(':disabled, [aria-disabled="true"]') &&
-		element.closest('[inert]') === null
+		element.closest('[inert]') === null &&
+		[...element.ownerDocument.querySelectorAll('[aria-modal="true"]')].every(
+			(dialog) => !isRendered(dialog) || chain.some((node) => dialog.contains(node)),
+		)
 	)
 }
 
