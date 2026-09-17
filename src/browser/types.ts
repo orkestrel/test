@@ -1,4 +1,4 @@
-import type { JourneyVariant, WaitOptions } from '@src/core'
+import type { JourneyVariant, StateScenario, StatechartStatus, WaitOptions } from '@src/core'
 
 /**
  * Represents one rendered color as straight sRGB channels and its alpha.
@@ -293,4 +293,71 @@ export interface CensusFixture {
 	readonly token: string
 	/** Holds the class token the SVG element carries. */
 	readonly mark: string
+}
+
+/**
+ * Configures the harness that renders one transition table and drives it row by row.
+ *
+ * @typeParam TState - The states the entity moves between, as a string-literal union.
+ * @typeParam TEvent - The events the entity accepts, as a string-literal union.
+ * @typeParam TContext - The fixture the three phases of each row drive.
+ * @remarks
+ * `scenarios` is the table in the order it renders and the order it runs, so the rows a reader sees
+ * are the rows the run walks. `build` is called once per row, the way `executeScenarios` calls it,
+ * so one table can mix fixtures and a row never inherits the entity the row before it left behind.
+ *
+ * `state` is the reader that puts the entity's current state on the page. It is called with the
+ * row's own context after that row settles, pass or fail, so the rendered state is where the event
+ * actually left the entity rather than where the row expected it. It is a reader rather than a
+ * phase: a `state` that throws rejects the run.
+ *
+ * `pause` holds a delay between rows, for a table whose entity is worth watching. Omit it and the
+ * rows run back to back.
+ */
+export interface HarnessOptions<TState extends string, TEvent extends string, TContext> {
+	/** Holds the table to render and drive, in the order it is written. */
+	readonly scenarios: ReadonlyArray<StateScenario<TState, TEvent, TContext>>
+	/** Builds the fixture one row drives, called once per row and awaited when it returns a promise. */
+	readonly build: (
+		scenario: StateScenario<TState, TEvent, TContext>,
+	) => TContext | Promise<TContext>
+	/** Reads the state the entity is in, for the element the harness renders it on. */
+	readonly state: (context: TContext) => TState
+	/** Holds the delay in milliseconds the harness waits between rows. */
+	readonly pause?: number
+}
+
+/**
+ * Holds a mounted statechart harness, the tally it publishes, and the run it drives.
+ *
+ * @remarks
+ * Every reading comes off the mounted markup rather than out of a field beside it, so the object a
+ * test asserts on and the attributes a gate polls cannot disagree. `status`, `total`, `passed`, and
+ * `failed` read the root's own attributes, and `failures` reads the `scenario` name of every row
+ * whose `result` reads `failed`, so no second list can drift from the rows.
+ *
+ * `root` is the mounted element, handed out so a test can read the markup a gate would read.
+ * `failures` hands out a snapshot, so a list read mid-run stays what it was.
+ */
+export interface HarnessInterface {
+	/** Holds the mounted root carrying the status, the tally, and every row. */
+	readonly root: HTMLElement
+	/** Reports the run state the root announces. */
+	readonly status: StatechartStatus
+	/** Reports how many rows the table declares. */
+	readonly total: number
+	/** Reports how many rows the last run finished with a passing result. */
+	readonly passed: number
+	/** Reports how many rows the last run finished with a failing result. */
+	readonly failed: number
+	/** Lists the name of every row whose rendered result reads failed, in table order. */
+	readonly failures: readonly string[]
+	/**
+	 * Drives every row in table order, from a fresh tally.
+	 *
+	 * @returns A promise resolving after the last row settles and the terminal status is written.
+	 */
+	execute(): Promise<void>
+	/** Removes the mounted root, and does nothing when it is already removed. */
+	destroy(): void
 }

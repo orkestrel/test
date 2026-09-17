@@ -112,25 +112,26 @@ member and `plus` introducing its call-signature members, and a type alias's own
 a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
 it adds after.
 
-| Type                       | Kind      | Shape                                                   | Summary                                                                                                                                        |
-| -------------------------- | --------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WaitOptions`              | interface | `{ budget?, interval?, signal? }`                       | Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and an abort signal.                              |
-| `RetryOptions`             | interface | `WaitOptions` plus `{ attempts? }`                      | Configures a bounded retry, adding an optional producer-call limit to a bounded wait's bounds.                                                 |
-| `TextWaitOptions`          | interface | `WaitOptions` plus `{ exact?, absent? }`                | Configures a bounded wait over a reading of text.                                                                                              |
-| `EventSubscriber`          | type      | `(listener) => cleanup \| void`                         | Subscribes a listener to one event source.                                                                                                     |
-| `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear`                | Records every call made to its handler.                                                                                                        |
-| `EventSourceInterface`     | interface | `{} plus on`                                            | Subscribes handlers to a typed event source.                                                                                                   |
-| `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }` | Maps event names to recorders for their delivered argument tuples.                                                                             |
-| `SignalInterface`          | interface | `{ controller, signal, count }`                         | Holds a real abort signal and controller instrumented with its live abort-listener tally.                                                      |
-| `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]`      | Represents one abort listener an instrumented signal installed, as its tally holds it.                                                         |
-| `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy`      | Represents a numbered resource factory with records of every creation and destruction.                                                         |
-| `TeardownInterface`        | interface | `{ count }` plus `add` / `destroy`                      | Represents the cleanup a test adds as it goes and runs once, newest first, when it is done.                                                    |
-| `TeardownHandler`          | type      | `() => void \| Promise<void>`                           | Represents the work one teardown entry performs when the list is destroyed.                                                                    |
-| `JSONSafe`                 | type      | `JSONSafe<T>`                                           | Represents the JSON-safe projection of a type: every member JSON preserves, mapped to itself, and every member it does not, mapped to `never`. |
-| `HeadersSource`            | type      | `NonNullable<ConstructorParameters<typeof Headers>[0]>` | Covers any value the host `Headers` constructor accepts.                                                                                       |
-| `JourneyVariant`           | interface | `{ name, width, height }`                               | Represents one theme-and-viewport pair in the form a project configuration can serialize.                                                      |
-| `StateTransition`          | interface | `{ name, from, event, to }`                             | Represents one row of a statechart table: the entity's state before an event, the event, and the state that event must leave it in.            |
-| `StateScenario`            | interface | `{ transition }` plus `arrange` / `act` / `assert`      | Drives one `StateTransition` through the three phases that prove it.                                                                           |
+| Type                       | Kind      | Shape                                                      | Summary                                                                                                                                        |
+| -------------------------- | --------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WaitOptions`              | interface | `{ budget?, interval?, signal? }`                          | Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and an abort signal.                              |
+| `RetryOptions`             | interface | `WaitOptions` plus `{ attempts? }`                         | Configures a bounded retry, adding an optional producer-call limit to a bounded wait's bounds.                                                 |
+| `TextWaitOptions`          | interface | `WaitOptions` plus `{ exact?, absent? }`                   | Configures a bounded wait over a reading of text.                                                                                              |
+| `EventSubscriber`          | type      | `(listener) => cleanup \| void`                            | Subscribes a listener to one event source.                                                                                                     |
+| `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear`                   | Records every call made to its handler.                                                                                                        |
+| `EventSourceInterface`     | interface | `{} plus on`                                               | Subscribes handlers to a typed event source.                                                                                                   |
+| `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }`    | Maps event names to recorders for their delivered argument tuples.                                                                             |
+| `SignalInterface`          | interface | `{ controller, signal, count }`                            | Holds a real abort signal and controller instrumented with its live abort-listener tally.                                                      |
+| `SignalRegistration`       | type      | `readonly [listener, installed, capture, cleanup]`         | Represents one abort listener an instrumented signal installed, as its tally holds it.                                                         |
+| `ResourceFactoryInterface` | interface | `{ created, destroyed }` plus `create` / `destroy`         | Represents a numbered resource factory with records of every creation and destruction.                                                         |
+| `TeardownInterface`        | interface | `{ count }` plus `add` / `destroy`                         | Represents the cleanup a test adds as it goes and runs once, newest first, when it is done.                                                    |
+| `TeardownHandler`          | type      | `() => void \| Promise<void>`                              | Represents the work one teardown entry performs when the list is destroyed.                                                                    |
+| `JSONSafe`                 | type      | `JSONSafe<T>`                                              | Represents the JSON-safe projection of a type: every member JSON preserves, mapped to itself, and every member it does not, mapped to `never`. |
+| `HeadersSource`            | type      | `NonNullable<ConstructorParameters<typeof Headers>[0]>`    | Covers any value the host `Headers` constructor accepts.                                                                                       |
+| `JourneyVariant`           | interface | `{ name, width, height }`                                  | Represents one theme-and-viewport pair in the form a project configuration can serialize.                                                      |
+| `StatechartStatus`         | type      | `'pending' \| 'idle' \| 'running' \| 'passed' \| 'failed'` | Names the run state a statechart harness publishes through its status attribute.                                                               |
+| `StateTransition`          | interface | `{ name, from, event, to }`                                | Represents one row of a statechart table: the entity's state before an event, the event, and the state that event must leave it in.            |
+| `StateScenario`            | interface | `{ transition }` plus `arrange` / `act` / `assert`         | Drives one `StateTransition` through the three phases that prove it.                                                                           |
 
 Each interface's call-signature members are listed under [Methods](#methods). `Result`, `Success`,
 and `Failure` come from `@orkestrel/contract` (mirrored at [`contract.md`](contract.md)) and are not
@@ -148,8 +149,11 @@ A `Shape` cell holds the constant's declared type.
 A harness renders the attributes and a gate outside the page polls them, so the names are the whole
 contract between the two. `status`, `passed`, `failed`, and `total` belong on the harness root,
 `scenario` and `result` on each row, and `state` on the element rendering the entity's current
-state. `pending` is what a harness carries before a run has produced a result for every row, and
-`passed` and `failed` are the pair a gate waits for rather than waiting a fixed duration.
+state. `pending` is what a harness carries while its inventory is incomplete — until every
+declared row has rendered and the root carries the row count — so a gate that reads it has found
+a harness whose rows never mounted. `idle` is a mounted harness with its tally at zero, `running`
+is a run in flight, and `passed` and `failed` are the pair a gate waits for rather than waiting a
+fixed duration. `StatechartStatus` is the same set of readings as a named union.
 
 #### Validators
 
@@ -220,7 +224,8 @@ a journey a description of what a person does rather than of what the markup hap
 
 The fixture builders, the readers, and the field writers do take an element, and none of them is a
 journey verb. `build` creates a node, `mount` attaches one, and `render` does both from
-markup or from a tag and its classes; `buildContrast`, `buildEscapes`, and `buildCensus` each build
+markup or from a tag and its classes; `createHarness` mounts a whole statechart table and hands
+back the root it mounted; `buildContrast`, `buildEscapes`, and `buildCensus` each build
 a detached control the caller appends where it is reading; `clearStorage` takes nothing at all, and
 `removeDatabase` takes a database name. The predicates, the element readers, and the describers name
 a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
@@ -241,24 +246,26 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 member and `plus` introducing its call-signature members, and a type alias's own type literal with
 a union's arms escaped as `\|`.
 
-| Type                  | Kind      | Shape                                                | Summary                                                                                                                                         |
-| --------------------- | --------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Color`               | type      | `readonly [red, green, blue, alpha]`                 | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
-| `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                   | Configures one built element: its class list, its text, and its attributes.                                                                     |
-| `FrameOptions`        | interface | `{ path, width, height, element? }`                  | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
-| `FrameReading`        | interface | `{ width, height, floor }`                           | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
-| `CaptureVariant`      | interface | `JourneyVariant` plus `{ apply? }`                   | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
-| `PortfolioOptions`    | interface | `{ states, variants, variant, directory, enabled? }` | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
-| `PortfolioInterface`  | interface | `{ variant, placements, paths, files }` plus `place` | Holds the registry of capture states one run places, and the files it wrote placing them.                                                       |
-| `JournalStep`         | interface | `{ action, trigger, result }`                        | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
-| `JournalInterface`    | interface | `{ steps, output }` plus `start` / `stop` / `record` | Records one scenario: every step it took and everything the page said while it ran.                                                             |
-| `StateOptions`        | interface | `WaitOptions` plus `{ absent? }`                     | Configures a bounded wait over the states a control announces.                                                                                  |
-| `StorageOptions`      | interface | `{ values?, reads?, writes?, quota? }`               | Configures an inert `Storage`: its seed, which operations the host permits, and its quota.                                                      |
-| `WebStorageInterface` | interface | `Storage` plus `{}` plus `permit`                    | Holds a store the host can withhold and later grant.                                                                                            |
-| `CensusReading`       | interface | `{ elements, tokens, undeclared }`                   | Reports an authored-class census: the population walked, the tokens found, and the undeclared.                                                  |
-| `ContrastFixture`     | interface | `{ root, refused, accepted }`                        | Holds a detached translucent stack whose flat and composited readings disagree across one bar.                                                  |
-| `EscapeFixture`       | interface | `{ root, inline, embedded, permitted }`              | Holds detached markup a style-escape reading must find, and the one it must leave alone.                                                        |
-| `CensusFixture`       | interface | `{ root, token, mark }`                              | Holds detached markup an authored-class census must report as undeclared.                                                                       |
+| Type                  | Kind      | Shape                                                                          | Summary                                                                                                                                         |
+| --------------------- | --------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Color`               | type      | `readonly [red, green, blue, alpha]`                                           | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
+| `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                             | Configures one built element: its class list, its text, and its attributes.                                                                     |
+| `FrameOptions`        | interface | `{ path, width, height, element? }`                                            | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
+| `FrameReading`        | interface | `{ width, height, floor }`                                                     | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
+| `CaptureVariant`      | interface | `JourneyVariant` plus `{ apply? }`                                             | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
+| `PortfolioOptions`    | interface | `{ states, variants, variant, directory, enabled? }`                           | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
+| `PortfolioInterface`  | interface | `{ variant, placements, paths, files }` plus `place`                           | Holds the registry of capture states one run places, and the files it wrote placing them.                                                       |
+| `JournalStep`         | interface | `{ action, trigger, result }`                                                  | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
+| `JournalInterface`    | interface | `{ steps, output }` plus `start` / `stop` / `record`                           | Records one scenario: every step it took and everything the page said while it ran.                                                             |
+| `StateOptions`        | interface | `WaitOptions` plus `{ absent? }`                                               | Configures a bounded wait over the states a control announces.                                                                                  |
+| `StorageOptions`      | interface | `{ values?, reads?, writes?, quota? }`                                         | Configures an inert `Storage`: its seed, which operations the host permits, and its quota.                                                      |
+| `WebStorageInterface` | interface | `Storage` plus `{}` plus `permit`                                              | Holds a store the host can withhold and later grant.                                                                                            |
+| `CensusReading`       | interface | `{ elements, tokens, undeclared }`                                             | Reports an authored-class census: the population walked, the tokens found, and the undeclared.                                                  |
+| `ContrastFixture`     | interface | `{ root, refused, accepted }`                                                  | Holds a detached translucent stack whose flat and composited readings disagree across one bar.                                                  |
+| `EscapeFixture`       | interface | `{ root, inline, embedded, permitted }`                                        | Holds detached markup a style-escape reading must find, and the one it must leave alone.                                                        |
+| `CensusFixture`       | interface | `{ root, token, mark }`                                                        | Holds detached markup an authored-class census must report as undeclared.                                                                       |
+| `HarnessOptions`      | interface | `{ scenarios, build, state, pause? }`                                          | Configures the harness that renders one transition table and drives it row by row.                                                              |
+| `HarnessInterface`    | interface | `{ root, status, total, passed, failed, failures }` plus `execute` / `destroy` | Holds a mounted statechart harness, the tally it publishes, and the run it drives.                                                              |
 
 #### Constants
 
@@ -359,6 +366,7 @@ A `Shape` cell holds the constant's declared type.
 | `createChannel`      | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | Creates one console channel that records every call it receives and hands that call on unchanged. |
 | `createJournal`      | function | `() => JournalInterface`                                                                                  | Creates the journal one scenario records its steps and the page's own output into.                |
 | `createStorage`      | function | `(options?: StorageOptions) => WebStorageInterface`                                                       | Creates an inert `Storage` a host can withhold, grant, and run out of room in.                    |
+| `createHarness`      | function | `(options: HarnessOptions<TState, TEvent, TContext>) => HarnessInterface`                                 | Creates a mounted statechart harness that renders one transition table and drives it row by row.  |
 
 `resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
 passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its
@@ -868,6 +876,20 @@ The rest of the surface is the platform's: `length`, `key`, `getItem`, `setItem`
 `clear` are declared by the host `Storage` interface this one extends, so a store created here goes
 wherever a real one goes.
 
+#### `HarnessInterface`
+
+| Method    | Returns         | Summary                                                                |
+| --------- | --------------- | ---------------------------------------------------------------------- |
+| `execute` | `Promise<void>` | Drives every row in table order, from a fresh tally.                   |
+| `destroy` | `void`          | Removes the mounted root, and does nothing when it is already removed. |
+
+`execute` drives the table the harness was constructed with, so a second call re-runs the same rows.
+It clears every rendered `result` and puts the tally back to zero before the first row starts, and
+that reset is readable while the run is in flight: a harness mid-re-run reports nothing passed and
+nothing failed rather than the numbers the run before it left. `destroy` takes the root out of the
+document and leaves the element itself intact, so the tally a finished run published is still
+readable from the object afterwards.
+
 #### `ScratchInterface`
 
 | Method    | Returns               | Summary                                                                               |
@@ -1002,6 +1024,8 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Access is denied for <operation> "<key>"`                                               | `buildDenial`           |
 | `No room is left for <key>`                                                              | `createStorage`         |
 | `Storage quota must be a non-negative integer`                                           | `createStorage`         |
+| `Statechart harness mounted no transition`                                               | `createHarness`         |
+| `Statechart harness carries no status`                                                   | `status`                |
 
 Some of those rows are not plain `Error` messages. `buildDenial` returns a `DOMException` named
 `SecurityError`, `createStorage` raises that one from every operation the permission withholds and a
@@ -1019,7 +1043,10 @@ non-negative` for the second.
 
 Some of them are narrowing rather than findings, and no input reaches them. Each `could not be
 resolved` is one: a preceding length check does not narrow the later lookup under
-`noUncheckedIndexedAccess`, so the branch gives the value its type.
+`noUncheckedIndexedAccess`, so the branch gives the value its type. `Statechart harness carries no
+status` is another: the harness writes that attribute at construction and nothing but the harness
+writes it, so the reading is a member of `STATECHART_STATUSES` unless a caller took the attribute
+off the root it was handed.
 
 The capture guards are the other population no test drives, because each answers for a runner or a
 provider this package does not control. `Tester pane is unavailable for a capture` fires where
@@ -1361,6 +1388,21 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     `releasePane` returns the tester to the viewport it held before the staging, so the variant a
     frame was shot at belongs to that frame alone, and a suite that wants a size of its own calls
     `page.viewport` rather than this pair.
+19. **The statechart harness is test-side, and the markup is its whole contract.** A page cannot
+    import this package. `@orkestrel/test` is a development dependency, its browser entry imports
+    `vitest/browser` at module scope, and that import throws outside Browser Mode — so an
+    application that reached for `createHarness` would be shipping the runner to production.
+    The harness therefore mounts from the suite, and the only thing that crosses to a gate
+    outside the page is the rendered markup. `STATECHART_ATTRIBUTES` names every attribute on
+    both sides of that boundary, so neither the harness nor the gate spells a `data-statechart-*`
+    string of its own. The markup is framework-free and the harness renders it with `build` and
+    `mount`, so a workspace that installs no view library can still run it. Every reading the
+    object publishes comes off that markup rather than out of a field beside it: `status`,
+    `total`, `passed`, and `failed` read the root's attributes and `failures` reads the name of
+    each row whose rendered `result` reads `failed`, so a test asserting on the object and a gate
+    polling the page cannot report different things. The gate stays outside this package: the
+    harness carries its own tally, so nothing here reads a harness back, and no page is generated
+    or published to host one.
 
 ### Threat model
 
@@ -1468,6 +1510,9 @@ or when a consumer appears the ruling did not consider.
 | Control fixture builders — `buildContrast`, `buildEscapes`, `buildCensus`                        | Ships   | Each ships. An instrument is not evidence until its control has failed, and a consumer's contrast, style-escape, and census readings each ran against fixtures that could not fail them: every other fixture painted its own opaque background, so the compositing walk never ran; the escape reading was fed an inline attribute and never a `<style>` element; and the census was fed an HTML token and never the SVG one whose class list is no string. Each builder is parameterized by what the policy owns — the bar, the exempt id — and returns detached nodes, so the caller decides where they are read and nothing is mounted for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | A stalled-read store                                                                             | Refused | A store whose reads hang is not expressible against the interface a consumer codes to: `Storage` is synchronous, so `getItem` either answers or throws and there is no point at which a caller awaits it. A test that needs a hanging read needs an asynchronous surface, which is a different subject from the Web Storage one `createStorage` stands in for.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | A painted-population predicate — `isPainted`                                                     | Refused | The platform already answers it. `element.checkVisibility()` reports what the box tree renders and a non-zero `getBoundingClientRect()` reports what occupies space, and `isRendered` and `isReachable` already compose those two for the questions this layer asks. A third predicate over the same readings adds a name rather than an invariant.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A statechart harness — `createHarness`                                                           | Ships   | It ships as `createHarness`, with `HarnessOptions` and `HarnessInterface` beside it. The attribute contract is one every consumer would otherwise implement identically, which is the same admission that shipped the journey layer: `STATECHART_ATTRIBUTES` already published the names, and a workspace writing its own renderer against them writes a slightly different root, a slightly different row, and a gate that reads one workspace's markup and not the next one's. It renders framework-free markup through `build` and `mount`, drives each row through the `executeScenario` this package already publishes, and carries on past a failing row so one run reports on the whole table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| A separate gate reader — `readHarness`                                                           | Refused | The object already carries the tally. `createHarness` returns `status`, `total`, `passed`, `failed`, and `failures`, every one of them read off the rendered markup, so a second helper that parsed the same attributes back out would be a wrapper over `getAttribute` adding no boundary, invariant, or translation. A gate running outside this package is outside its environment too — it polls a page from a process that never imports a module importing `vitest/browser` — so what it needs is the attribute names, and `STATECHART_ATTRIBUTES` is what publishes them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A generated or published harness page                                                            | Refused | Which transitions a surface owes, where that page is deep-linked, and whether it ships to anyone are product decisions, and framework code stops before them. A page hosting a harness would also have to import this package, which rule 19 rules out: the browser entry imports `vitest/browser` at module scope. The mechanism ships and the page does not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | A framework-class disclosure settle                                                              | Refused | A helper that waits for a named element to carry one class and not two others encodes one framework's transition vocabulary, which is that framework's policy rather than a mechanism. `waitForState` waits on what the control announces and `waitForAnimations` waits on the paint itself, and between them they answer the question the class poll was asked. A surface announcing nothing is the finding.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 `ScratchInterface`'s own members were ruled the same way, and coherence rather than demand decided
@@ -2002,43 +2047,86 @@ expect(JSON.stringify(serializeSchema(received))).toBe(wire)
 A statechart table is a row per transition, and a row is the transition plus the three phases that
 prove it: `arrange` puts the entity into `from`, `act` applies the `event`, and `assert` reads the
 entity for `to`. `executeScenarios` walks the table and hands each row a context of its own; it
-registers nothing, so `describe` and `it` stay where you write them. In the following fence,
-`Disclosure` is the entity under test, and it is closed until something shows it.
+registers nothing, so `describe` and `it` stay where you write them.
+
+The entity in the following fences is a real one, and the fences are the table this package's own
+browser suite runs. It is a native disclosure with two doors: the summary toggles it, and a Dismiss
+button closes it and does nothing when it is already closed. That second door is what gives the
+table a row whose event leaves the state where it found it, which a lone `<details>` cannot have —
+its one event always flips. Every value these fences claim is pinned in
+`tests/src/browser/factories.test.ts`, because the fences drive a browser and the `guides` project
+runs with the browser disabled.
 
 ```ts
 import type { StateScenario } from '@orkestrel/test'
-import { executeScenarios } from '@orkestrel/test'
+import { executeScenarios, requireValue } from '@orkestrel/test'
+import { clickAccessible, clickDisclosure, readStates, render } from '@orkestrel/test/browser'
 import { expect, it } from 'vitest'
 
 type DisclosureState = 'closed' | 'open'
-type DisclosureEvent = 'show' | 'hide'
+type DisclosureEvent = 'toggle' | 'dismiss'
 
 interface DisclosureContext {
-	readonly disclosure: Disclosure
+	readonly summary: HTMLElement
+}
+
+// A journey verb resolves its own target by accessible name, so two mounted disclosures called
+// "Advanced" are an ambiguity rather than a second fixture. Each build takes the previous one out.
+let mounted: HTMLElement | undefined
+
+function buildDisclosure(): DisclosureContext {
+	mounted?.remove()
+	const container = render(
+		'<details><summary>Advanced</summary><p>Every setting.</p></details><button type="button">Dismiss</button>',
+	)
+	const details = requireValue(container.querySelector('details'))
+	requireValue(container.querySelector('button')).addEventListener('click', () => {
+		details.open = false
+	})
+	mounted = container
+	return { summary: requireValue(container.querySelector('summary')) }
+}
+
+function readDisclosure(context: DisclosureContext): DisclosureState {
+	return readStates(context.summary).includes('expanded') ? 'open' : 'closed'
 }
 
 const SCENARIOS: ReadonlyArray<StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>> =
 	[
 		{
-			transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
-			arrange(context, state) {
-				if (state === 'open') context.disclosure.show()
+			transition: {
+				name: 'closed opens through the summary',
+				from: 'closed',
+				event: 'toggle',
+				to: 'open',
 			},
-			act(context, event) {
-				if (event === 'show') context.disclosure.show()
-				else context.disclosure.hide()
+			async arrange(context, state) {
+				if (readDisclosure(context) !== state) await clickDisclosure('Advanced')
+			},
+			// The context is unused because a journey verb finds what a person reads rather than a
+			// node this row was handed.
+			async act(_context, event) {
+				if (event === 'toggle') await clickDisclosure('Advanced')
+				else await clickAccessible('Dismiss')
 			},
 			assert(context, state) {
-				expect(context.disclosure.state).toBe(state)
+				expect(readDisclosure(context)).toBe(state)
 			},
 		},
-		// One row per transition. Each row reuses the three phases shown earlier.
+		// One row per event in each state, and the same three phases serve every one of them:
+		// 'open closes through the summary', 'open closes through the button', and
+		// 'closed stays closed through the button' — the row whose event changes nothing.
 	]
 
 it('walks the disclosure statechart', async () => {
-	await executeScenarios(SCENARIOS, () => ({ disclosure: new Disclosure() }))
+	await executeScenarios(SCENARIOS, buildDisclosure)
 })
 ```
+
+Name each row for the door it drove. A table that names only the states reads as if one mechanism
+moved the entity, and the row that matters most here is the one where the button leaves the
+disclosure exactly as it found it — a name saying which control was pressed is what separates that
+row from the toggle rows beside it.
 
 Both unions are the entity's own vocabulary, so a row naming a state or an event the entity does not
 have fails to typecheck rather than at runtime. Each phase reads its subject from its own parameters
@@ -2055,18 +2143,23 @@ const MISMATCHED: ReadonlyArray<
 	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
 > = [
 	{
-		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
+		transition: {
+			name: 'the summary leaves it closed',
+			from: 'closed',
+			event: 'toggle',
+			to: 'closed',
+		},
 		// The same three phases. Nothing about the row is malformed; the `to` state is unreachable.
 	},
 ]
 
-await executeScenarios(MISMATCHED, () => ({ disclosure: new Disclosure() }))
-// Error: show leaves it closed: expected 'open' to be 'closed'
+await executeScenarios(MISMATCHED, buildDisclosure)
+// Error: the summary leaves it closed: expected 'open' to be 'closed'
 
 await executeScenarios(MISMATCHED, () => {
 	throw new Error('no fixture')
 })
-// Error: show leaves it closed: build refused
+// Error: the summary leaves it closed: build refused
 ```
 
 Whatever the phase threw arrives as that error's `cause`, by identity, so an assertion's own detail
@@ -2077,8 +2170,47 @@ never start.
 
 Drive one row on its own with `executeScenario`, which takes the context rather than building it.
 
-A harness that renders the same table in a browser publishes its progress through attributes, and
-`STATECHART_ATTRIBUTES` and `STATECHART_STATUSES` are the names a gate polls from outside the page.
+`createHarness` renders that same table in a browser and drives it row by row, publishing its
+progress through the attributes a gate outside the page polls. It takes the table, the builder, and
+one reader that reports the state the entity is in.
+
+```ts
+import { STATECHART_ATTRIBUTES } from '@orkestrel/test'
+import { createHarness } from '@orkestrel/test/browser'
+
+const harness = createHarness({
+	scenarios: SCENARIOS,
+	build: buildDisclosure,
+	state: readDisclosure,
+})
+
+harness.status // 'idle' — mounted, nothing run yet
+harness.total // 4
+
+await harness.execute()
+
+harness.status // 'passed'
+harness.passed // 4
+harness.failed // 0
+harness.failures // []
+
+// The object reads its own markup, so a gate polling the page and a test asserting on the object
+// cannot disagree.
+harness.root.getAttribute(STATECHART_ATTRIBUTES.status) // 'passed'
+harness.root.getAttribute(STATECHART_ATTRIBUTES.total) // '4'
+
+harness.destroy()
+```
+
+The harness writes the attributes onto its own markup: `status`, `passed`, `failed`, and `total` on
+its root, `scenario` and `result` on each row, `state` on the element rendering the entity's current
+state. A `role="status"` announcer narrates each step in a sentence beside them, so the page reads
+as a report rather than as a grid of attributes. A gate reads the root until `status` reads `passed`
+or `failed`, then reads the tally and names each row whose `result` reads `failed`. Neither side
+spells a `data-statechart-*` string of its own, so the two cannot drift apart.
+
+`STATECHART_ATTRIBUTES` and `STATECHART_STATUSES` publish those names and those readings, and
+`StatechartStatus` is the same set of readings as a named union.
 
 ```ts
 import { STATECHART_ATTRIBUTES, STATECHART_STATUSES } from '@orkestrel/test'
@@ -2086,15 +2218,19 @@ import { STATECHART_ATTRIBUTES, STATECHART_STATUSES } from '@orkestrel/test'
 STATECHART_ATTRIBUTES.status // 'data-statechart-status'
 STATECHART_ATTRIBUTES.scenario // 'data-statechart-scenario'
 
-STATECHART_STATUSES[0] // 'pending' — carried until a run has a result for every row
+STATECHART_STATUSES[0] // 'pending' — carried until every declared row has rendered
 STATECHART_STATUSES.includes('running') // true
 ```
 
-The harness writes the attributes onto its own markup: `status`, `passed`, `failed`, and `total` on
-its root, `scenario` and `result` on each row, `state` on the element rendering the entity's current
-state. A gate reads the root until `status` reads `passed` or `failed`, then reads the tally and
-names each row whose `result` reads `failed`. Neither side spells a `data-statechart-*` string of
-its own, so the two cannot drift apart.
+A run walks the tuple in the order it is written. `pending` covers construction, so a gate that
+reads it has found a harness whose rows never mounted; `idle` is a mounted harness with its tally at
+zero; `running` is a run in flight; and `passed` and `failed` are the pair a gate waits for rather
+than waiting a fixed duration.
+
+`execute` carries on past a failing row, which is where the harness parts company with
+`executeScenarios`: one run reports on the whole table rather than stopping at the first finding,
+and a builder that refuses fails its own row under the name that runner would have given it. Call
+`execute` again to re-run the same table from a fresh tally.
 
 ### Read a source inventory
 

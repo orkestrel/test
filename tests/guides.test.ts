@@ -3,12 +3,7 @@
 // package's own, as is the executed section that closes the file.
 
 import type { Duplex } from 'node:stream'
-import type {
-	EventSourceInterface,
-	RecorderInterface,
-	StateScenario,
-	invokeUnchecked,
-} from '@src/core'
+import type { EventSourceInterface, RecorderInterface, invokeUnchecked } from '@src/core'
 import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
 import { EventEmitter } from 'node:events'
@@ -145,71 +140,6 @@ function parseSchema(
 	return { name, fields: members }
 }
 
-// The "Drive a statechart table" fence drives a disclosure that is closed until something shows it.
-// This is that entity, in the fence's own shape.
-type DisclosureState = 'closed' | 'open'
-
-type DisclosureEvent = 'show' | 'hide'
-
-class Disclosure {
-	#state: DisclosureState = 'closed'
-
-	get state(): DisclosureState {
-		return this.#state
-	}
-
-	show(): void {
-		this.#state = 'open'
-	}
-
-	hide(): void {
-		this.#state = 'closed'
-	}
-}
-
-interface DisclosureContext {
-	readonly disclosure: Disclosure
-}
-
-function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
-	if (state === 'open') context.disclosure.show()
-}
-
-function actOnDisclosure(context: DisclosureContext, event: DisclosureEvent): void {
-	if (event === 'show') context.disclosure.show()
-	else context.disclosure.hide()
-}
-
-function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
-	if (context.disclosure.state !== state) {
-		throw new Error(`expected '${context.disclosure.state}' to be '${state}'`)
-	}
-}
-
-const DISCLOSURE_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
-// The failing-row fence's table: nothing about the row is malformed, and the `to` state the event
-// leaves the entity in is not the one the row names, so only `assert` can catch it.
-const MISMATCHED_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
 await new GuideCommand({
 	root: new URL('../', import.meta.url),
 	patterns: ['src/**/*.ts', 'tests/**/*.ts', 'guides/*.md', '*.md'],
@@ -230,7 +160,6 @@ await new GuideCommand({
 		createResourceFactory,
 		createSignal,
 		createTeardown,
-		executeScenarios,
 		flattenHeaders,
 		invokeUnchecked,
 		readProperty,
@@ -763,28 +692,11 @@ await new GuideCommand({
 			expect(JSON.stringify(serializeSchema(received))).toBe(wire)
 		})
 
-		// guides/test.md → Patterns → "Drive a statechart table".
-		it('walks the table and opens a failing row message with that row name', async () => {
-			await executeScenarios(DISCLOSURE_SCENARIOS, () => ({ disclosure: new Disclosure() }))
-
-			const thrown = await executeScenarios(MISMATCHED_SCENARIOS, () => ({
-				disclosure: new Disclosure(),
-			})).catch((error: unknown) => error)
-
-			const failure = requireValue(thrown instanceof Error ? thrown : undefined)
-			expect(
-				failure.message.startsWith("show leaves it closed: expected 'open' to be 'closed'"),
-			).toBe(true)
-			expect(failure.cause).toBeInstanceOf(Error)
-
-			const refused = await executeScenarios(MISMATCHED_SCENARIOS, () => {
-				throw new Error('no fixture')
-			}).catch((error: unknown) => error)
-
-			const refusal = requireValue(refused instanceof Error ? refused : undefined)
-			expect(refusal.message).toBe('show leaves it closed: build refused')
-			expect(refusal.cause).toBeInstanceOf(Error)
-
+		// guides/test.md → Patterns → "Drive a statechart table". The worked table and the harness
+		// fences beside it drive a real disclosure in a browser, and this project runs with the
+		// browser disabled, so their values are pinned in `tests/src/browser/factories.test.ts`. The
+		// attribute and status fence is this environment's own, and it carries here.
+		it('publishes the attribute names and the run order a gate outside the page reads', () => {
 			expect(STATECHART_ATTRIBUTES.status).toBe('data-statechart-status')
 			expect(STATECHART_ATTRIBUTES.scenario).toBe('data-statechart-scenario')
 			expect(STATECHART_STATUSES[0]).toBe('pending')

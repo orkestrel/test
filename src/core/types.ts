@@ -249,6 +249,23 @@ export interface JourneyVariant {
 }
 
 /**
+ * Names the run state a statechart harness publishes through its status attribute.
+ *
+ * @remarks
+ * Each arm is observable from the harness root alone, which is what lets a gate outside the page
+ * decide from the markup rather than from anything the harness tells it. `pending` is a harness
+ * whose inventory is incomplete: it is written at construction and replaced as soon as every
+ * declared row has rendered and the root carries the row count, so a gate that reads it has found a
+ * harness whose rows never mounted. `idle` is a mounted harness standing ready with nothing
+ * running. `running` is a run in flight. `passed` and `failed` are the two terminal readings, so a
+ * gate waits for membership in that pair rather than for a fixed duration.
+ *
+ * `STATECHART_STATUSES` lists the same arms in the order a run passes through them, so a gate that
+ * needs the values at runtime reads them from there rather than respelling the union.
+ */
+export type StatechartStatus = 'pending' | 'idle' | 'running' | 'passed' | 'failed'
+
+/**
  * Represents one row of a statechart table: the entity's state before an event, the event, and the
  * state that event must leave it in.
  *

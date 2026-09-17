@@ -1,4 +1,10 @@
-import type { JSONSafe, RecorderInterface, SignalRegistration, StateScenario } from '@src/core'
+import type {
+	JSONSafe,
+	RecorderInterface,
+	SignalRegistration,
+	StatechartStatus,
+	StateScenario,
+} from '@src/core'
 import {
 	buildRetryExhausted,
 	captureError,
@@ -18,6 +24,7 @@ import {
 	resolveRoot,
 	retryUntil,
 	roundTripJSON,
+	STATECHART_STATUSES,
 	waitForAbort,
 	waitForCondition,
 	waitForDelay,
@@ -1214,5 +1221,31 @@ describe('executeScenarios', () => {
 		expect(failure.cause).toBe(refusal)
 		expect(rows.calls).toStrictEqual([['closed opens on show']])
 		expect(trail.count).toBe(0)
+	})
+})
+
+describe('STATECHART_STATUSES', () => {
+	// The tuple and `StatechartStatus` are two spellings of one set, and either can be edited without
+	// the other. The type assertion fails the typecheck where they disagree in either direction; the
+	// record's keys come from the union and the comparison fails the run where a member is missing
+	// from one side; and the ordered literal fails where the run order is rewritten.
+	it('lists exactly the statuses the union names, in the order a run passes through', () => {
+		const named: Record<StatechartStatus, true> = {
+			pending: true,
+			idle: true,
+			running: true,
+			passed: true,
+			failed: true,
+		}
+
+		expectTypeOf<StatechartStatus>().toEqualTypeOf<(typeof STATECHART_STATUSES)[number]>()
+		expect([...STATECHART_STATUSES].sort()).toStrictEqual(Object.keys(named).sort())
+		expect([...STATECHART_STATUSES]).toStrictEqual([
+			'pending',
+			'idle',
+			'running',
+			'passed',
+			'failed',
+		])
 	})
 })

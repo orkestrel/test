@@ -1,4 +1,6 @@
 import type {
+	HarnessInterface,
+	HarnessOptions,
 	JournalInterface,
 	JournalStep,
 	PortfolioInterface,
@@ -6,8 +8,15 @@ import type {
 	StorageOptions,
 	WebStorageInterface,
 } from './types.js'
-import { isInteger } from '@orkestrel/contract'
-import { buildDenial, captureFrame, expandCaptures } from './helpers.js'
+import { isError, isInteger } from '@orkestrel/contract'
+import {
+	executeScenario,
+	requireValue,
+	STATECHART_ATTRIBUTES,
+	STATECHART_STATUSES,
+	waitForDelay,
+} from '@src/core'
+import { build, buildDenial, captureFrame, expandCaptures, mount } from './helpers.js'
 
 /**
  * Creates one real pointer event, ready to dispatch.
@@ -344,6 +353,156 @@ export function createStorage(options?: StorageOptions): WebStorageInterface {
 				room -= 1
 			}
 			values.set(key, value)
+		},
+	}
+}
+
+/**
+ * Creates a mounted statechart harness that renders one transition table and drives it row by row.
+ *
+ * @typeParam TState - The states the entity moves between.
+ * @typeParam TEvent - The events the entity accepts.
+ * @typeParam TContext - The fixture each row drives.
+ * @param options - The table, the fixture builder, the state reader, and the delay between rows.
+ * @returns The mounted harness, standing idle with its tally at zero.
+ * @throws An `Error` reading `Statechart harness mounted no transition` for an empty table, before
+ * anything reaches the document.
+ *
+ * @remarks
+ * A page cannot import this package, because the browser entry imports `vitest/browser` at module
+ * scope. So the harness is test-side: the suite mounts it, a gate outside the page polls the
+ * markup it renders, and `STATECHART_ATTRIBUTES` is the whole contract between the two. Nothing
+ * here spells a `data-statechart-*` string of its own, and neither does a gate.
+ *
+ * The markup is framework-free. The root carries `status` and the tally; a `role="status"`
+ * announcer narrates each step in a sentence; one element carries `state` and renders what the
+ * entity's own reader reports; and an ordered list carries one row per scenario, each labelled with
+ * its `from`, its `event`, and its `to` and marked with the transition's name. The `state` element
+ * mounts empty and takes its attribute from the first row that produces a context, because a state
+ * is read from an entity and no entity exists until a row builds one.
+ *
+ * Construction writes `pending`, mounts the root, renders every row, then writes the row count and
+ * `idle` — so a gate that reads `pending` has found a harness whose rows never mounted, and the
+ * order is observable from outside through the mutations the document records.
+ *
+ * `execute` clears every rendered result, writes `running`, and drives each row in order through
+ * {@link executeScenario} against a context of that row's own. It continues past a failing row, so
+ * one run reports on the whole table rather than stopping at the first finding, and a builder that
+ * throws counts as its row failing under the name `executeScenarios` gives it. A second `execute`
+ * runs the same table from a fresh tally.
+ *
+ * Every reading comes off the markup, so the object and the page cannot disagree, and `failures` is
+ * the `scenario` name of each row whose rendered `result` reads `failed` rather than a second list
+ * beside them.
+ *
+ * @example
+ * ```ts
+ * const harness = createHarness({ scenarios: SCENARIOS, build: buildDisclosure, state: readState })
+ * await harness.execute()
+ * harness.status // 'passed'
+ * harness.destroy()
+ * ```
+ */
+export function createHarness<TState extends string, TEvent extends string, TContext>(
+	options: HarnessOptions<TState, TEvent, TContext>,
+): HarnessInterface {
+	const scenarios = options.scenarios
+	if (scenarios.length === 0) throw new Error('Statechart harness mounted no transition')
+	const root = mount(build('div', { attributes: { [STATECHART_ATTRIBUTES.status]: 'pending' } }))
+	const announcer = build('p', { attributes: { role: 'status' } })
+	const state = build('p')
+	const rows = build('ol')
+	root.append(announcer, state, rows)
+	// Each row's element is kept beside the scenario it renders, so a run reaches its own row by
+	// identity rather than by an index into a live collection or by a name the table may repeat.
+	const table = scenarios.map((scenario) => ({
+		scenario,
+		element: build('li', {
+			text: `${scenario.transition.name}: ${scenario.transition.from} on ${scenario.transition.event} becomes ${scenario.transition.to}`,
+			attributes: { [STATECHART_ATTRIBUTES.scenario]: scenario.transition.name },
+		}),
+	}))
+	for (const row of table) rows.append(row.element)
+	root.setAttribute(STATECHART_ATTRIBUTES.total, String(table.length))
+	root.setAttribute(STATECHART_ATTRIBUTES.passed, '0')
+	root.setAttribute(STATECHART_ATTRIBUTES.failed, '0')
+	root.setAttribute(STATECHART_ATTRIBUTES.status, 'idle')
+	announcer.textContent = `Statechart harness is idle, 0 passed and 0 failed of ${table.length}.`
+	return {
+		root,
+		get status() {
+			const written = root.getAttribute(STATECHART_ATTRIBUTES.status)
+			return requireValue(
+				STATECHART_STATUSES.find((member) => member === written),
+				'Statechart harness carries no status',
+			)
+		},
+		get total() {
+			return Number(root.getAttribute(STATECHART_ATTRIBUTES.total))
+		},
+		get passed() {
+			return Number(root.getAttribute(STATECHART_ATTRIBUTES.passed))
+		},
+		get failed() {
+			return Number(root.getAttribute(STATECHART_ATTRIBUTES.failed))
+		},
+		get failures() {
+			const names: string[] = []
+			for (const row of table) {
+				if (row.element.getAttribute(STATECHART_ATTRIBUTES.result) !== 'failed') continue
+				const name = row.element.getAttribute(STATECHART_ATTRIBUTES.scenario)
+				if (name !== null) names.push(name)
+			}
+			return names
+		},
+		async execute() {
+			for (const row of table) row.element.removeAttribute(STATECHART_ATTRIBUTES.result)
+			let passed = 0
+			let failed = 0
+			root.setAttribute(STATECHART_ATTRIBUTES.passed, '0')
+			root.setAttribute(STATECHART_ATTRIBUTES.failed, '0')
+			root.setAttribute(STATECHART_ATTRIBUTES.status, 'running')
+			announcer.textContent = `Statechart harness is running, 0 passed and 0 failed of ${table.length}.`
+			for (const [index, row] of table.entries()) {
+				let context: TContext | undefined
+				let refusal: string | undefined
+				try {
+					context = await options.build(row.scenario)
+				} catch {
+					refusal = `${row.scenario.transition.name}: build refused`
+				}
+				if (context !== undefined) {
+					try {
+						await executeScenario(row.scenario, context)
+					} catch (cause) {
+						// `executeScenario` raises an `Error` for every failing phase, so anything else
+						// came from outside this contract and is the caller's to see unchanged.
+						if (!isError(cause)) throw cause
+						refusal = cause.message
+					}
+					const current = options.state(context)
+					state.setAttribute(STATECHART_ATTRIBUTES.state, current)
+					state.textContent = current
+				}
+				if (refusal === undefined) passed += 1
+				else failed += 1
+				row.element.setAttribute(
+					STATECHART_ATTRIBUTES.result,
+					refusal === undefined ? 'passed' : 'failed',
+				)
+				root.setAttribute(STATECHART_ATTRIBUTES.passed, String(passed))
+				root.setAttribute(STATECHART_ATTRIBUTES.failed, String(failed))
+				announcer.textContent = refusal ?? `${row.scenario.transition.name} passed.`
+				if (options.pause !== undefined && index < table.length - 1) {
+					await waitForDelay(options.pause)
+				}
+			}
+			const outcome = failed === 0 ? 'passed' : 'failed'
+			root.setAttribute(STATECHART_ATTRIBUTES.status, outcome)
+			announcer.textContent = `Statechart harness ${outcome}, ${passed} passed and ${failed} failed of ${table.length}.`
+		},
+		destroy() {
+			root.remove()
 		},
 	}
 }

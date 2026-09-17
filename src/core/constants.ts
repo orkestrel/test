@@ -10,7 +10,8 @@
  *
  * The values are the attribute names themselves, so a harness writes `setAttribute` against this map
  * and a gate writes `querySelector` against it, and neither spells a `data-statechart-*` string of
- * its own.
+ * its own. `createHarness` in the browser environment is the harness this package publishes, and it
+ * writes every one of these names from here.
  *
  * @example
  * ```ts
@@ -31,13 +32,15 @@ export const STATECHART_ATTRIBUTES = Object.freeze({
  * Lists every value a statechart harness reports through its `status` attribute.
  *
  * @remarks
- * `pending` is what a harness carries before a run has produced a result for every row, `idle` is a
- * harness standing ready with nothing running, and `running` is a run in flight. `passed` and
- * `failed` are the two terminal readings, so a gate waits for membership in that pair rather than
- * for a fixed duration.
+ * `pending` is what a harness carries while its inventory is incomplete: written at construction
+ * and replaced as soon as every declared row has rendered its `scenario` element and the root
+ * carries the row count. A gate that finds it has found a harness whose rows never mounted. `idle`
+ * is a mounted harness standing ready, its tally at zero and nothing running. `running` is a run in
+ * flight. `passed` and `failed` are the two terminal readings, so a gate waits for membership in
+ * that pair rather than for a fixed duration.
  *
- * The tuple's order is the order a run passes through, and its element type is the literal union, so
- * `(typeof STATECHART_STATUSES)[number]` is the status type a harness and its gate share.
+ * The tuple's order is the order a run passes through, and `StatechartStatus` is the same set as a
+ * named union, so a harness and its gate share one vocabulary whichever form each of them needs.
  *
  * @example
  * ```ts
