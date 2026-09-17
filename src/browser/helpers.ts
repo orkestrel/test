@@ -102,6 +102,43 @@ export function isRendered(element: Element): boolean {
 }
 
 /**
+ * Reads the element a pointer aimed at one element's bounding-box centre reaches.
+ *
+ * @param element - The element whose bounding-box centre is aimed at.
+ * @returns The element the document hit-tests at that point, or `undefined` where the point lands
+ * on nothing.
+ *
+ * @remarks
+ * A driver clicks an element's bounding-box centre, and so does a thumb aimed at the middle of what
+ * it sees. That point is not always on the element, and two arrangements take it away in ways
+ * {@link isReachable} cannot see: a sticky masthead covering a control that was scrolled to, and a
+ * wrapped inline target, whose per-line rectangles leave a gap the single bounding box spans and
+ * whose centre falls in that gap on the ancestor. `isReachable` reads `checkVisibility`, geometry,
+ * and the focus order, and each arrangement passes all three while the click misses.
+ *
+ * It returns the node rather than a verdict, because the node is the diagnosis: a caller rules on
+ * reachability with `element.contains(hit)` and names the cover from what came back — the list item
+ * rather than the link, the masthead rather than the control. Read `undefined` as the centre
+ * hitting nothing at all, which is also what a centre outside the viewport reads as; measure that
+ * question with {@link isOutsideViewport} instead.
+ *
+ * @example
+ * ```ts
+ * const link = requireValue(container.querySelector('a'))
+ * const hit = readHit(link)
+ * link.contains(hit) // false for a wrapped link whose centre sits between its line boxes
+ * ```
+ */
+export function readHit(element: Element): Element | undefined {
+	const rectangle = element.getBoundingClientRect()
+	const hit = element.ownerDocument.elementFromPoint(
+		rectangle.left + rectangle.width / 2,
+		rectangle.top + rectangle.height / 2,
+	)
+	return hit ?? undefined
+}
+
+/**
  * Computes the pattern that matches one accessible name a decorative glyph may sit beside.
  *
  * @param name - The exact accessible name a person reads, whitespace runs collapsed on the way in.

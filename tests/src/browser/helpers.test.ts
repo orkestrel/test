@@ -38,6 +38,7 @@ import {
 	readContrast,
 	readFocus,
 	readFrame,
+	readHit,
 	readLayers,
 	readName,
 	readPage,
@@ -446,6 +447,68 @@ describe('isRendered', () => {
 		expect(() => resolveRendered('Skip to content')).toThrow(
 			'Interactive target "Skip to content" is not visible and focus-reachable',
 		)
+	})
+})
+
+describe('readHit', () => {
+	it('names the element itself when its own centre is what a pointer reaches', () => {
+		const container = buildFixture(
+			'<div style="position: fixed; top: 120px; left: 120px">' +
+				'<button type="button" style="width: 160px; height: 40px">Open</button>' +
+				'</div>',
+		)
+		const target = requireValue(container.querySelector('button'))
+		const hit = readHit(target)
+		expect(hit).toBe(target)
+		expect(target.contains(requireValue(hit))).toBe(true)
+	})
+
+	it('names the cover a reachable control sits under', () => {
+		const container = buildFixture(
+			'<div style="position: fixed; top: 120px; left: 120px">' +
+				'<button type="button" style="width: 160px; height: 40px">Open</button>' +
+				'<div id="masthead" style="position: absolute; top: 0; left: 0; width: 160px; height: 40px"></div>' +
+				'</div>',
+		)
+		const target = requireValue(container.querySelector('button'))
+		const hit = requireValue(readHit(target))
+		expect(hit.id).toBe('masthead')
+		expect(target.contains(hit)).toBe(false)
+		// The cover is the whole reason this reader exists: the control is connected, visible, laid
+		// out, and in the focus order, so the reachability filter accepts it while the click misses.
+		expect(isReachable(target)).toBe(true)
+	})
+
+	// A wrapped inline box paints one rectangle per line with a gap between them and spans a single
+	// bounding box across both, so the box centre falls in that gap. The wrap is real soft wrapping:
+	// the container is 7ch wide in the same monospace font the text is set in, which fits `alpha` and
+	// refuses `alpha beta`, so exactly two line boxes form whatever font the host resolves. The
+	// 60px line height is what opens the gap wide enough that no font metric closes it.
+	it('names the ancestor under a wrapped inline target whose centre falls between its lines', () => {
+		const container = buildFixture(
+			'<ul style="position: fixed; top: 120px; left: 120px; margin: 0; padding: 0; list-style: none">' +
+				'<li id="entry" style="font: 16px/60px monospace; width: 7ch">' +
+				'<a href="#field">alpha beta</a>' +
+				'</li></ul>',
+		)
+		const target = requireValue(container.querySelector('a'))
+		const rectangles = target.getClientRects()
+		expect(rectangles.length).toBe(2)
+		expect(requireValue(rectangles[1]).top - requireValue(rectangles[0]).bottom).toBeGreaterThan(0)
+		const hit = requireValue(readHit(target))
+		expect(hit.id).toBe('entry')
+		expect(target.contains(hit)).toBe(false)
+		expect(isReachable(target)).toBe(true)
+	})
+
+	it('reports nothing for a centre that lands outside the viewport', () => {
+		const container = buildFixture(
+			'<button type="button" style="position: fixed; top: 120px; left: -400px; width: 200px; height: 40px">' +
+				'Open</button>',
+		)
+		const target = requireValue(container.querySelector('button'))
+		expect(isOutsideViewport(target.getBoundingClientRect())).toBe(true)
+		expect(readHit(target)).toBeUndefined()
 	})
 })
 

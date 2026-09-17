@@ -218,15 +218,15 @@ The fixture builders, the readers, and the field writers do take an element, and
 journey verb. `build` creates a node, `mount` attaches one, and `render` does both from
 markup or from a tag and its classes; `clearStorage` takes nothing at all, and `removeDatabase`
 takes a database name. The predicates, the element readers, and the describers name a node the
-caller already has — `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`,
-`describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`, `readToken`,
-`readPixels`, `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each reads that
-node rather than acting on a target it was handed. `captureFrame` and `place` take an element as
-well, and photographing one is a reading too: neither moves focus, dispatches an event, or changes
-what the element renders. `typeInput` and `commitInput` are the exception, and it stays narrow: they
-write into the field they are given, as the synthetic counterpart of `typeAccessible` for a
-component that listens for `input`. The color leaves, the cascade readers, the pane verbs, and the
-whole-document readers take a value or nothing at all, so they name no target either.
+caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`, `readName`,
+`readStates`, `describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`,
+`readToken`, `readPixels`, `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each
+reads that node rather than acting on a target it was handed. `captureFrame` and `place` take an
+element as well, and photographing one is a reading too: neither moves focus, dispatches an event,
+or changes what the element renders. `typeInput` and `commitInput` are the exception, and it stays
+narrow: they write into the field they are given, as the synthetic counterpart of `typeAccessible`
+for a component that listens for `input`. The color leaves, the cascade readers, the pane verbs,
+and the whole-document readers take a value or nothing at all, so they name no target either.
 
 #### Types
 
@@ -272,6 +272,7 @@ A `Shape` cell holds the constant's declared type.
 | `isOutsideViewport`     | function | `(rectangle: DOMRectReadOnly) => boolean`                                                               | Determines whether a rectangle lies wholly outside the browser viewport.                                                                                                                    |
 | `isRendered`            | function | `(element: Element) => boolean`                                                                         | Determines whether the accessibility tree presents one element at all.                                                                                                                      |
 | `isReachable`           | function | `(element: Element) => boolean`                                                                         | Determines whether a person can click one element where it sits.                                                                                                                            |
+| `readHit`               | function | `(element: Element) => Element \| undefined`                                                            | Reads the element a pointer aimed at one element's bounding-box centre reaches.                                                                                                             |
 | `clickAccessible`       | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                     | Clicks one visible, focus-reachable control by its accessible name through the browser provider.                                                                                            |
 | `clickAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<void>`                                         | Clicks one human-reachable control by role and accessible-name text inside a named region.                                                                                                  |
 | `clickDisclosure`       | function | `(name: string) => Promise<void>`                                                                       | Opens or closes one native details disclosure by its rendered summary.                                                                                                                      |
@@ -1185,24 +1186,24 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     into a description of the markup. `build` creates a node, `mount` attaches one, `render` does
     both, `clearStorage` takes nothing at all, and `removeDatabase` takes a database name. The
     predicates, the element readers, and the describers do take a node —
-    `isRendered`, `isReachable`, `readText`, `readRole`, `readName`, `readStates`, `describeTree`,
-    `describeFocus`, `extractOrphans`, `readRows`, `readStyle`, `readToken`, `readPixels`,
-    `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each is a reader of a node
-    the caller already has rather than a verb that acts on a target. `captureFrame` and `place` take
-    one as the subject of a photograph, which is a reading too: neither moves focus, dispatches an
-    event, nor changes what the element renders. `typeInput` and `commitInput` are the one pair that
-    acts on the element it is handed, and the exception is deliberately narrow: they are the
-    synthetic counterpart of `typeAccessible`, for a component that listens for `input` and a test
-    that already holds the field. Drive the field by name wherever the keystrokes are part of what
-    the journey claims. `readRing` is the case that makes the split explicit. It measures the focus
-    chrome a browser painted and never brings the focus about, so a journey reaches the control
-    through `traverseAccessible` or `userEvent.keyboard` from `vitest/browser` and then measures what
-    landed. The whole environment imports `vitest/browser` and DOM globals and nothing else — no
-    `src/core` import, no framework, no `node:*`, and no `import.meta.env`, so whether a run writes
-    captures is the consumer's decision through `PortfolioOptions.enabled` rather than an environment
-    variable this package reads. `vitest` is a peer dependency, so the provider the layer drives is
-    the one the consumer already installed, and the zero-runtime-dependencies contract's empty
-    `dependencies` is untouched.
+    `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`, `readName`, `readStates`,
+    `describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`, `readToken`,
+    `readPixels`, `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and each is a
+    reader of a node the caller already has rather than a verb that acts on a target. `captureFrame`
+    and `place` take one as the subject of a photograph, which is a reading too: neither moves
+    focus, dispatches an event, nor changes what the element renders. `typeInput` and `commitInput`
+    are the one pair that acts on the element it is handed, and the exception is deliberately
+    narrow: they are the synthetic counterpart of `typeAccessible`, for a component that listens for
+    `input` and a test that already holds the field. Drive the field by name wherever the keystrokes
+    are part of what the journey claims. `readRing` is the case that makes the split explicit. It
+    measures the focus chrome a browser painted and never brings the focus about, so a journey
+    reaches the control through `traverseAccessible` or `userEvent.keyboard` from `vitest/browser`
+    and then measures what landed. The whole environment imports `vitest/browser` and DOM globals
+    and nothing else — no `src/core` import, no framework, no `node:*`, and no `import.meta.env`, so
+    whether a run writes captures is the consumer's decision through `PortfolioOptions.enabled`
+    rather than an environment variable this package reads. `vitest` is a peer dependency, so the
+    provider the layer drives is the one the consumer already installed, and the
+    zero-runtime-dependencies contract's empty `dependencies` is untouched.
 14. **The wait family polls only where nothing publishes an event.** The no-polling architecture law
     governs a product's idle wakeup: a running system parks on the event or the abort signal that
     fires. A test instrument is the other case. It waits on a fact another process produces — a file
@@ -2780,6 +2781,9 @@ Each entry names the contracts its file proves. The test names carry the cases.
   document no longer holds, a focusable SVG against an element from a foreign namespace, and the
   refused summary that proves it is the one filter the acting verbs apply; `isRendered` takes each
   removal a browser honours and, as the split from `isReachable`, a zero-size announced control.
+  `readHit` takes a centre that reaches the element itself, a reachable control under a cover that
+  the reading names instead, a soft-wrapped inline target whose two line rectangles leave the box
+  centre on its list item, and a control fixed outside the viewport, whose centre reaches nothing.
   Each acting verb takes its happy path and every voice it owns, including both
   region-scoped refusals and both native-disclosure ones; `clickAccessibleWithin` also takes a
   glyph-captioned control inside a region a glyph-carrying heading labels, which is the loose match
