@@ -258,7 +258,9 @@ export interface JourneyVariant {
  * declared row has rendered and the root carries the row count, so a gate that reads it has found a
  * harness whose rows never mounted. `idle` is a mounted harness standing ready with nothing
  * running. `running` is a run in flight. `passed` and `failed` are the two terminal readings, so a
- * gate waits for membership in that pair rather than for a fixed duration.
+ * gate waits for membership in that pair rather than for a fixed duration. An exceptional exit is
+ * terminal too: a harness whose `state` reader throws writes `failed` and then rejects the run, so
+ * the gate reads a terminal pair while the suite reads the throw.
  *
  * `STATECHART_STATUSES` lists the same arms in the order a run passes through them, so a gate that
  * needs the values at runtime reads them from there rather than respelling the union.

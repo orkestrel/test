@@ -88,6 +88,29 @@ export function buildRetryExhausted(
 }
 
 /**
+ * Builds the error a refused fixture build raises, named for the row it was building for.
+ *
+ * @param name - The row's name, which opens the message.
+ * @param cause - The value the builder refused with, which becomes the returned error's `cause`.
+ * @returns The refusal, unthrown.
+ * @remarks {@link executeScenarios} raises this one, and `createHarness` in the browser environment
+ * announces its `message` on the row it refused, so the runner and the harness name a refused build
+ * with one sentence rather than two spellings of it. The refusal arrives as the `cause` by identity,
+ * so its own message and stack survive the naming.
+ *
+ * @example
+ * ```ts
+ * import { buildRefusal } from '@orkestrel/test'
+ *
+ * buildRefusal('closed opens through the summary', new Error('no fixture')).message
+ * // 'closed opens through the summary: build refused'
+ * ```
+ */
+export function buildRefusal(name: string, cause: unknown): Error {
+	return new Error(`${name}: build refused`, { cause })
+}
+
+/**
  * Drops the registration an instrumented signal installed for one listener.
  *
  * @param registrations - The live registration list, spliced in place.
@@ -194,7 +217,8 @@ export async function waitForCondition(
  * @param options - The time bounds, the abort signal, the exactness switch, and the departure.
  * @returns The first reading that satisfies the expectation.
  * @throws The reader's thrown value, the abort reason, or an `Error` when `text` or `absent` is
- * empty, a bound is invalid, or the expectation is not met within the budget.
+ * empty, `text` carries `absent`, a bound is invalid, or the expectation is not met within the
+ * budget.
  * @remarks
  * The reading is a parameter rather than a target this resolves, so the same wait serves a whole
  * page, one named region, and a value a host-independent test computes. Scope it as narrowly as the
@@ -207,6 +231,11 @@ export async function waitForCondition(
  * An empty expectation is refused rather than satisfied by the first reading, because every string
  * contains the empty string and every reading equals it only when the screen is blank.
  *
+ * A departure the expectation itself carries is refused the same way, before any reading. A reading
+ * that satisfies the arrival carries the departure too — under `exact` it equals `text` and without
+ * it contains `text` — so no reading can ever satisfy the poll and the wait would spend its whole
+ * budget on a contradiction in the call.
+ *
  * @example
  * ```ts
  * import { waitForText } from '@orkestrel/test'
@@ -215,6 +244,9 @@ export async function waitForCondition(
  *
  * // Throws Error: Text expectation must not be empty
  * await waitForText('anything', () => panel.innerText, '')
+ *
+ * // Throws Error: Text departure must not appear in the text expectation
+ * await waitForText('anything', () => panel.innerText, 'Two entries', { absent: 'entries' })
  * ```
  */
 export async function waitForText(
@@ -227,6 +259,9 @@ export async function waitForText(
 	const absent = options?.absent
 	if (absent !== undefined && absent.length === 0) {
 		throw new Error('Text expectation must not be empty')
+	}
+	if (absent !== undefined && text.includes(absent)) {
+		throw new Error('Text departure must not appear in the text expectation')
 	}
 	const exact = options?.exact ?? false
 	let reading = ''
@@ -628,17 +663,16 @@ export async function executeScenario<TState extends string, TEvent extends stri
  * @param scenarios - The table to drive, in the order it is written.
  * @param build - The fixture builder, called once per row and awaited when it returns a promise.
  * @returns A promise that resolves after the last row completes.
- * @throws An `Error` reading `<name>: build refused` when the row's builder throws or rejects, whose
- * `cause` is the value the builder refused with, or whatever {@link executeScenario} throws for the
- * first row whose phases fail. Either way the run stops at that row and the rows after it never
- * start.
+ * @throws {@link buildRefusal}'s `Error` reading `<name>: build refused` when the row's builder
+ * throws or rejects, or whatever {@link executeScenario} throws for the first row whose phases
+ * fail. Either way the run stops at that row and the rows after it never start.
  * @remarks The rows run one after another rather than together: a statechart's rows drive one
  * entity on one page, so a parallel run would have them arranging over each other. `build` receives
  * the row it is building for, which is what lets one table mix fixtures.
  *
  * A refusing builder is named for its row the way a failing phase is, because a table's rows build
- * under one test name too. The refusal itself arrives as the `cause`, by identity, so its own
- * message and stack survive the naming.
+ * under one test name too. `buildRefusal` owns that sentence, so the harness the browser
+ * environment publishes announces the same one rather than a second spelling of it.
  *
  * @example
  * ```ts
@@ -654,7 +688,7 @@ export async function executeScenarios<TState extends string, TEvent extends str
 		try {
 			context = await build(scenario)
 		} catch (cause) {
-			throw new Error(`${scenario.transition.name}: build refused`, { cause })
+			throw buildRefusal(scenario.transition.name, cause)
 		}
 		await executeScenario(scenario, context)
 	}

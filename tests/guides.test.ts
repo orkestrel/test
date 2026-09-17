@@ -151,6 +151,7 @@ await new GuideCommand({
 }).execute(async ({ files, report, rows }) => {
 	const { computeSymbolKey, findMissing, findMissingSymbols } = await import('@orkestrel/guide')
 	const {
+		buildRefusal,
 		captureError,
 		collect,
 		collectStream,
@@ -206,6 +207,30 @@ await new GuideCommand({
 	// so the shared command reads and compares it through the package manifest.
 	it('opens the README with the guide tagline', () => {
 		expect(report.pitch).toEqual([])
+	})
+
+	// T3-C9. A presence guard, not a behavioural one: the dependency reach itself is proved by the
+	// browser barrel case in `tests/src/browser/helpers.test.ts` and by the scoped typechecks, and
+	// this asserts only that the README says what Contract rule 13 says. The README is what a
+	// consumer receives — `package.json` ships `dist/src` and this file and no guide — so a sentence
+	// that went stale here is the one nobody reads the correction of.
+	it('names the browser environment imports in the README as the contract names them', () => {
+		// Whitespace runs collapse first, because where a sentence wraps is the file's own decision
+		// rather than part of the claim.
+		const readme = requireValue(files['README.md'], 'Missing README: README.md').replaceAll(
+			/\s+/gu,
+			' ',
+		)
+
+		expect(readme).toContain(
+			"imports `vitest/browser`, DOM globals, this package's own core, and the" +
+				' `@orkestrel/contract` guards it narrows with',
+		)
+		expect(readme).toContain(
+			'runtime-depends on `@orkestrel/contract` for the outcome type `retryUntil` reads' +
+				' internally and for the guards every environment narrows with',
+		)
+		expect(readme).not.toContain('DOM globals and nothing else')
 	})
 
 	for (const { entry, guide, source } of rows) {
@@ -701,6 +726,15 @@ await new GuideCommand({
 			expect(STATECHART_ATTRIBUTES.scenario).toBe('data-statechart-scenario')
 			expect(STATECHART_STATUSES[0]).toBe('pending')
 			expect(STATECHART_STATUSES.includes('running')).toBe(true)
+		})
+
+		// guides/test.md → Patterns → "Drive a statechart table". The refusal fence is
+		// host-independent, so it carries here rather than in the browser suite beside the two that
+		// drive a document.
+		it('names a refused build in the sentence the runner and the harness share', () => {
+			expect(buildRefusal('the summary leaves it closed', new Error('no fixture')).message).toBe(
+				'the summary leaves it closed: build refused',
+			)
 		})
 
 		// guides/test.md → Patterns → "Read a source inventory". The root is this workspace, as the

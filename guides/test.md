@@ -153,7 +153,9 @@ state. `pending` is what a harness carries while its inventory is incomplete —
 declared row has rendered and the root carries the row count — so a gate that reads it has found
 a harness whose rows never mounted. `idle` is a mounted harness with its tally at zero, `running`
 is a run in flight, and `passed` and `failed` are the pair a gate waits for rather than waiting a
-fixed duration. `StatechartStatus` is the same set of readings as a named union.
+fixed duration. An exceptional exit is terminal too: a harness whose `state` reader throws writes
+`failed` and then rejects the run, so the gate reads a terminal pair while the suite reads the
+throw. `StatechartStatus` is the same set of readings as a named union.
 
 #### Validators
 
@@ -183,6 +185,7 @@ instead of propagating.
 | `waitForText`         | function | `(description, read, text, options?) => Promise<string>`                              | Waits until a reading of text carries an expected sentence.                                                                                 |
 | `checkBounds`         | function | `(subject: string, budget: number, interval: number) => void`                         | Checks the resolved bounds one bounded wait runs under.                                                                                     |
 | `buildRetryExhausted` | function | `(description, budget, elapsed, last, cause) => Error`                                | Builds the error `retryUntil` raises when its elapsed-time budget runs out.                                                                 |
+| `buildRefusal`        | function | `(name: string, cause: unknown) => Error`                                             | Builds the error a refused fixture build raises, named for the row it was building for.                                                     |
 | `dropRegistration`    | function | `(registrations: SignalRegistration[], installed) => SignalRegistration \| undefined` | Drops the registration an instrumented signal installed for one listener.                                                                   |
 | `decodeJSONLines`     | function | `(text: string) => readonly unknown[]`                                                | Decodes newline-delimited JSON values.                                                                                                      |
 | `waitForDelay`        | function | `(ms?: number) => Promise<void>`                                                      | Waits for a host timer to elapse.                                                                                                           |
@@ -873,21 +876,27 @@ earlier [Surface](#surface) rows.
 | `permit` | `void`  | Grants the reads and the writes the host withheld, and replenishes no quota. |
 
 The rest of the surface is the platform's: `length`, `key`, `getItem`, `setItem`, `removeItem`, and
-`clear` are declared by the host `Storage` interface this one extends, so a store created here goes
-wherever a real one goes.
+`clear` are declared by the host `Storage` interface this one extends. A store created here answers
+through those methods and intercepts no named-property access, so drive a consumer under test
+through `getItem` and `setItem`;
+[Bounds a shipped helper carries](#bounds-a-shipped-helper-carries) states what the property form
+reads instead.
 
 #### `HarnessInterface`
 
-| Method    | Returns         | Summary                                                                |
-| --------- | --------------- | ---------------------------------------------------------------------- |
-| `execute` | `Promise<void>` | Drives every row in table order, from a fresh tally.                   |
-| `destroy` | `void`          | Removes the mounted root, and does nothing when it is already removed. |
+| Method    | Returns         | Summary                                                                  |
+| --------- | --------------- | ------------------------------------------------------------------------ |
+| `execute` | `Promise<void>` | Drives every row in table order, from a fresh tally and a cleared state. |
+| `destroy` | `void`          | Removes the mounted root, and does nothing when it is already removed.   |
 
 `execute` drives the table the harness was constructed with, so a second call re-runs the same rows.
-It clears every rendered `result` and puts the tally back to zero before the first row starts, and
-that reset is readable while the run is in flight: a harness mid-re-run reports nothing passed and
-nothing failed rather than the numbers the run before it left. `destroy` takes the root out of the
-document and leaves the element itself intact, so the tally a finished run published is still
+It clears every rendered `result`, the rendered `state`, and the tally before the first row starts,
+and that reset is readable while the run is in flight: a harness mid-re-run reports nothing passed,
+nothing failed, and no state rather than what the run before it left. Every exit writes a terminal
+status, because the gate polling the markup has no rejection channel to read: a run that completes
+writes `passed` or `failed`, and a run a `state` reader ends writes `failed` and then rejects with
+that reader's value by identity, without counting the row as failed. `destroy` takes the root out of
+the document and leaves the element itself intact, so the tally a finished run published is still
 readable from the object afterwards.
 
 #### `ScratchInterface`
@@ -1310,7 +1319,15 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     budget measured with `performance.now()`. Where an event does exist, `waitForEvent` is the door:
     it parks on the subscription, validates the interval for consistency with the family and never
     uses it, and invokes the cleanup the subscriber returned on timeout, on abort, and on delivery
-    alike. `waitForCondition`, `retryUntil`, and `waitForEvent` each name what they are waiting for,
+    alike. `waitForAnimations` is the browser environment's parking door, on the same terms: it parks
+    on each animation's own `finished` promise and validates the interval for consistency with the
+    family without ever using it. `waitForText` polls, because a reading of text publishes no event,
+    and it refuses two calls no reading could ever satisfy before it takes one: an empty `text` or
+    an empty `absent` with `Text expectation must not be empty`, because every string contains the
+    empty string, and a `text` that carries `absent` with
+    `Text departure must not appear in the text expectation`, because a reading that satisfies the
+    arrival carries the departure too — under `exact` it equals `text` and without it contains
+    `text`. `waitForCondition`, `retryUntil`, and `waitForEvent` each name what they are waiting for,
     and that description is what the timeout message carries — a wait nobody described times out
     saying nothing about what failed. Every bound is validated finite and non-negative before
     anything is read, a budget of `0` still permits the immediate first reading, and an abort rejects
@@ -1400,9 +1417,13 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     object publishes comes off that markup rather than out of a field beside it: `status`,
     `total`, `passed`, and `failed` read the root's attributes and `failures` reads the name of
     each row whose rendered `result` reads `failed`, so a test asserting on the object and a gate
-    polling the page cannot report different things. The gate stays outside this package: the
-    harness carries its own tally, so nothing here reads a harness back, and no page is generated
-    or published to host one.
+    polling the page cannot report different things. That gate has no rejection channel, so every
+    exit writes a terminal status: a completed run writes `passed` or `failed`, and a run that a
+    `state` reader or a non-`Error` phase throw ends writes `failed` and then rejects with that
+    value by identity, leaving the row it was reading uncounted. A run that rejected while the root
+    still read `running` would strand the gate on a reading the harness never leaves. The gate stays
+    outside this package: the harness carries its own tally, so nothing here reads a harness back,
+    and no page is generated or published to host one.
 
 ### Threat model
 
@@ -1505,7 +1526,7 @@ or when a consumer appears the ruling did not consider.
 | An announced-state wait — `waitForState`                                                         | Ships   | It ships as `waitForState`. The fleet's browser suites poll a framework's own class names to decide a menu has finished opening, which reads a stylesheet's vocabulary and goes stale when the framework renames it. This waits on what the control announces, resolves the control afresh on every reading so a re-rendered node is still the subject, and returns the states at resolution so an assertion has them. Where a surface announces nothing, the finding is the surface's: the replacement is an `aria-expanded` on the trigger rather than a helper that reads classes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | An animation wait — `waitForAnimations`                                                          | Ships   | It ships as `waitForAnimations`. The fleet hand-rolled the same loop over `getAnimations` in more than one workspace, and a contrast or color reading taken while paint is moving reports an interpolated frame no state of the interface paints. It parks on each animation's own `finished` promise rather than polling, re-reads after each completion so an animation a finishing one starts is waited on, and excludes an animation declaring infinite iterations — a spinner that runs forever is a finding about the reading rather than a wait to lengthen.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | A refusal reader — `readRefusal`                                                                 | Ships   | It ships as `readRefusal`. `captureError` is the bar it has to clear and it does: this fixes the resolver rather than taking any thunk, translates the `unknown` a capture hands back into `string \| undefined`, and rethrows what is not an `Error` instead of returning it as a message. A journey asserting that a control is gated rather than absent compares the exact sentence, and `roughnotes` writes that same capture inline wherever it asserts on a refusal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| A storage fixture — `createStorage`                                                              | Ships   | It ships as `createStorage`, returning `WebStorageInterface`. A consumer declared a class bounding writes and a class withholding permission, and each is the same inert store under different options. It is a real `Storage` backed by a map of its own rather than a shaped object, it patches neither browser surface, and `permit` grants what the host withheld. A stalled read was refused with it: `Storage` is synchronous, so a stall is not expressible against the interface a consumer codes to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| A storage fixture — `createStorage`                                                              | Ships   | It ships as `createStorage`, returning `WebStorageInterface`. A consumer declared a class bounding writes and a class withholding permission, and each is the same inert store under different options. It is a real `Storage` backed by a map of its own, it patches neither browser surface, and `permit` grants what the host withheld. A stalled read was refused with it: `Storage` is synchronous, so a stall is not expressible against the interface a consumer codes to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | An authored-class census — `readCensus`                                                          | Ships   | It ships as `readCensus`. `readClasses` differenced against `readCascade` is the check, and every workspace writes that difference the same way; what each of them omits is the population, so a walk that read nothing reports the same empty difference as markup whose every class the cascade declares. Reporting `elements` beside `undeclared` and refusing an empty walk is the invariant this adds over the two readings it composes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Control fixture builders — `buildContrast`, `buildEscapes`, `buildCensus`                        | Ships   | Each ships. An instrument is not evidence until its control has failed, and a consumer's contrast, style-escape, and census readings each ran against fixtures that could not fail them: every other fixture painted its own opaque background, so the compositing walk never ran; the escape reading was fed an inline attribute and never a `<style>` element; and the census was fed an HTML token and never the SVG one whose class list is no string. Each builder is parameterized by what the policy owns — the bar, the exempt id — and returns detached nodes, so the caller decides where they are read and nothing is mounted for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | A stalled-read store                                                                             | Refused | A store whose reads hang is not expressible against the interface a consumer codes to: `Storage` is synchronous, so `getItem` either answers or throws and there is no point at which a caller awaits it. A test that needs a hanging read needs an asynchronous surface, which is a different subject from the Web Storage one `createStorage` stands in for.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -1555,6 +1576,12 @@ the helper rather than to the host, and each names what to reach for instead.
   key reads `undefined` at runtime under a non-optional type and `isRecorderMapComplete` still reports
   `true`, because it checks the events it was given rather than the type it was keyed by. Pass a
   literal array or a tuple, so the element type is exactly what was listed.
+- **`createStorage` answers through its methods and intercepts no named-property access.** The store
+  is a real `Storage`, and `Storage` declares an index signature, so `store.theme` typechecks with no
+  cast and reads `undefined` while `getItem('theme')` answers. A property write lands on the object
+  rather than in the store, so it consumes no quota, meets no withheld permission, and is invisible
+  to every read. Drive the code under test through `getItem` and `setItem`, which is where the seed,
+  the quota, and the grant are.
 - **`readProperty`'s `TypeError` names the target, never the read.** It refuses a target that is
   neither an object nor a function before it reads anything, and a getter that throws on an accepted
   target hands that throw straight to the caller. Wrap the call in `captureError` where a hostile
@@ -2057,6 +2084,10 @@ its one event always flips. Every value these fences claim is pinned in
 `tests/src/browser/factories.test.ts`, because the fences drive a browser and the `guides` project
 runs with the browser disabled.
 
+The phases are module functions the whole table shares, which is the shape a table of any size
+wants: each phase reads its subject from its own parameters rather than from the row it belongs to,
+so one set of three serves every row.
+
 ```ts
 import type { StateScenario } from '@orkestrel/test'
 import { executeScenarios, requireValue } from '@orkestrel/test'
@@ -2091,6 +2122,24 @@ function readDisclosure(context: DisclosureContext): DisclosureState {
 	return readStates(context.summary).includes('expanded') ? 'open' : 'closed'
 }
 
+async function arrangeDisclosure(
+	context: DisclosureContext,
+	state: DisclosureState,
+): Promise<void> {
+	if (readDisclosure(context) !== state) await clickDisclosure('Advanced')
+}
+
+// The context is unused because a journey verb finds what a person reads rather than a node this
+// row was handed.
+async function actOnDisclosure(_context: DisclosureContext, event: DisclosureEvent): Promise<void> {
+	if (event === 'toggle') await clickDisclosure('Advanced')
+	else await clickAccessible('Dismiss')
+}
+
+function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	expect(readDisclosure(context)).toBe(state)
+}
+
 const SCENARIOS: ReadonlyArray<StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>> =
 	[
 		{
@@ -2100,22 +2149,44 @@ const SCENARIOS: ReadonlyArray<StateScenario<DisclosureState, DisclosureEvent, D
 				event: 'toggle',
 				to: 'open',
 			},
-			async arrange(context, state) {
-				if (readDisclosure(context) !== state) await clickDisclosure('Advanced')
-			},
-			// The context is unused because a journey verb finds what a person reads rather than a
-			// node this row was handed.
-			async act(_context, event) {
-				if (event === 'toggle') await clickDisclosure('Advanced')
-				else await clickAccessible('Dismiss')
-			},
-			assert(context, state) {
-				expect(readDisclosure(context)).toBe(state)
-			},
+			arrange: arrangeDisclosure,
+			act: actOnDisclosure,
+			assert: assertDisclosure,
 		},
-		// One row per event in each state, and the same three phases serve every one of them:
-		// 'open closes through the summary', 'open closes through the button', and
-		// 'closed stays closed through the button' — the row whose event changes nothing.
+		{
+			transition: {
+				name: 'open closes through the summary',
+				from: 'open',
+				event: 'toggle',
+				to: 'closed',
+			},
+			arrange: arrangeDisclosure,
+			act: actOnDisclosure,
+			assert: assertDisclosure,
+		},
+		{
+			transition: {
+				name: 'open closes through the button',
+				from: 'open',
+				event: 'dismiss',
+				to: 'closed',
+			},
+			arrange: arrangeDisclosure,
+			act: actOnDisclosure,
+			assert: assertDisclosure,
+		},
+		{
+			// The row whose event leaves the state where it found it.
+			transition: {
+				name: 'closed stays closed through the button',
+				from: 'closed',
+				event: 'dismiss',
+				to: 'closed',
+			},
+			arrange: arrangeDisclosure,
+			act: actOnDisclosure,
+			assert: assertDisclosure,
+		},
 	]
 
 it('walks the disclosure statechart', async () => {
@@ -2129,8 +2200,7 @@ disclosure exactly as it found it — a name saying which control was pressed is
 row from the toggle rows beside it.
 
 Both unions are the entity's own vocabulary, so a row naming a state or an event the entity does not
-have fails to typecheck rather than at runtime. Each phase reads its subject from its own parameters
-rather than from the row, which is what lets one set of phases serve every row in the table.
+have fails to typecheck rather than at runtime.
 
 The rows run one after another, because a statechart's rows drive one entity and a parallel run
 would have them arranging over each other. The run stops at the first row that fails, and the row's
@@ -2143,13 +2213,17 @@ const MISMATCHED: ReadonlyArray<
 	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
 > = [
 	{
+		// Nothing about the row is malformed and the phases are the table's own; the `to` state is
+		// the part the event cannot reach, so only `assert` can catch it.
 		transition: {
 			name: 'the summary leaves it closed',
 			from: 'closed',
 			event: 'toggle',
 			to: 'closed',
 		},
-		// The same three phases. Nothing about the row is malformed; the `to` state is unreachable.
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
 	},
 ]
 
@@ -2167,6 +2241,16 @@ survives the renaming. A phase that throws something other than an `Error` is na
 `arrange refuses: threw a non-error object value` — and the value itself is still the `cause`. A
 builder's refusal arrives as the `cause` the same way, and the phases of the row it was building for
 never start.
+
+`buildRefusal` builds that refusal sentence, and `createHarness` announces the same one on the row
+it refused, so the runner and the harness name a refused build once rather than twice.
+
+```ts
+import { buildRefusal } from '@orkestrel/test'
+
+buildRefusal('the summary leaves it closed', new Error('no fixture')).message
+// 'the summary leaves it closed: build refused'
+```
 
 Drive one row on its own with `executeScenario`, which takes the context rather than building it.
 
@@ -2206,7 +2290,9 @@ The harness writes the attributes onto its own markup: `status`, `passed`, `fail
 its root, `scenario` and `result` on each row, `state` on the element rendering the entity's current
 state. A `role="status"` announcer narrates each step in a sentence beside them, so the page reads
 as a report rather than as a grid of attributes. A gate reads the root until `status` reads `passed`
-or `failed`, then reads the tally and names each row whose `result` reads `failed`. Neither side
+or `failed`, then reads the tally and names each row whose `result` reads `failed`. That reading
+always arrives, because every exit writes it: a run a `state` reader ends writes `failed` before it
+rejects, so the gate is never left polling a `running` the harness does not leave. Neither side
 spells a `data-statechart-*` string of its own, so the two cannot drift apart.
 
 `STATECHART_ATTRIBUTES` and `STATECHART_STATUSES` publish those names and those readings, and
@@ -2225,12 +2311,16 @@ STATECHART_STATUSES.includes('running') // true
 A run walks the tuple in the order it is written. `pending` covers construction, so a gate that
 reads it has found a harness whose rows never mounted; `idle` is a mounted harness with its tally at
 zero; `running` is a run in flight; and `passed` and `failed` are the pair a gate waits for rather
-than waiting a fixed duration.
+than waiting a fixed duration. A run that a `state` reader ends writes `failed` and then rejects
+with that reader's value by identity, so the pair covers an exceptional exit as well as a completed
+one, and the row that reader was called for is not counted as failed.
 
 `execute` carries on past a failing row, which is where the harness parts company with
 `executeScenarios`: one run reports on the whole table rather than stopping at the first finding,
-and a builder that refuses fails its own row under the name that runner would have given it. Call
-`execute` again to re-run the same table from a fresh tally.
+and a builder that refuses fails its own row under `buildRefusal`'s sentence, the one that runner
+raises. What decides whether a row's phases run is whether its builder returned rather than what it
+returned, so a table whose context is `undefined` drives every phase of every row. Call `execute`
+again to re-run the same table from a fresh tally and a cleared state.
 
 ### Read a source inventory
 

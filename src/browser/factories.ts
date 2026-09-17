@@ -8,8 +8,9 @@ import type {
 	StorageOptions,
 	WebStorageInterface,
 } from './types.js'
-import { isError, isInteger } from '@orkestrel/contract'
+import { isError } from '@orkestrel/contract'
 import {
+	buildRefusal,
 	executeScenario,
 	requireValue,
 	STATECHART_ATTRIBUTES,
@@ -282,13 +283,20 @@ export function createJournal(): JournalInterface {
  *
  * @param options - The seed, the read and write permissions, and the quota.
  * @returns A store carrying the Web Storage surface plus the grant.
- * @throws An `Error` when `quota` is not a non-negative integer.
+ * @throws An `Error` when `quota` is not a non-negative safe integer. A quota above
+ * `Number.MAX_SAFE_INTEGER` carries the same sentence, because a counter that cannot decrement past
+ * that point bounds nothing.
  *
  * @remarks
  * Conditions a real origin produces are unreachable from a test otherwise: a browser with
  * site data blocked refuses every operation the permission withholds, an origin with no room left
  * refuses `setItem`, and a person allowing site data grants what was withheld. This makes each of
  * them reachable against a real `Storage` surface rather than a shaped object.
+ *
+ * The store answers through its methods and intercepts no named-property access, so drive a
+ * consumer under test through `getItem` and `setItem`. `Storage` declares an index signature, so
+ * `store.theme` typechecks and reads `undefined` while `getItem('theme')` answers, and a property
+ * write lands on the object rather than in the store, consuming no quota and meeting no refusal.
  *
  * It is backed by a map of its own and patches nothing: `localStorage` and `sessionStorage` are
  * untouched, no `storage` event is dispatched, and the store is reached only by the code the test
@@ -314,7 +322,7 @@ export function createJournal(): JournalInterface {
  */
 export function createStorage(options?: StorageOptions): WebStorageInterface {
 	const quota = options?.quota
-	if (quota !== undefined && (!isInteger(quota) || quota < 0)) {
+	if (quota !== undefined && (!Number.isSafeInteger(quota) || quota < 0)) {
 		throw new Error('Storage quota must be a non-negative integer')
 	}
 	const values = new Map<string, string>(Object.entries(options?.values ?? {}))
@@ -372,7 +380,10 @@ export function createStorage(options?: StorageOptions): WebStorageInterface {
  * A page cannot import this package, because the browser entry imports `vitest/browser` at module
  * scope. So the harness is test-side: the suite mounts it, a gate outside the page polls the
  * markup it renders, and `STATECHART_ATTRIBUTES` is the whole contract between the two. Nothing
- * here spells a `data-statechart-*` string of its own, and neither does a gate.
+ * here spells a `data-statechart-*` string of its own, and neither does a gate. That gate has no
+ * rejection channel, so every exit writes a terminal status: a run that completes writes `passed` or
+ * `failed`, and a run that a `state` reader or a non-`Error` phase throw ends writes `failed` and
+ * then rejects with that value by identity, without counting the row as failed.
  *
  * The markup is framework-free. The root carries `status` and the tally; a `role="status"`
  * announcer narrates each step in a sentence; one element carries `state` and renders what the
@@ -385,11 +396,13 @@ export function createStorage(options?: StorageOptions): WebStorageInterface {
  * `idle` — so a gate that reads `pending` has found a harness whose rows never mounted, and the
  * order is observable from outside through the mutations the document records.
  *
- * `execute` clears every rendered result, writes `running`, and drives each row in order through
- * {@link executeScenario} against a context of that row's own. It continues past a failing row, so
- * one run reports on the whole table rather than stopping at the first finding, and a builder that
- * throws counts as its row failing under the name `executeScenarios` gives it. A second `execute`
- * runs the same table from a fresh tally.
+ * `execute` clears every rendered result and the rendered state, writes `running`, and drives each
+ * row in order through {@link executeScenario} against a context of that row's own. It continues
+ * past a failing row, so one run reports on the whole table rather than stopping at the first
+ * finding, and a builder that throws counts as its row failing under {@link buildRefusal}'s
+ * sentence, which is the one `executeScenarios` raises. What decides whether a row's phases run is
+ * whether its builder returned, not what it returned, so a table whose context is `undefined` drives
+ * every phase. A second `execute` runs the same table from a fresh tally and a cleared state.
  *
  * Every reading comes off the markup, so the object and the page cannot disagree, and `failures` is
  * the `scenario` name of each row whose rendered `result` reads `failed` rather than a second list
@@ -457,45 +470,59 @@ export function createHarness<TState extends string, TEvent extends string, TCon
 		},
 		async execute() {
 			for (const row of table) row.element.removeAttribute(STATECHART_ATTRIBUTES.result)
+			state.removeAttribute(STATECHART_ATTRIBUTES.state)
+			state.textContent = ''
 			let passed = 0
 			let failed = 0
 			root.setAttribute(STATECHART_ATTRIBUTES.passed, '0')
 			root.setAttribute(STATECHART_ATTRIBUTES.failed, '0')
 			root.setAttribute(STATECHART_ATTRIBUTES.status, 'running')
 			announcer.textContent = `Statechart harness is running, 0 passed and 0 failed of ${table.length}.`
-			for (const [index, row] of table.entries()) {
-				let context: TContext | undefined
-				let refusal: string | undefined
-				try {
-					context = await options.build(row.scenario)
-				} catch {
-					refusal = `${row.scenario.transition.name}: build refused`
-				}
-				if (context !== undefined) {
+			try {
+				for (const [index, row] of table.entries()) {
+					// The box's presence is what "the builder returned" means, so a context of `undefined`
+					// runs its phases like any other and only a refused build skips them.
+					let built: { readonly context: TContext } | undefined
+					let refusal: string | undefined
 					try {
-						await executeScenario(row.scenario, context)
+						built = { context: await options.build(row.scenario) }
 					} catch (cause) {
-						// `executeScenario` raises an `Error` for every failing phase, so anything else
-						// came from outside this contract and is the caller's to see unchanged.
-						if (!isError(cause)) throw cause
-						refusal = cause.message
+						refusal = buildRefusal(row.scenario.transition.name, cause).message
 					}
-					const current = options.state(context)
-					state.setAttribute(STATECHART_ATTRIBUTES.state, current)
-					state.textContent = current
+					if (built !== undefined) {
+						try {
+							await executeScenario(row.scenario, built.context)
+						} catch (cause) {
+							// `executeScenario` raises an `Error` for every failing phase, so anything else
+							// came from outside this contract and is the caller's to see unchanged.
+							if (!isError(cause)) throw cause
+							refusal = cause.message
+						}
+						const current = options.state(built.context)
+						state.setAttribute(STATECHART_ATTRIBUTES.state, current)
+						state.textContent = current
+					}
+					if (refusal === undefined) passed += 1
+					else failed += 1
+					row.element.setAttribute(
+						STATECHART_ATTRIBUTES.result,
+						refusal === undefined ? 'passed' : 'failed',
+					)
+					root.setAttribute(STATECHART_ATTRIBUTES.passed, String(passed))
+					root.setAttribute(STATECHART_ATTRIBUTES.failed, String(failed))
+					announcer.textContent = refusal ?? `${row.scenario.transition.name} passed.`
+					if (options.pause !== undefined && index < table.length - 1) {
+						await waitForDelay(options.pause)
+					}
 				}
-				if (refusal === undefined) passed += 1
-				else failed += 1
-				row.element.setAttribute(
-					STATECHART_ATTRIBUTES.result,
-					refusal === undefined ? 'passed' : 'failed',
-				)
-				root.setAttribute(STATECHART_ATTRIBUTES.passed, String(passed))
-				root.setAttribute(STATECHART_ATTRIBUTES.failed, String(failed))
-				announcer.textContent = refusal ?? `${row.scenario.transition.name} passed.`
-				if (options.pause !== undefined && index < table.length - 1) {
-					await waitForDelay(options.pause)
-				}
+			} catch (cause) {
+				// A gate outside the page has no rejection channel, so an exceptional exit publishes the
+				// terminal reading before the value leaves by identity. The row is not counted as failed:
+				// a reader's defect is not the entity's. A completed run never reaches this, which is why
+				// the write is here rather than in a `finally`.
+				root.setAttribute(STATECHART_ATTRIBUTES.status, 'failed')
+				announcer.textContent = `Statechart harness failed, ${passed} passed and ${failed} failed of ${table.length}.`
+				throw cause
 			}
 			const outcome = failed === 0 ? 'passed' : 'failed'
 			root.setAttribute(STATECHART_ATTRIBUTES.status, outcome)

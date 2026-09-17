@@ -1049,6 +1049,31 @@ describe('readRefusal', () => {
 
 		expect(caught).toBe('the host refused the reading')
 	})
+
+	// T3-C6. `undefined` is the value the rethrow cannot afford to lose: a resolver that returned and
+	// a hostile getter that threw `undefined` are different findings, and a captured thrown value
+	// reads them as one. The flag is what separates a throw from a returned `undefined`, so the
+	// reading is left at a sentinel this call never produces.
+	it('rethrows undefined from a hostile target rather than reading it as resolved', () => {
+		const container = buildFixture('<button type="button">Hostile</button>')
+		const button = requireValue(container.querySelector('button'))
+		Object.defineProperty(button, 'tabIndex', {
+			get() {
+				throw undefined
+			},
+		})
+
+		let threw = false
+		let reading: string | undefined = 'unread'
+		try {
+			reading = readRefusal('Hostile')
+		} catch {
+			threw = true
+		}
+
+		expect(threw).toBe(true)
+		expect(reading).toBe('unread')
+	})
 })
 
 describe('readText', () => {
@@ -1429,6 +1454,48 @@ describe('waitForState', () => {
 		)
 	})
 
+	// T3-C14. The augmentation keys on what the reading threw and on the value the caller put on the
+	// signal, never on how another module worded a message. An abort reason spelled exactly like this
+	// wait's own timeout voice is the vector that separates the two: it leaves by identity, and the
+	// caller's own error is not rewritten behind its back.
+	it('rethrows an abort reason spelled like its own timeout voice by identity', async () => {
+		buildFixture('<button type="button" aria-pressed="false">Pin</button>')
+		const controller = new AbortController()
+		const reason = new Error(
+			'Condition ""Pin" to announce "pressed=true"" did not hold within 100ms (waited 0ms)',
+		)
+		const pending = setTimeout(() => controller.abort(reason), 20)
+		try {
+			const thrown = await waitForState('Pin', 'pressed=true', {
+				signal: controller.signal,
+				budget: 2000,
+				interval: 5,
+			}).catch((error: unknown) => error)
+
+			// The abort lands after several readings, so the wait had a last observation to append and
+			// did not append it.
+			expect(thrown === reason).toBe(true)
+			expect(reason.message).not.toContain('last states')
+		} finally {
+			clearTimeout(pending)
+		}
+
+		const aborted = new AbortController()
+		const forged = new Error(
+			'Condition ""Pin" to announce "pressed=true"" did not hold within 100ms (waited 0ms)',
+		)
+		aborted.abort(forged)
+
+		// The same reason on a signal already aborted, where no reading was ever taken.
+		const refused = await waitForState('Pin', 'pressed=true', {
+			signal: aborted.signal,
+			budget: 100,
+		}).catch((error: unknown) => error)
+
+		expect(refused === forged).toBe(true)
+		expect(forged.message).not.toContain('last states')
+	})
+
 	// guides/test.md → Patterns → "Wait for what a control announces". A browser fence carries in
 	// this directory because the guides project runs with the browser disabled.
 	it('settles a pressed control after the act and a folded one after it collapses', async () => {
@@ -1505,6 +1572,51 @@ describe('waitForAnimations', () => {
 		await waitForAnimations(section, { budget: 50 })
 
 		expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+	})
+
+	// T3-C11. The control for the `playState` exclusion the doc block, the bounds bullet, and the
+	// Limits row all state: a paused animation is at rest, so the wait resolves while that animation
+	// is still in the list a browser reports. Dropping the `playState` clause leaves it counted as
+	// running and this case hangs to its budget instead.
+	it('resolves while a paused animation is still in the list', async () => {
+		const container = buildFixture('<section><div class="settle-paused"></div></section>')
+		const section = requireValue(container.querySelector('section'))
+		const box = requireValue(container.querySelector<HTMLElement>('.settle-paused'))
+		const animation = box.animate({ opacity: [1, 0.2] }, { duration: 5000 })
+		animation.pause()
+		try {
+			expect(animation.playState).toBe('paused')
+			expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+
+			await waitForAnimations(section, { budget: 60 })
+
+			expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+			expect(animation.playState).toBe('paused')
+		} finally {
+			animation.cancel()
+		}
+	})
+
+	// T3-C11. The other half of the same exclusion: a finished animation filling its target stays in
+	// the list a browser reports and is already at rest, so the wait resolves rather than parking on
+	// something that has stopped moving.
+	it('resolves while a finished animation filling its target is still in the list', async () => {
+		const container = buildFixture('<section><div class="settle-filled"></div></section>')
+		const section = requireValue(container.querySelector('section'))
+		const box = requireValue(container.querySelector<HTMLElement>('.settle-filled'))
+		const animation = box.animate({ opacity: [1, 0.2] }, { duration: 20, fill: 'forwards' })
+		try {
+			await animation.finished
+
+			expect(animation.playState).toBe('finished')
+			expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+
+			await waitForAnimations(section, { budget: 60 })
+
+			expect(section.getAnimations({ subtree: true })).toHaveLength(1)
+		} finally {
+			animation.cancel()
+		}
 	})
 
 	it('refuses a subject the document does not hold', async () => {
@@ -3197,6 +3309,31 @@ describe('buildCensus', () => {
 		expect(typeof glyph.className).not.toBe('string')
 		expect(glyph.getAttribute('class')).toBe(control.mark)
 		expect([...readClasses(control.root)].sort()).toStrictEqual([control.mark, control.token])
+	})
+
+	// T3-C15. The tokens are derived per call, so a consumer cascade cannot declare either of them in
+	// advance and two controls in one document never share a token. A fixed pair would move the
+	// fixture and its assertion apart the moment a consumer's stylesheet happened to declare one.
+	it('derives distinct tokens per call, each undeclared by the cascade', () => {
+		const first = buildCensus()
+		const second = buildCensus()
+
+		expect(first.token).not.toBe(second.token)
+		expect(first.mark).not.toBe(second.mark)
+		expect(first.token).not.toBe(first.mark)
+
+		const declared = readCascade()
+		for (const token of [first.token, first.mark, second.token, second.mark]) {
+			expect(declared.has(token)).toBe(false)
+		}
+
+		const container = buildFixture('<section></section>')
+		const section = requireValue(container.querySelector('section'))
+		section.append(first.root, second.root)
+
+		expect(readCensus(section).undeclared).toStrictEqual(
+			[first.mark, first.token, second.mark, second.token].sort(),
+		)
 	})
 })
 

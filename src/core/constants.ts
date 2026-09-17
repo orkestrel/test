@@ -37,14 +37,17 @@ export const STATECHART_ATTRIBUTES = Object.freeze({
  * carries the row count. A gate that finds it has found a harness whose rows never mounted. `idle`
  * is a mounted harness standing ready, its tally at zero and nothing running. `running` is a run in
  * flight. `passed` and `failed` are the two terminal readings, so a gate waits for membership in
- * that pair rather than for a fixed duration.
+ * that pair rather than for a fixed duration. An exceptional exit is terminal too: a harness whose
+ * `state` reader throws writes `failed` and then rejects the run, so the gate reads a terminal pair
+ * while the suite reads the throw.
  *
  * The tuple's order is the order a run passes through, and `StatechartStatus` is the same set as a
  * named union, so a harness and its gate share one vocabulary whichever form each of them needs.
  *
  * @example
  * ```ts
- * const terminal = new Set<string>([STATECHART_STATUSES[3], STATECHART_STATUSES[4]])
+ * const terminal = new Set<StatechartStatus>(['passed', 'failed'])
+ * terminal.has('running') // false
  * ```
  */
 export const STATECHART_STATUSES = Object.freeze([

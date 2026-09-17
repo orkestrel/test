@@ -12,7 +12,7 @@ import type {
 	StateOptions,
 } from './types.js'
 import { isError, isString } from '@orkestrel/contract'
-import { captureError, checkBounds, waitForAbort, waitForCondition } from '@src/core'
+import { checkBounds, waitForAbort, waitForCondition } from '@src/core'
 import { commands, page, userEvent } from 'vitest/browser'
 import {
 	ACCESSIBLE_ROLES,
@@ -705,7 +705,9 @@ export function readRefusal(name: string): string | undefined
  * layer keeps their sentences distinct, so a journey asserting on the one it means needs the
  * sentence rather than a boolean. This fixes the resolver, translates the `unknown` a `catch` binds
  * into `string | undefined`, and rethrows anything that is not an `Error` — a value no resolver
- * raises, and one a caller reading a message would otherwise lose.
+ * raises, and one a caller reading a message would otherwise lose. `undefined` is rethrown with the
+ * rest: a resolver that returned and a hostile getter that threw `undefined` are different findings,
+ * which is why the `catch` is this function's own rather than a captured thrown value.
  *
  * It resolves rather than acts, so a target it reports `undefined` for is one an acting verb
  * reaches. Assert on the exact sentence: a comparison against a substring passes for a refusal
@@ -718,10 +720,15 @@ export function readRefusal(name: string): string | undefined
  */
 export function readRefusal(role: string, name: string): string | undefined
 export function readRefusal(first: string, second?: string): string | undefined {
-	const thrown = captureError(() => resolveRendered(first, second))
-	if (thrown === undefined) return undefined
-	if (isError(thrown)) return thrown.message
-	throw thrown
+	try {
+		resolveRendered(first, second)
+	} catch (thrown) {
+		// The `catch` is local rather than routed through `captureError`, which returns the thrown
+		// value and therefore reads a hostile `throw undefined` as a resolver that returned.
+		if (isError(thrown)) return thrown.message
+		throw thrown
+	}
+	return undefined
 }
 
 /**
@@ -1094,25 +1101,37 @@ export async function waitForState(
 	const absent = options?.absent ?? false
 	const description = `"${name}" to ${absent ? 'stop announcing' : 'announce'} "${state}"`
 	let observed: readonly string[] = []
+	let readings = 0
+	let refused: { readonly thrown: unknown } | undefined
 	try {
 		await waitForCondition(
 			description,
 			() => {
-				observed = readStates(
-					role === undefined ? resolveRendered(name) : resolveRendered(role, name),
-				)
+				readings += 1
+				try {
+					observed = readStates(
+						role === undefined ? resolveRendered(name) : resolveRendered(role, name),
+					)
+				} catch (thrown) {
+					// The box records what the reading threw, so the `catch` beneath recognizes the
+					// resolver's own finding by identity instead of by how another module worded it.
+					refused = { thrown }
+					throw thrown
+				}
 				return observed.includes(state) !== absent
 			},
 			options,
 		)
 	} catch (cause) {
-		// Only the poll's own exhaustion has a last observation worth adding. A resolver refusal and an
-		// abort reason arrive here by identity and leave the same way, so the exhaustion is recognized
-		// by the sentence `waitForCondition` writes for this description, which no voice shares.
-		if (isError(cause) && cause.message.startsWith(`Condition "${description}" did not hold`)) {
-			throw new Error(`${cause.message} (last states: ${JSON.stringify(observed)})`, { cause })
-		}
-		throw cause
+		// Only the poll's own exhaustion has a last observation worth adding, and it is what remains
+		// after the three values that are not it: the reading's own throw, recorded as it was raised;
+		// the abort reason, which is the caller's value on the signal; and a refused bound, which is
+		// raised before any reading. Each of those leaves by identity.
+		if (refused !== undefined && cause === refused.thrown) throw cause
+		if (cause === options?.signal?.reason) throw cause
+		if (readings === 0) throw cause
+		if (!isError(cause)) throw cause
+		throw new Error(`${cause.message} (last states: ${JSON.stringify(observed)})`, { cause })
 	}
 	return observed
 }
@@ -2698,7 +2717,11 @@ export function buildEscapes(permitted: string): EscapeFixture {
  * through `classList`, and this is the control that proves it.
  *
  * The two tokens are returned rather than written into a caller's expectation, so a cascade that
- * later declares one of these names moves the fixture and the assertion together.
+ * later declares one of these names moves the fixture and the assertion together. Each token also
+ * carries a suffix drawn per call from `crypto.getRandomValues`, so a consumer cascade cannot
+ * declare either of them in advance and two controls in one document never share a token.
+ * `getRandomValues` rather than `randomUUID`, because that one answers outside a secure context
+ * too, and a browser project served from a remote host is not one.
  *
  * @example
  * ```ts
@@ -2707,8 +2730,9 @@ export function buildEscapes(permitted: string): EscapeFixture {
  * ```
  */
 export function buildCensus(): CensusFixture {
-	const token = 'census-authored-token'
-	const mark = 'census-authored-mark'
+	const suffix = crypto.getRandomValues(new Uint32Array(1)).join('')
+	const token = `census-authored-token-${suffix}`
+	const mark = `census-authored-mark-${suffix}`
 	const root = build('div')
 	root.append(build('p', { classes: token, text: 'Authored class control' }))
 	const glyph = document.createElementNS('http://www.w3.org/2000/svg', 'svg')

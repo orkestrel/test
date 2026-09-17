@@ -10,9 +10,10 @@ states that rule, what it excluded, and the one door the journey layer came thro
 here runs in production code. Part of the `@orkestrel` line.
 
 This package runtime-depends on `@orkestrel/contract` for the outcome type `retryUntil` reads
-internally. That type is not re-exported. No exported signature names an `@orkestrel/*` type. Both
-rules exist for one reason: a test helper hands its types straight into the consumer's assertions,
-and a second copy of a package inside its own repository makes the compiler read one type as two.
+internally and for the guards every environment narrows with. That type is not re-exported. No
+exported signature names an `@orkestrel/*` type. Both rules exist for one reason: a test helper
+hands its types straight into the consumer's assertions, and a second copy of a package inside its
+own repository makes the compiler read one type as two.
 
 ## Install
 
@@ -163,8 +164,9 @@ The browser face is the journey layer: an accessible-name resolver with exact fa
 region and disclosure targeting, input and traversal verbs, perception readers, a WCAG contrast
 instrument that composites translucent layers, and the capture portfolio. Every acting verb
 resolves its own target from a role and an accessible name — none takes an element, a component
-instance, or a selector — and the whole environment imports `vitest/browser` and DOM globals and
-nothing else, with `vitest` declared as a peer dependency. Beside the journey verbs are the
+instance, or a selector — and the whole environment imports `vitest/browser`, DOM globals, this
+package's own core, and the `@orkestrel/contract` guards it narrows with, with `vitest` declared as
+a peer dependency. Beside the journey verbs are the
 readers a markup conformance check needs: `readClasses` for the classes the markup carries,
 differenced against `readCascade` for the classes the cascade declares, and `extractStyles` for
 the inline `style` attributes and `<style>` elements that go round the cascade entirely. The guide's

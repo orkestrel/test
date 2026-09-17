@@ -205,7 +205,10 @@ export interface StorageOptions {
 	readonly reads?: boolean
 	/** Determines whether the host permits writes. Default: `true`. */
 	readonly writes?: boolean
-	/** Caps the accepted `setItem` calls. When omitted, nothing bounds the store. */
+	/**
+	 * Caps the accepted `setItem` calls, as a non-negative safe integer. When omitted, nothing bounds
+	 * the store.
+	 */
 	readonly quota?: number
 }
 
@@ -217,6 +220,10 @@ export interface StorageOptions {
  * driver's transaction scope offers, and the fleet gives one bare exported name one owning package.
  * This one is the Web Storage surface a browser publishes on `localStorage`, plus the grant a
  * person allowing site data performs.
+ *
+ * `Storage` declares an index signature, so `store.theme` typechecks against this type. A store
+ * `createStorage` returns answers through its methods alone and intercepts no named-property
+ * access, so drive a consumer under test through `getItem` and `setItem`.
  */
 export interface WebStorageInterface extends Storage {
 	/** Grants the reads and the writes the host withheld, and replenishes no quota. */
@@ -309,7 +316,8 @@ export interface CensusFixture {
  * `state` is the reader that puts the entity's current state on the page. It is called with the
  * row's own context after that row settles, pass or fail, so the rendered state is where the event
  * actually left the entity rather than where the row expected it. It is a reader rather than a
- * phase: a `state` that throws rejects the run.
+ * phase: a `state` that throws rejects the run after the harness writes `failed`, and the row it was
+ * reading is not counted as failed.
  *
  * `pause` holds a delay between rows, for a table whose entity is worth watching. Omit it and the
  * rows run back to back.
@@ -353,9 +361,12 @@ export interface HarnessInterface {
 	/** Lists the name of every row whose rendered result reads failed, in table order. */
 	readonly failures: readonly string[]
 	/**
-	 * Drives every row in table order, from a fresh tally.
+	 * Drives every row in table order, from a fresh tally and a cleared state.
 	 *
 	 * @returns A promise resolving after the last row settles and the terminal status is written.
+	 * @throws The value a `state` reader or a non-`Error` phase threw, by identity, after the harness
+	 * writes `failed`. Every exit is terminal, because the gate polling the markup has no rejection
+	 * channel to read.
 	 */
 	execute(): Promise<void>
 	/** Removes the mounted root, and does nothing when it is already removed. */

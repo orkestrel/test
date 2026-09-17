@@ -17,6 +17,7 @@ import {
 	readStates,
 } from '@src/browser'
 import {
+	buildRefusal,
 	captureError,
 	createRecorder,
 	executeScenarios,
@@ -689,13 +690,44 @@ describe('createStorage', () => {
 		expect(() => spent.setItem('another', '2')).toThrow('No room is left for another')
 	})
 
+	// T3-C5. A quota above `Number.MAX_SAFE_INTEGER` is refused in the same sentence, because a
+	// counter that cannot decrement past that point bounds nothing: the largest safe integer is the
+	// largest cap a spend can still reach the end of.
 	it('refuses a quota that is not a non-negative integer', () => {
-		for (const quota of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+		for (const quota of [
+			-1,
+			1.5,
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.MAX_SAFE_INTEGER + 1,
+		]) {
 			expect(captureError(() => createStorage({ quota }))).toStrictEqual(
 				new Error('Storage quota must be a non-negative integer'),
 			)
 		}
 		expect(createStorage({ quota: 0 }).length).toBe(0)
+		expect(createStorage({ quota: Number.MAX_SAFE_INTEGER }).length).toBe(0)
+	})
+
+	// T3-C4. The bound the doc block and the guide state: the store answers through its methods and
+	// intercepts no named-property access. `Storage` declares an index signature, so the property
+	// read typechecks, reads `undefined` while `getItem` answers, and the property write lands on the
+	// object rather than in the store — consuming no quota and meeting no refusal. A `Proxy` that
+	// intercepted these would redden this case and that sentence together.
+	it('answers through its methods and intercepts no named-property access', () => {
+		const storage = createStorage({ values: { theme: 'dark' }, writes: false, quota: 0 })
+
+		const read: unknown = storage.theme
+		expect(read).toBeUndefined()
+		expect(storage.getItem('theme')).toBe('dark')
+
+		storage.theme = 'light'
+
+		expect(storage.getItem('theme')).toBe('dark')
+		expect(storage.length).toBe(1)
+		// The withheld write is still withheld through the method the store publishes, so the property
+		// write went past the permission rather than being granted by it.
+		expect(() => storage.setItem('theme', 'light')).toThrow('Access is denied for setItem "theme"')
 	})
 
 	// The control for the inertness claim: a store this package hands out is not the browser's own,
@@ -892,10 +924,16 @@ describe('createHarness', () => {
 		expect(document.querySelector(`[${STATECHART_ATTRIBUTES.scenario}]`)).toBeNull()
 	})
 
-	// T2-C4. The transient value is written and replaced inside one synchronous call, so the proof
-	// is what the document recorded rather than what a reading after the call can see. The observer
-	// is armed on `document.body` before construction and its queue is read back with
-	// `takeRecords()`, which is the only reading that survives the call.
+	// T2-C4, rewritten for T3-C13. The transient value is written and replaced inside one synchronous
+	// call, so the proof is what the document recorded rather than what a reading after the call can
+	// see. The observer is armed on `document.body` before construction and its queue is read back
+	// with `takeRecords()`, which is the only reading that survives the call.
+	//
+	// What the case asserts is the order of the two attribute writes against the row mounts: every
+	// declared row is in the document before the count is written, and the count is written before
+	// the status leaves `pending`. How many `childList` records the browser grouped those mounts into
+	// is the browser's own batching and is not part of the claim, so each record is read for the rows
+	// it added rather than compared against a fixed sequence.
 	it('mounts every row while it reads pending and writes idle only after the count', () => {
 		const observer = new MutationObserver(() => {})
 		observer.observe(document.body, {
@@ -914,27 +952,42 @@ describe('createHarness', () => {
 		const records = observer.takeRecords()
 		observer.disconnect()
 
-		const trail = records.map((record) =>
-			record.type === 'attributes'
-				? `${requireValue(record.attributeName)} left ${record.oldValue ?? 'absent'}`
-				: `added ${[...record.addedNodes]
-						.map((node) => (node instanceof Element ? node.localName : 'text'))
-						.join(' ')}`,
-		)
+		let mountedRows = 0
+		let lastRow = -1
+		let total = -1
+		let status = -1
+		let narration = -1
+		for (const [index, record] of records.entries()) {
+			if (record.type === 'attributes') {
+				if (record.attributeName === STATECHART_ATTRIBUTES.total) total = index
+				if (
+					record.attributeName === STATECHART_ATTRIBUTES.status &&
+					record.oldValue === 'pending'
+				) {
+					status = index
+				}
+				continue
+			}
+			for (const node of record.addedNodes) {
+				if (node instanceof Element && node.localName === 'li') {
+					mountedRows += 1
+					lastRow = index
+				}
+				if (node instanceof Text) narration = index
+			}
+		}
 
-		expect(trail).toStrictEqual([
-			'added div',
-			'added p p ol',
-			'added li',
-			'added li',
-			'added li',
-			'added li',
-			`${STATECHART_ATTRIBUTES.total} left absent`,
-			`${STATECHART_ATTRIBUTES.status} left pending`,
-			// The announcer's sentence lands last, because a gate settles on the attribute and a
-			// reader hears the prose: the contract the gate reads is written before it is narrated.
-			'added text',
-		])
+		// Every declared row mounted, and each write the claim orders was recorded.
+		expect(mountedRows).toBe(DISCLOSURE_SCENARIOS.length)
+		expect(lastRow).toBeGreaterThanOrEqual(0)
+		// The count is written after the last row mounts, and the status leaves `pending` after the
+		// count — so a gate that reads `pending` has found a harness whose rows never mounted, and a
+		// gate that reads `idle` can read the count beside it.
+		expect(total).toBeGreaterThan(lastRow)
+		expect(status).toBeGreaterThan(total)
+		// The announcer's sentence lands after both, because a gate settles on the attribute and a
+		// reader hears the prose: the contract the gate reads is written before it is narrated.
+		expect(narration).toBeGreaterThan(status)
 		expect(harness.status).toBe('idle')
 		expect(harness.total).toBe(4)
 		expect(harness.passed).toBe(0)
@@ -1065,27 +1118,133 @@ describe('createHarness', () => {
 
 	// T2-C3. A builder that refuses fails its own row under the name `executeScenarios` gives it, and
 	// the rows after it still run — which is where a harness parts company with the bare runner.
+	//
+	// T3-C12. The per-row announcement is `buildRefusal`'s own sentence, which is the one the runner
+	// raises, so a respelling in either place moves both readings together. It is read inside the
+	// next row's build, because the run's terminal sentence replaces it before `execute` returns.
 	it('fails the row whose builder refused and runs the rows after it', async () => {
+		const refusal = new Error('no fixture')
 		let refusals = 0
+		let announced: string | undefined
 		const harness = createHarness({
 			scenarios: MIXED_SCENARIOS,
 			build(scenario) {
+				if (refusals === 1 && announced === undefined) {
+					announced = announcer.textContent ?? undefined
+				}
 				if (scenario.transition.name !== 'the summary leaves it closed') return buildDisclosure()
 				refusals += 1
-				throw new Error('no fixture')
+				throw refusal
 			},
 			state: readDisclosure,
 		})
+		// The builder first runs inside `execute`, which is after this reading is in hand.
+		const announcer = requireValue(harness.root.querySelector('[role="status"]'))
 
 		await harness.execute()
 
 		expect(refusals).toBe(1)
+		expect(announced).toBe(buildRefusal('the summary leaves it closed', refusal).message)
 		expect(harness.status).toBe('failed')
 		expect(harness.passed).toBe(3)
 		expect(harness.failures).toStrictEqual(['the summary leaves it closed'])
 		expect(requireValue(harness.root.querySelector('[role="status"]')).textContent).toBe(
 			'Statechart harness failed, 3 passed and 1 failed of 4.',
 		)
+
+		harness.destroy()
+	})
+
+	// T3-C1. A row whose builder returns `undefined` runs every phase, because what decides is
+	// whether the builder returned rather than what it returned. The assertion throws, so the row is
+	// counted failed and carries the assertion's own message under its row name.
+	it('drives every phase of a row whose context is undefined', async () => {
+		const trail: string[] = []
+		const harness = createHarness<'closed', 'toggle', undefined>({
+			scenarios: [
+				{
+					transition: {
+						name: 'the absent context',
+						from: 'closed',
+						event: 'toggle',
+						to: 'closed',
+					},
+					arrange() {
+						trail.push('arrange')
+					},
+					act() {
+						trail.push('act')
+					},
+					assert() {
+						trail.push('assert')
+						throw new Error('the assertion that must fail')
+					},
+				},
+			],
+			build: () => undefined,
+			state: () => 'closed',
+		})
+
+		await harness.execute()
+
+		expect(trail).toStrictEqual(['arrange', 'act', 'assert'])
+		expect(harness.status).toBe('failed')
+		expect(harness.passed).toBe(0)
+		expect(harness.failed).toBe(1)
+		expect(harness.failures).toStrictEqual(['the absent context'])
+		expect(requireValue(harness.root.querySelector('[role="status"]')).textContent).toBe(
+			'Statechart harness failed, 0 passed and 1 failed of 1.',
+		)
+		// The row produced a context, so its state was read and rendered like any other row's.
+		expect(
+			requireValue(harness.root.querySelector(`[${STATECHART_ATTRIBUTES.state}]`)).getAttribute(
+				STATECHART_ATTRIBUTES.state,
+			),
+		).toBe('closed')
+
+		harness.destroy()
+	})
+
+	// T3-C3. A re-run clears the rendered state as well as the tally, because a state is read from an
+	// entity and no entity exists until a row builds one — which is as true at the start of a second
+	// run as at construction. The reading is taken inside the second run's own `build`, the one
+	// moment in that run before any row has produced a context.
+	it('clears the rendered state at the start of a re-run', async () => {
+		let runs = 0
+		let observed: { readonly attribute: string | null; readonly text: string } | undefined
+		const harness = createHarness({
+			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
+			build() {
+				runs += 1
+				// The element the first run rendered into, read on the second run before any row of
+				// that run has produced a context. The builder first runs inside `execute`, which is
+				// after the reading below is in hand.
+				if (runs === 2) {
+					observed = {
+						attribute: rendered.getAttribute(STATECHART_ATTRIBUTES.state),
+						text: rendered.textContent ?? '',
+					}
+				}
+				return buildDisclosure()
+			},
+			state: readDisclosure,
+		})
+
+		await harness.execute()
+
+		const rendered = requireValue(harness.root.querySelector(`[${STATECHART_ATTRIBUTES.state}]`))
+		expect(rendered.getAttribute(STATECHART_ATTRIBUTES.state)).toBe('open')
+		expect(rendered.textContent).toBe('open')
+
+		await harness.execute()
+
+		expect(requireValue(observed).attribute).toBeNull()
+		expect(requireValue(observed).text).toBe('')
+		// The reading was taken, so an absent one cannot pass for a cleared one.
+		expect(runs).toBe(2)
+		// The run put it back, so the clearing is the reset the tally gets rather than a removal.
+		expect(rendered.getAttribute(STATECHART_ATTRIBUTES.state)).toBe('open')
+		expect(rendered.textContent).toBe('open')
 
 		harness.destroy()
 	})
@@ -1135,7 +1294,12 @@ describe('createHarness', () => {
 	// number whether or not the harness waited at all. Each row marks its own build and its own
 	// reading instead, and the reading of one row to the build of the next is the pause and nothing
 	// else — the writes between them are synchronous.
+	//
+	// T3-C13. Every number here is the declared pause rather than a literal repeated beside it, so
+	// the case asserts the relationship the harness owes — each between-row gap reaches the pause,
+	// and the tail after the last row does not — rather than a duration this host happened to take.
 	it('waits the declared pause between rows and not after the last one', async () => {
+		const pause = 40
 		const marks: number[] = []
 		const harness = createHarness({
 			scenarios: DISCLOSURE_SCENARIOS,
@@ -1147,45 +1311,122 @@ describe('createHarness', () => {
 				marks.push(performance.now())
 				return readDisclosure(context)
 			},
-			pause: 40,
+			pause,
 		})
 
 		await harness.execute()
 		const finished = performance.now()
 
 		expect(harness.status).toBe('passed')
-		expect(marks.length).toBe(8)
-		for (const index of [1, 3, 5]) {
-			expect(requireValue(marks[index + 1]) - requireValue(marks[index])).toBeGreaterThanOrEqual(40)
+		// One build mark and one reading mark per row, in that order.
+		expect(marks.length).toBe(DISCLOSURE_SCENARIOS.length * 2)
+		for (let row = 0; row < DISCLOSURE_SCENARIOS.length - 1; row += 1) {
+			const reading = requireValue(marks[row * 2 + 1])
+			const next = requireValue(marks[row * 2 + 2])
+			expect(next - reading).toBeGreaterThanOrEqual(pause)
 		}
 		// Nothing waits after the last row: the run returns as soon as that row's reading is in.
-		expect(finished - requireValue(marks[7])).toBeLessThan(40)
+		expect(finished - requireValue(marks[marks.length - 1])).toBeLessThan(pause)
 
 		harness.destroy()
 	})
 
-	// The state reader is a reader rather than a phase, so its throw is not a row failing. It comes
-	// out of the run, and the status is left where the throw found it.
-	it('rejects the run when the state reader throws', async () => {
+	// T3-C2. The state reader is a reader rather than a phase, so its throw is not a row failing: it
+	// leaves the run by identity and the row is not counted. The root still publishes a terminal
+	// reading first, because the gate polling that markup has no rejection channel to read.
+	it('writes failed and rejects by identity when the state reader throws', async () => {
+		const unreadable = new Error('unreadable entity')
 		const harness = createHarness({
 			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
 			build: buildDisclosure,
 			state() {
-				throw new Error('unreadable entity')
+				throw unreadable
 			},
 		})
 
-		await expect(harness.execute()).rejects.toThrow('unreadable entity')
+		const thrown = await harness.execute().catch((error: unknown) => error)
 
-		expect(harness.status).toBe('running')
+		expect(thrown === unreadable).toBe(true)
+		expect(harness.status).toBe('failed')
+		expect(harness.root.getAttribute(STATECHART_ATTRIBUTES.status)).toBe('failed')
+		expect(requireValue(harness.root.querySelector('[role="status"]')).textContent).toBe(
+			'Statechart harness failed, 0 passed and 0 failed of 1.',
+		)
+		// A reader's defect is not the entity's, so no row carries a result and the tally stays at zero.
 		expect(harness.passed).toBe(0)
+		expect(harness.failed).toBe(0)
+		expect(harness.failures).toStrictEqual([])
+		expect(harness.root.querySelectorAll(`[${STATECHART_ATTRIBUTES.result}]`).length).toBe(0)
+
+		harness.destroy()
+	})
+
+	// T3-C2. The same exit for a value that is not an `Error`: the harness writes the terminal
+	// reading and the value leaves unnamed and unwrapped. This is the door the harness's own rethrow
+	// answers, because `executeScenario` names every phase throw as an `Error` before it gets here.
+	it('writes failed and rethrows a non-Error reader throw by identity', async () => {
+		const harness = createHarness({
+			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
+			build: buildDisclosure,
+			state() {
+				throw 'the host refused the reading'
+			},
+		})
+
+		const thrown = await harness.execute().catch((error: unknown) => error)
+
+		expect(thrown).toBe('the host refused the reading')
+		expect(harness.status).toBe('failed')
+		expect(harness.failed).toBe(0)
+
+		harness.destroy()
+	})
+
+	// T3-C2. A phase that throws a string is the row failing rather than an exceptional exit:
+	// `executeScenario` names a non-`Error` throw by its type and raises an `Error` carrying the
+	// value as the cause, so the harness counts the row and finishes the table.
+	it('counts a phase that throws a string as its row failing', async () => {
+		const harness = createHarness<'closed', 'toggle', { readonly flag: boolean }>({
+			scenarios: [
+				{
+					transition: { name: 'the string throw', from: 'closed', event: 'toggle', to: 'closed' },
+					arrange() {},
+					act() {},
+					assert() {
+						throw 'refused'
+					},
+				},
+			],
+			build: () => ({ flag: true }),
+			state: () => 'closed',
+		})
+
+		await harness.execute()
+
+		expect(harness.status).toBe('failed')
+		expect(harness.failed).toBe(1)
+		expect(harness.failures).toStrictEqual(['the string throw'])
+		expect(requireValue(harness.root.querySelector('[role="status"]')).textContent).toBe(
+			'Statechart harness failed, 0 passed and 1 failed of 1.',
+		)
+
 		harness.destroy()
 	})
 
 	// guides/test.md → Patterns → "Drive a statechart table". The same table under the bare runner:
 	// `executeScenarios` stops at the first failing row, and the row's name opens the message.
+	//
+	// T3-C8. `MISMATCHED_SCENARIOS` is the fence's own declaration, phases and all, so the sentence
+	// asserted here is the sentence that fence's comment claims for the exact rows it declares. A
+	// row whose phases the fence elided would refuse with `scenario.arrange is not a function`
+	// instead, which is why the phase readings sit beside the message.
 	it('stops the bare runner at the first failing row and names that row', async () => {
 		await executeScenarios(DISCLOSURE_SCENARIOS, buildDisclosure)
+
+		const mismatched = requireValue(MISMATCHED_SCENARIOS[0])
+		expect(mismatched.arrange).toBeTypeOf('function')
+		expect(mismatched.act).toBeTypeOf('function')
+		expect(mismatched.assert).toBeTypeOf('function')
 
 		const thrown = await executeScenarios(MISMATCHED_SCENARIOS, buildDisclosure).catch(
 			(error: unknown) => error,
@@ -1196,11 +1437,12 @@ describe('createHarness', () => {
 		).toBe(true)
 		expect(failure.cause).toBeInstanceOf(Error)
 
+		const refusal = new Error('no fixture')
 		const refused = await executeScenarios(MISMATCHED_SCENARIOS, () => {
-			throw new Error('no fixture')
+			throw refusal
 		}).catch((error: unknown) => error)
-		const refusal = requireValue(refused instanceof Error ? refused : undefined)
-		expect(refusal.message).toBe('the summary leaves it closed: build refused')
-		expect(refusal.cause).toBeInstanceOf(Error)
+		const named = requireValue(refused instanceof Error ? refused : undefined)
+		expect(named.message).toBe(buildRefusal('the summary leaves it closed', refusal).message)
+		expect(named.cause === refusal).toBe(true)
 	})
 })

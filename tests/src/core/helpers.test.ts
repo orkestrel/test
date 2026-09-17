@@ -6,6 +6,7 @@ import type {
 	StateScenario,
 } from '@src/core'
 import {
+	buildRefusal,
 	buildRetryExhausted,
 	captureError,
 	checkBounds,
@@ -277,6 +278,56 @@ describe('waitForText', () => {
 		await expect(waitForText('anything', () => 'Ready', 'Ready', { absent: '' })).rejects.toThrow(
 			new Error('Text expectation must not be empty'),
 		)
+	})
+
+	// T3-C7. A departure the expectation itself carries makes the poll unsatisfiable: under `exact`
+	// the reading must equal `text` and without it the reading must contain `text`, so either way a
+	// reading that satisfies the arrival carries the departure too. The reader tally is what shows
+	// the refusal is eager rather than a timeout the budget paid for.
+	it('refuses a departure the expectation carries, before it reads anything', async () => {
+		let reads = 0
+
+		await expect(
+			waitForText(
+				'the ledger arrives',
+				() => {
+					reads += 1
+					return 'Two entries waiting'
+				},
+				'Two entries',
+				{ absent: 'entries' },
+			),
+		).rejects.toThrow(new Error('Text departure must not appear in the text expectation'))
+
+		// A departure equal to the expectation is the same contradiction, and `exact` does not rescue
+		// it: a reading that equals `Two entries` carries `Two entries`.
+		await expect(
+			waitForText(
+				'the ledger arrives',
+				() => {
+					reads += 1
+					return 'Two entries'
+				},
+				'Two entries',
+				{ absent: 'Two entries', exact: true },
+			),
+		).rejects.toThrow(new Error('Text departure must not appear in the text expectation'))
+
+		expect(reads).toBe(0)
+
+		// The control: a departure the expectation does not carry is satisfiable, and the wait takes
+		// its readings as it always did, under `exact` and without it alike.
+		await expect(
+			waitForText('the ledger arrives', () => 'Two entries waiting', 'Two entries', {
+				absent: 'Loading',
+			}),
+		).resolves.toBe('Two entries waiting')
+		await expect(
+			waitForText('the heading settles', () => 'Ledger', 'Ledger', {
+				absent: 'Loading',
+				exact: true,
+			}),
+		).resolves.toBe('Ledger')
 	})
 
 	it('propagates a reader throw unchanged', async () => {
@@ -1065,6 +1116,33 @@ const REFUSED_SCENARIO: StateScenario<DisclosureState, DisclosureEvent, Disclosu
 	assert: assertDisclosure,
 }
 
+// T3-C12. One spelling of a refused build, reached by the bare runner here and by the browser
+// harness in `tests/src/browser/factories.test.ts`.
+describe('buildRefusal', () => {
+	it('opens the message with the row name and carries the refusal by identity', () => {
+		const cause = new Error('no fixture')
+		const built = buildRefusal('closed opens through the summary', cause)
+
+		expect(built).toBeInstanceOf(Error)
+		expect(built.message).toBe('closed opens through the summary: build refused')
+		expect(built.cause === cause).toBe(true)
+	})
+
+	// The runner raises this one rather than writing the sentence again, so a respelling in either
+	// place moves both readings together.
+	it('is the sentence the bare runner raises for a refused row', async () => {
+		const refusal = new Error('no fixture')
+
+		const thrown = await executeScenarios(MISMATCHED_SCENARIOS, () => {
+			throw refusal
+		}).catch((error: unknown) => error)
+
+		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
+		expect(failure.message).toBe(buildRefusal('show leaves it closed', refusal).message)
+		expect(failure.cause === refusal).toBe(true)
+	})
+})
+
 describe('executeScenario', () => {
 	it('drives arrange, act, and assert in order, each against its own part of the transition', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
@@ -1247,5 +1325,16 @@ describe('STATECHART_STATUSES', () => {
 			'passed',
 			'failed',
 		])
+	})
+
+	// T3-C16. The transcribed `@example` from `src/core/constants.ts`: the terminal pair is reached
+	// by name, so a gate that copies the form keeps the pair it asked for if the tuple ever gains a
+	// member, and a name the union does not carry fails the typecheck here.
+	it('reaches the terminal pair by name rather than by a tuple index', () => {
+		const terminal = new Set<StatechartStatus>(['passed', 'failed'])
+
+		expect(terminal.has('running')).toBe(false)
+		expect([...terminal]).toStrictEqual(['passed', 'failed'])
+		expect([...terminal].every((member) => STATECHART_STATUSES.includes(member))).toBe(true)
 	})
 })
