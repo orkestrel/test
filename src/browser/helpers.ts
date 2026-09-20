@@ -1671,18 +1671,295 @@ export function removeDatabase(name: string): Promise<void> {
 }
 
 /**
- * Parses one computed CSS color value into straight sRGB channels.
+ * Converts normalized encoded sRGB channels to the clipped paint scale.
  *
- * @param value - A computed `rgb()`, `rgba()`, or `color(srgb …)` value.
- * @returns The color's channels, or `undefined` when the value names no color this reader speaks.
+ * @param red - The encoded red channel, with `1` representing full intensity.
+ * @param green - The encoded green channel.
+ * @param blue - The encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @example
+ * ```ts
+ * convertSRGB(1.2, -0.1, 0.5) // [255, 0, 127.5, 1]
+ * ```
+ */
+export function convertSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	return Object.freeze([
+		Math.min(255, Math.max(0, red * 255)),
+		Math.min(255, Math.max(0, green * 255)),
+		Math.min(255, Math.max(0, blue * 255)),
+		Math.min(1, Math.max(0, alpha)),
+	])
+}
+
+/**
+ * Converts linear sRGB channels to encoded, clipped paint channels.
+ *
+ * @param red - The linear red channel on the normalized scale.
+ * @param green - The linear green channel.
+ * @param blue - The linear blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
  *
  * @remarks
- * A computed color resolves to `rgb()` or `rgba()` for every legacy source, and a `color-mix()`
- * declaration resolves to `color(srgb r g b [/ a])` with channels on the 0–1 scale. Both forms are
- * read here and nothing else is: a keyword, a hex triple, an empty string from a detached element,
- * and a color space the cascade never hands back all return `undefined`. Absence is the answer
- * rather than a transparent color, so a caller decides what an unreadable value means instead of
- * measuring a black it never saw.
+ * Applies the CSS Color 4 extended sRGB transfer function before clipping.
+ *
+ * @example
+ * ```ts
+ * convertLinearSRGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertLinearSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [encodedRed = 0, encodedGreen = 0, encodedBlue = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 0.0031308
+			? 12.92 * channel
+			: Math.sign(channel) * (1.055 * Math.abs(channel) ** (1 / 2.4) - 0.055),
+	)
+	return convertSRGB(encodedRed, encodedGreen, encodedBlue, alpha)
+}
+
+/**
+ * Converts D65 XYZ coordinates to clipped sRGB paint channels.
+ *
+ * @param x - The normalized X coordinate.
+ * @param y - The normalized Y coordinate.
+ * @param z - The normalized Z coordinate.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Uses the CSS Color 4 XYZ D65 to linear sRGB matrix, then the sRGB transfer function.
+ *
+ * @example
+ * ```ts
+ * convertXYZD65(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertXYZD65(x: number, y: number, z: number, alpha = 1): Color {
+	return convertLinearSRGB(
+		(12831 / 3959) * x - (329 / 214) * y - (1974 / 3959) * z,
+		(-851781 / 878810) * x + (1648619 / 878810) * y + (36519 / 878810) * z,
+		(705 / 12673) * x - (2585 / 12673) * y + (705 / 667) * z,
+		alpha,
+	)
+}
+
+/**
+ * Converts D50 XYZ coordinates to clipped sRGB paint channels.
+ *
+ * @param x - The normalized X coordinate relative to D50.
+ * @param y - The normalized Y coordinate relative to D50.
+ * @param z - The normalized Z coordinate relative to D50.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Applies the CSS Color 4 Bradford adaptation from D50 to D65 before converting to sRGB.
+ *
+ * @example
+ * ```ts
+ * convertXYZD50(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertXYZD50(x: number, y: number, z: number, alpha = 1): Color {
+	return convertXYZD65(
+		0.955473421488075 * x - 0.02309845494876471 * y + 0.06325924320057072 * z,
+		-0.0283697093338637 * x + 1.0099953980813041 * y + 0.021041441191917323 * z,
+		0.012314014864481998 * x - 0.020507649298898964 * y + 1.330365926242124 * z,
+		alpha,
+	)
+}
+
+/**
+ * Converts OKLab coordinates to clipped sRGB paint channels.
+ *
+ * @param lightness - The OKLab lightness on the 0–1 scale.
+ * @param a - The signed green-to-red axis.
+ * @param b - The signed blue-to-yellow axis.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Cubes the transformed cone responses before applying the linear sRGB matrix.
+ *
+ * @example
+ * ```ts
+ * convertOKLab(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertOKLab(lightness: number, a: number, b: number, alpha = 1): Color {
+	const long = (lightness + 0.3963377773761749 * a + 0.2158037573099136 * b) ** 3
+	const medium = (lightness - 0.1055613458156586 * a - 0.0638541728258133 * b) ** 3
+	const short = (lightness - 0.0894841775298119 * a - 1.2914855480194092 * b) ** 3
+	return convertLinearSRGB(
+		4.076741661347994 * long - 3.307711590408193 * medium + 0.230969929060199 * short,
+		-1.2684380040921763 * long + 2.6097574006633715 * medium - 0.3413193965711952 * short,
+		-0.0041960865418371 * long - 0.7034186144594493 * medium + 1.7076147010012863 * short,
+		alpha,
+	)
+}
+
+/**
+ * Converts CIE Lab coordinates relative to D50 to clipped sRGB paint channels.
+ *
+ * @param lightness - The CIE lightness on the 0–100 scale.
+ * @param a - The signed green-to-red axis.
+ * @param b - The signed blue-to-yellow axis.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Resolves the CSS Color 4 Lab curve against the D50 white point before adapting to D65.
+ *
+ * @example
+ * ```ts
+ * convertLab(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertLab(lightness: number, a: number, b: number, alpha = 1): Color {
+	const luminance = (lightness + 16) / 116
+	const [x = 0, y = 0, z = 0] = [luminance + a / 500, luminance, luminance - b / 200].map(
+		(channel) => (channel ** 3 > 216 / 24389 ? channel ** 3 : (116 * channel - 16) / (24389 / 27)),
+	)
+	return convertXYZD50(x * (0.3457 / 0.3585), y, z * ((1 - 0.3457 - 0.3585) / 0.3585), alpha)
+}
+
+/**
+ * Converts encoded Display P3 channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the extended sRGB transfer curve and uses the CSS Color 4 P3 to XYZ D65 matrix.
+ *
+ * @example
+ * ```ts
+ * convertDisplayP3(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertDisplayP3(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 0.04045
+			? channel / 12.92
+			: Math.sign(channel) * ((Math.abs(channel) + 0.055) / 1.055) ** 2.4,
+	)
+	return convertXYZD65(
+		(608311 / 1250200) * r + (189793 / 714400) * g + (198249 / 1000160) * b,
+		(35783 / 156275) * r + (247089 / 357200) * g + (198249 / 2500400) * b,
+		(32229 / 714400) * g + (5220557 / 5000800) * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded A98 RGB channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the signed 563/256 power curve and uses the CSS Color 4 A98 RGB to XYZ D65 matrix.
+ *
+ * @example
+ * ```ts
+ * convertA98RGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertA98RGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map(
+		(channel) => Math.sign(channel) * Math.abs(channel) ** (563 / 256),
+	)
+	return convertXYZD65(
+		(573536 / 994567) * r + (263643 / 1420810) * g + (187206 / 994567) * b,
+		(591459 / 1989134) * r + (6239551 / 9945670) * g + (374412 / 4972835) * b,
+		(53769 / 1989134) * r + (351524 / 4972835) * g + (4929758 / 4972835) * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded ProPhoto RGB channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the signed ProPhoto curve, converts to XYZ D50, and adapts to D65 before clipping.
+ *
+ * @example
+ * ```ts
+ * convertProPhotoRGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertProPhotoRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 16 / 512 ? channel / 16 : Math.sign(channel) * Math.abs(channel) ** 1.8,
+	)
+	return convertXYZD50(
+		0.7977666449006423 * r + 0.13518129740053308 * g + 0.0313477341283922 * b,
+		0.2880748288194013 * r + 0.711835234241873 * g + 0.00008993693872564 * b,
+		0.8251046025104602 * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded Rec. 2020 channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Uses the piecewise Rec. 2020 transfer curve Chromium computes and the CSS Color 4 XYZ matrix.
+ *
+ * @example
+ * ```ts
+ * convertRec2020(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertRec2020(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) < 0.018053968510807 * 4.5
+			? channel / 4.5
+			: Math.sign(channel) *
+				((Math.abs(channel) + 1.09929682680944 - 1) / 1.09929682680944) ** (1 / 0.45),
+	)
+	return convertXYZD65(
+		(63426534 / 99577255) * r + (20160776 / 139408157) * g + (47086771 / 278816314) * b,
+		(26158966 / 99577255) * r + (472592308 / 697040785) * g + (8267143 / 139408157) * b,
+		(19567812 / 697040785) * g + (295819943 / 278816314) * b,
+		alpha,
+	)
+}
+
+/**
+ * Parses computed CSS Color 4 values into clipped straight sRGB channels.
+ *
+ * @param value - A computed `rgb()`, `rgba()`, `oklab()`, `oklch()`, `lab()`, `lch()`, or `color()` value.
+ * @returns Frozen channels, or `undefined` for an unsupported syntax or non-finite channel.
+ *
+ * @remarks
+ * Reads signed channels, scientific notation, percentage lightness, degree hues, and `none` as
+ * zero. The `color()` spaces are `srgb`, `srgb-linear`, `display-p3`, `a98-rgb`, `prophoto-rgb`,
+ * `rec2020`, `xyz`, `xyz-d50`, and `xyz-d65`. Conversion uses the CSS Color 4 matrices and white
+ * point adaptation, then clips each encoded sRGB channel to 0–255 rather than gamut-mapping it.
+ * Alpha is clipped to 0–1. Keywords, hex colors, unresolved expressions, and non-finite calculations
+ * such as `color(srgb calc(infinity) 0 0)` remain unreadable; use {@link parseCSSColor} to resolve
+ * ordinary authored expressions through the cascade.
  *
  * @example
  * ```ts
@@ -1691,34 +1968,80 @@ export function removeDatabase(name: string): Promise<void> {
  * ```
  */
 export function parseColor(value: string): Color | undefined {
-	const modern =
-		/^color\(srgb\s+(?<red>[\d.]+)\s+(?<green>[\d.]+)\s+(?<blue>[\d.]+)(?:\s*\/\s*(?<alpha>[\d.]+))?\)$/u.exec(
-			value,
+	const match = /^(?<syntax>rgba?|oklab|oklch|lab|lch|color)\((?<body>[^()]*)\)$/u.exec(value)
+	if (match?.groups === undefined) return undefined
+	const { syntax, body = '' } = match.groups
+	const legacy = syntax === 'rgb' || syntax === 'rgba'
+	const polar = syntax === 'oklch' || syntax === 'lch'
+	const perceptual =
+		syntax === 'oklab' || syntax === 'oklch' || syntax === 'lab' || syntax === 'lch'
+	const tokens = body.trim().split(legacy && body.includes(',') ? /\s*,\s*/u : /\s*\/\s*|\s+/u)
+	const space = syntax === 'color' ? tokens.shift() : syntax
+	if (tokens.length !== 3 && tokens.length !== 4) return undefined
+	if (!legacy && body.includes(',')) return undefined
+	if (body.split('/').length > 2) return undefined
+	if (body.includes('/') && (tokens.length !== 4 || !/\/\s*[^\s/]+\s*$/u.test(body)))
+		return undefined
+	if (!(legacy && body.includes(',')) && tokens.length === 4 && !body.includes('/'))
+		return undefined
+	const parts = tokens.map((token, index) => {
+		if (token === 'none') return 0
+		const part = /^(?<number>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?<unit>%|deg)?$/u.exec(
+			token,
 		)
-	const legacy = /^rgba?\((?<channels>[^)]*)\)$/u.exec(value)
-	const parts =
-		modern?.groups === undefined
-			? (legacy?.groups?.channels ?? '')
-					.split(/[\s,/]+/u)
-					.filter((part) => part.length > 0)
-					.map((part) => Number.parseFloat(part))
-			: [
-					Number.parseFloat(modern.groups.red ?? '') * 255,
-					Number.parseFloat(modern.groups.green ?? '') * 255,
-					Number.parseFloat(modern.groups.blue ?? '') * 255,
-					modern.groups.alpha === undefined ? 1 : Number.parseFloat(modern.groups.alpha),
-				]
-	const [red, green, blue, alpha = 1] = parts
-	if (red === undefined || green === undefined || blue === undefined) return undefined
-	if (![red, green, blue, alpha].every((channel) => Number.isFinite(channel))) return undefined
-	return Object.freeze([red, green, blue, alpha])
+		if (part?.groups === undefined) return Number.NaN
+		const number = Number(part.groups.number)
+		const unit = part.groups.unit
+		if (unit === 'deg') return polar && index === 2 ? number : Number.NaN
+		if (unit !== '%') return number
+		if (index === 3 || syntax === 'color') return number / 100
+		if (legacy) return (number * 255) / 100
+		if (index === 0) return syntax === 'oklab' || syntax === 'oklch' ? number / 100 : number
+		return Number.NaN
+	})
+	const [first, second, third, alpha = 1] = parts
+	if (first === undefined || second === undefined || third === undefined) return undefined
+	if (!parts.every((part) => Number.isFinite(part))) return undefined
+	if (legacy) return convertSRGB(first / 255, second / 255, third / 255, alpha)
+	if (perceptual) {
+		const lightness = Math.max(
+			0,
+			Math.min(syntax === 'oklab' || syntax === 'oklch' ? 1 : 100, first),
+		)
+		const a = polar ? Math.max(0, second) * Math.cos((third * Math.PI) / 180) : second
+		const b = polar ? Math.max(0, second) * Math.sin((third * Math.PI) / 180) : third
+		return syntax === 'oklab' || syntax === 'oklch'
+			? convertOKLab(lightness, a, b, alpha)
+			: convertLab(lightness, a, b, alpha)
+	}
+	switch (space) {
+		case 'srgb':
+			return convertSRGB(first, second, third, alpha)
+		case 'srgb-linear':
+			return convertLinearSRGB(first, second, third, alpha)
+		case 'display-p3':
+			return convertDisplayP3(first, second, third, alpha)
+		case 'a98-rgb':
+			return convertA98RGB(first, second, third, alpha)
+		case 'prophoto-rgb':
+			return convertProPhotoRGB(first, second, third, alpha)
+		case 'rec2020':
+			return convertRec2020(first, second, third, alpha)
+		case 'xyz':
+		case 'xyz-d65':
+			return convertXYZD65(first, second, third, alpha)
+		case 'xyz-d50':
+			return convertXYZD50(first, second, third, alpha)
+		default:
+			return undefined
+	}
 }
 
 /**
  * Resolves any CSS color expression to straight sRGB channels, by asking the browser.
  *
  * @param value - Any value the `color` property accepts: a keyword, a hex triple, a `var()`
- * reference, a `color-mix()`, or an already-computed `rgb()`.
+ * reference, a `color-mix()`, or a computed CSS Color 4 value.
  * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value or the
  * computed result names no color {@link parseColor} speaks.
  *
@@ -1728,6 +2051,8 @@ export function parseColor(value: string): Color | undefined {
  * cascade, and reads back what the engine computed — which is the only way a keyword, a hex triple,
  * or a `var()` reference becomes channels at all. The read itself goes through `parseColor`, so both
  * halves agree on what a computed value means.
+ * Modern perceptual and predefined RGB/XYZ spaces resolve through that parser's conversions;
+ * out-of-gamut sRGB channels are clipped to 0–255 after conversion.
  *
  * The probe is mounted, because an unmounted element inherits nothing and a `var()` reference to a
  * token declared on `:root` would resolve to the initial value instead. It is removed in a `finally`,
@@ -1861,16 +2186,23 @@ export function measureContrast(front: Color, back: Color): number {
 }
 
 /**
- * Collects the painted layers standing between one element and the surface it sits on.
+ * Collects readable background color layers and refuses an unreadable painted layer.
  *
  * @param element - The element to walk up from.
  * @returns Every layer the walk paints, the element's own first and the deepest last.
+ * @throws Thrown when a painted background color is unreadable; the error names the element and
+ * its computed value.
  *
  * @remarks
  * A surface token paints one ancestor while every element between it and the text paints nothing,
  * so a backdrop is found by walking up rather than by reading the element's own `background-color`,
  * which is almost always transparent. A fully transparent layer paints nothing and is left out, and
  * the walk stops at the first fully opaque layer, because nothing above that layer is visible.
+ * Legacy and modern CSS Color 4 values resolve through {@link parseColor}, with sRGB channels
+ * clipped after conversion. Non-finite calculations such as `color(srgb calc(infinity) 0 0)` are
+ * deliberately unreadable. An unreadable value with an explicit zero alpha paints nothing and is
+ * skipped. An empty detached-element reading paints nothing too. Background images remain outside
+ * this color reader.
  *
  * The stack is what tells a resolved backdrop from an assumed one: the walk reached an opaque
  * surface exactly when its last layer's alpha is `1`. {@link readContrast} refuses on that reading,
@@ -1886,8 +2218,16 @@ export function measureContrast(front: Color, back: Color): number {
 export function readLayers(element: Element): readonly Color[] {
 	const layers: Color[] = []
 	for (let node: Element | null = element; node !== null; node = node.parentElement) {
-		const layer = parseColor(getComputedStyle(node).backgroundColor)
-		if (layer === undefined || layer[3] === 0) continue
+		const computed = getComputedStyle(node).backgroundColor
+		if (computed === '') continue
+		const layer = parseColor(computed)
+		if (layer === undefined) {
+			if (/\/\s*(?:0(?:\.0*)?|none)\s*\)$/u.test(computed)) continue
+			throw new Error(
+				`Computed background color is unreadable on ${node.localName}${node.id === '' ? '' : `#${node.id}`}: ${computed}`,
+			)
+		}
+		if (layer[3] === 0) continue
 		layers.push(layer)
 		if (layer[3] >= 1) break
 	}
@@ -1900,10 +2240,13 @@ export function readLayers(element: Element): readonly Color[] {
  * @param element - The element whose backdrop to resolve.
  * @param floor - The opaque color the walk ends on when nothing above it paints.
  * @returns The composited color a reader sees behind the element.
+ * @throws Thrown when the backdrop contains an unreadable painted color layer.
  *
  * @remarks
  * The layers {@link readLayers} collects composite top-over-bottom onto the floor, so a 3% surface
  * tint reads as a tint over what shows through it rather than as a full-strength paint.
+ * Those layers include the modern CSS Color 4 spaces, converted and clipped to sRGB by
+ * {@link parseColor}; an unreadable painted layer refuses the entire reading.
  *
  * The floor is required, because this leaf never guesses what a document sits on. Pass
  * {@link CANVAS_COLOR} for the page a browser paints behind an unstyled document, or the color of
@@ -1930,7 +2273,8 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * would show through instead of assuming one.
  * @returns The relative-luminance contrast ratio.
  * @throws Thrown when the element exposes no computed foreground color, and — with `floor` omitted
- * — when the walk from the element upwards reaches no opaque layer.
+ * — when the walk from the element upwards reaches no opaque layer. An unreadable painted
+ * background layer throws even when a floor is supplied.
  *
  * @remarks
  * A transparent or translucent background resolves through the element's ancestors: every painted
@@ -1938,6 +2282,8 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * base, so a 3% surface tint reads as a tint over what shows through it rather than as a
  * full-strength paint. A translucent foreground then resolves against that effective background
  * before luminance is measured.
+ * Text and background colors can use the modern CSS Color 4 spaces {@link parseColor} reads;
+ * each is converted to sRGB and clipped before composition and luminance measurement.
  *
  * With `floor` omitted, the walk from the target upwards must reach a fully opaque layer: the
  * measurement throws rather than assuming a white canvas wherever that canvas would still be part
@@ -1956,7 +2302,7 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * ```ts
  * const container = render('<p style="background: #000; color: #fff">Ready</p>')
  * readContrast(requireValue(container.firstElementChild)) // 21
- * readContrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21, and never refuses
+ * readContrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21
  * ```
  */
 export function readContrast(element: Element, floor?: Color): number {
@@ -1985,6 +2331,7 @@ export function readContrast(element: Element, floor?: Color): number {
  * @param worn - The element the control's focus chrome is painted onto. Default: `control`.
  * @returns The strongest ratio the painted focus chrome reaches, or `undefined` when the control is
  * not showing `:focus-visible` or the cascade paints no chrome of its own.
+ * @throws Thrown when the focused control's backdrop contains an unreadable painted color layer.
  *
  * @remarks
  * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
@@ -2008,6 +2355,9 @@ export function readContrast(element: Element, floor?: Color): number {
  * color names neither. A focus style that only changes the control's own fill reports `undefined`
  * too: the resting fill is gone by the time focus is on the control, and this never moves focus to
  * go and read it.
+ * Outline and shadow colors include `oklch()`, `oklab()`, `lab()`, `lch()`, and predefined
+ * `color()` spaces. Each readable color converts to clipped sRGB through {@link parseColor}, and
+ * the result remains a contrast ratio rather than a ring width.
  *
  * @example
  * ```ts
@@ -2026,7 +2376,9 @@ export function readRing(control: Element, worn?: Element): number | undefined {
 		Number.parseFloat(declared.outlineWidth) === 0
 			? undefined
 			: parseColor(declared.outlineColor)
-	const shadow = parseColor(/(?:rgba?|color)\([^)]*\)/u.exec(declared.boxShadow)?.[0] ?? '')
+	const shadow = parseColor(
+		/(?:rgba?|color|oklab|oklch|lab|lch)\([^)]*\)/u.exec(declared.boxShadow)?.[0] ?? '',
+	)
 	const ratios: number[] = []
 	for (const painted of [outline, shadow]) {
 		if (painted === undefined) continue

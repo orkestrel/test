@@ -17,6 +17,16 @@ import {
 	clickDisclosure,
 	commitInput,
 	computeNamePattern,
+	convertSRGB,
+	convertLinearSRGB,
+	convertXYZD65,
+	convertXYZD50,
+	convertOKLab,
+	convertLab,
+	convertDisplayP3,
+	convertA98RGB,
+	convertProPhotoRGB,
+	convertRec2020,
 	describeFocus,
 	describeTree,
 	expandCaptures,
@@ -2342,7 +2352,7 @@ describe('parseColor', () => {
 		expect(parseColor('rebeccapurple')).toBeUndefined()
 		expect(parseColor('#ffffff')).toBeUndefined()
 		expect(parseColor('')).toBeUndefined()
-		expect(parseColor('lab(50% 40 59.5)')).toBeUndefined()
+		expect(parseColor('color(unread 0.2 0.3 0.4)')).toBeUndefined()
 	})
 
 	it('reads what this browser actually computes, rather than only what a literal declares', () => {
@@ -3979,5 +3989,467 @@ describe('the browser barrel', () => {
 		const variants: readonly CaptureVariant[] = [declared]
 
 		expect(expandCaptures(['start'], variants)).toStrictEqual(['start--dark-390.png'])
+	})
+})
+
+describe('modern paint readings', () => {
+	it('reads oklch(0.208 0.042 265.755) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: oklch(0.208 0.042 265.755)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, oklch(0.208 0.042 265.755) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('oklch(0.208 0.042 265.755)')), control)).toBe(true)
+	})
+
+	it('reads oklab(60% -0.04 0.08 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: oklab(60% -0.04 0.08 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, oklab(60% -0.04 0.08 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('oklab(60% -0.04 0.08 / 0.6)')), control)).toBe(
+			true,
+		)
+	})
+
+	it('reads lab(60% -10 20 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: lab(60% -10 20 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, lab(60% -10 20 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('lab(60% -10 20 / 0.6)')), control)).toBe(true)
+	})
+
+	it('reads lch(60% 30 260 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: lch(60% 30 260 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, lch(60% 30 260 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('lch(60% 30 260 / 0.6)')), control)).toBe(true)
+	})
+
+	it('reads color(srgb 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(srgb 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(srgb 0.25 0.4 0.3 / 0.6)')), control)).toBe(
+			true,
+		)
+	})
+
+	it('reads color(srgb-linear 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture(
+			'<p style="color: color(srgb-linear 0.25 0.4 0.3 / 0.6)">Paint</p>',
+		)
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb-linear 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(srgb-linear 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(display-p3 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture(
+			'<p style="color: color(display-p3 0.25 0.4 0.3 / 0.6)">Paint</p>',
+		)
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(display-p3 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(display-p3 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(a98-rgb 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(a98-rgb 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(a98-rgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(a98-rgb 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(prophoto-rgb 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture(
+			'<p style="color: color(prophoto-rgb 0.25 0.4 0.3 / 0.6)">Paint</p>',
+		)
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(prophoto-rgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(prophoto-rgb 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(rec2020 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(rec2020 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(rec2020 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(rec2020 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(xyz 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(xyz 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(xyz 0.25 0.4 0.3 / 0.6)')), control)).toBe(
+			true,
+		)
+	})
+
+	it('reads color(xyz-d50 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(xyz-d50 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d50 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(xyz-d50 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('reads color(xyz-d65 0.25 0.4 0.3 / 0.6) against the browser sRGB control', () => {
+		const container = buildFixture('<p style="color: color(xyz-d65 0.25 0.4 0.3 / 0.6)">Paint</p>')
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d65 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		expect(matchesColor(requireValue(parseColor(computed)), control)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(xyz-d65 0.25 0.4 0.3 / 0.6)')), control),
+		).toBe(true)
+	})
+
+	it('clips the signed channels of an out-of-gamut color-mix tint', () => {
+		const container = buildFixture(
+			'<p style="color: color-mix(in srgb, oklch(0.7 0.4 30) 90%, white)">Tint</p>',
+		)
+		const computed = readStyle(requireValue(container.querySelector('p')), 'color')
+		expect(computed).toMatch(/^color\(srgb 1\.\d+ -0\.\d+ -0\.\d+\)$/u)
+		expect(parseColor(computed)).toStrictEqual([255, 0, 0, 1])
+	})
+
+	it('measures the dark oklch text against the browser sRGB control', () => {
+		const container = buildFixture(
+			'<p style="color: oklch(0.208 0.042 265.755); background: white">Ink</p>',
+		)
+		const foreground = requireValue(
+			parseCSSColor('color-mix(in srgb, oklch(0.208 0.042 265.755) 100%, transparent)'),
+		)
+		expect(readContrast(requireValue(container.querySelector('p')))).toBeCloseTo(
+			measureContrast(foreground, [255, 255, 255, 1]),
+			3,
+		)
+	})
+
+	it('measures the light oklch text on an oklch surface against browser controls', () => {
+		const container = buildFixture(
+			'<p style="color: oklch(0.929 0.013 255.508); background: oklch(0.21 0.013 256)">Ink</p>',
+		)
+		const foreground = requireValue(
+			parseCSSColor('color-mix(in srgb, oklch(0.929 0.013 255.508) 100%, transparent)'),
+		)
+		const background = requireValue(
+			parseCSSColor('color-mix(in srgb, oklch(0.21 0.013 256) 100%, transparent)'),
+		)
+		expect(readContrast(requireValue(container.querySelector('p')))).toBeCloseTo(
+			measureContrast(foreground, background),
+			3,
+		)
+	})
+
+	it('measures the contrast ratio of an oklch box-shadow on a focused control', async () => {
+		buildStylesheet(
+			'.modern-ring:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(0.208 0.042 265.755) }',
+		)
+		buildFixture(
+			'<div style="background: white"><button class="modern-ring" type="button">Modern ring</button></div>',
+		)
+		const control = resolveRendered('Modern ring')
+		control.focus()
+		await userEvent.keyboard('{ArrowRight}')
+		expect(control.matches(':focus-visible')).toBe(true)
+		expect(readStyle(control, 'box-shadow')).toContain('oklch(')
+		const ring = requireValue(
+			parseCSSColor('color-mix(in srgb, oklch(0.208 0.042 265.755) 100%, transparent)'),
+		)
+		expect(readRing(control)).toBeCloseTo(measureContrast(ring, [255, 255, 255, 1]), 3)
+	})
+
+	it('refuses an unreadable painted layer through every backdrop reader', async () => {
+		const container = buildFixture(
+			'<div style="background: white"><div id="unreadable-paint" style="background-color: color(srgb calc(infinity) 0 0)"><button type="button" style="color: black; background: transparent; outline: 3px solid black">Unreadable paint</button></div></div>',
+		)
+		const layer = requireValue(container.querySelector('#unreadable-paint'))
+		const control = resolveRendered('Unreadable paint')
+		control.focus()
+		await userEvent.keyboard('{ArrowRight}')
+		expect(control.matches(':focus-visible')).toBe(true)
+		const computed = readStyle(layer, 'background-color')
+		expect(computed).toBe('color(srgb calc(infinity) 0 0)')
+		expect(parseColor(computed)).toBeUndefined()
+		expect(() => readLayers(control)).toThrow(
+			/div#unreadable-paint.*color\(srgb calc\(infinity\) 0 0\)/u,
+		)
+		expect(() => readBackdrop(control, CANVAS_COLOR)).toThrow(computed)
+		expect(() => readContrast(control, CANVAS_COLOR)).toThrow(computed)
+		expect(() => readRing(control)).toThrow(computed)
+	})
+})
+
+describe('convertSRGB', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		expect(convertSRGB(0.25, 0.4, 0.3, 0.6)).toStrictEqual([63.75, 102, 76.5, 0.6])
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb -0.1 0.2 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertSRGB(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertSRGB(-0.1, 0.2, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(srgb -0.1 0.2 1.2)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertSRGB(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertSRGB(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertLinearSRGB', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb-linear 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(srgb-linear -0.001 0.002 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertLinearSRGB(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertLinearSRGB(-0.001, 0.002, 1.2), signed)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(srgb-linear -0.001 0.002 1.2)')), signed),
+		).toBe(true)
+		expect(Object.isFrozen(convertLinearSRGB(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertLinearSRGB(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertXYZD65', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d65 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d65 -0.1 0.2 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertXYZD65(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertXYZD65(-0.1, 0.2, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(xyz-d65 -0.1 0.2 1.2)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertXYZD65(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertXYZD65(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertXYZD50', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d50 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(xyz-d50 -0.1 0.2 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertXYZD50(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertXYZD50(-0.1, 0.2, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(xyz-d50 -0.1 0.2 1.2)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertXYZD50(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertXYZD50(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertOKLab', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, oklab( 0.6 -0.04 0.08 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, oklab( 0.7 0.3 -0.3) 100%, transparent)'),
+		)
+		expect(matchesColor(convertOKLab(0.6, -0.04, 0.08, 0.6), control)).toBe(true)
+		expect(matchesColor(convertOKLab(0.7, 0.3, -0.3), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('oklab( 0.7 0.3 -0.3)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertOKLab(0.6, -0.04, 0.08, 0.6))).toBe(true)
+		expect(convertOKLab(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertLab', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, lab( 60 -10 20 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, lab( 4 -10 20) 100%, transparent)'),
+		)
+		expect(matchesColor(convertLab(60, -10, 20, 0.6), control)).toBe(true)
+		expect(matchesColor(convertLab(4, -10, 20), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('lab( 4 -10 20)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertLab(60, -10, 20, 0.6))).toBe(true)
+		expect(convertLab(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertDisplayP3', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(display-p3 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(display-p3 -0.01 0.03 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertDisplayP3(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertDisplayP3(-0.01, 0.03, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(display-p3 -0.01 0.03 1.2)')), signed)).toBe(
+			true,
+		)
+		expect(Object.isFrozen(convertDisplayP3(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertDisplayP3(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertA98RGB', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(a98-rgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(a98-rgb -0.1 0.2 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertA98RGB(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertA98RGB(-0.1, 0.2, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(a98-rgb -0.1 0.2 1.2)')), signed)).toBe(true)
+		expect(Object.isFrozen(convertA98RGB(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertA98RGB(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertProPhotoRGB', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(prophoto-rgb 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(prophoto-rgb -0.01 0.02 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertProPhotoRGB(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertProPhotoRGB(-0.01, 0.02, 1.2), signed)).toBe(true)
+		expect(
+			matchesColor(requireValue(parseColor('color(prophoto-rgb -0.01 0.02 1.2)')), signed),
+		).toBe(true)
+		expect(Object.isFrozen(convertProPhotoRGB(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertProPhotoRGB(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('convertRec2020', () => {
+	it('agrees with browser sRGB controls for translucent and signed channels', () => {
+		const control = requireValue(
+			parseCSSColor('color-mix(in srgb, color(rec2020 0.25 0.4 0.3 / 0.6) 100%, transparent)'),
+		)
+		const signed = requireValue(
+			parseCSSColor('color-mix(in srgb, color(rec2020 -0.01 0.07 1.2) 100%, transparent)'),
+		)
+		expect(matchesColor(convertRec2020(0.25, 0.4, 0.3, 0.6), control)).toBe(true)
+		expect(matchesColor(convertRec2020(-0.01, 0.07, 1.2), signed)).toBe(true)
+		expect(matchesColor(requireValue(parseColor('color(rec2020 -0.01 0.07 1.2)')), signed)).toBe(
+			true,
+		)
+		expect(Object.isFrozen(convertRec2020(0.25, 0.4, 0.3, 0.6))).toBe(true)
+		expect(convertRec2020(0, 0, 0)).toStrictEqual([0, 0, 0, 1])
+	})
+})
+
+describe('paint parser boundaries', () => {
+	it('reads percentage lightness, degree hues, scientific notation, and missing components', () => {
+		expect(
+			matchesColor(
+				requireValue(parseColor('oklch(70% 0.08 -30deg / 50%)')),
+				requireValue(
+					parseCSSColor('color-mix(in srgb, oklch(70% 0.08 -30deg / 50%) 100%, transparent)'),
+				),
+			),
+		).toBe(true)
+		expect(
+			matchesColor(
+				requireValue(parseColor('lch(60% 30 -100deg / 50%)')),
+				requireValue(
+					parseCSSColor('color-mix(in srgb, lch(60% 30 -100deg / 50%) 100%, transparent)'),
+				),
+			),
+		).toBe(true)
+		expect(parseColor('color(srgb -1e-1 +2e-1 1.2 / 50%)')).toStrictEqual([0, 51, 255, 0.5])
+		expect(parseColor('oklch(none none none / none)')).toStrictEqual([0, 0, 0, 0])
+		expect(parseColor('oklab(none none none)')).toStrictEqual([0, 0, 0, 1])
+		expect(parseColor('lab(none none none)')).toStrictEqual([0, 0, 0, 1])
+		expect(parseColor('lch(none none none)')).toStrictEqual([0, 0, 0, 1])
+		expect(parseColor('color(srgb none none none)')).toStrictEqual([0, 0, 0, 1])
+		expect(parseColor('rgb(-10, +20, 300)')).toStrictEqual([0, 20, 255, 1])
+		expect(parseColor('rgba(-10, +20, 300, 2)')).toStrictEqual([0, 20, 255, 1])
+		expect(parseColor('rgb(100% 0% 50% / -1)')).toStrictEqual([255, 0, 127.5, 0])
+	})
+
+	it('refuses malformed components, separators, units, and non-finite values', () => {
+		expect(parseColor('rgb(1 / 2 3)')).toBeUndefined()
+		expect(parseColor('color(srgb 1 / 2 3)')).toBeUndefined()
+		expect(parseColor('oklab(0.5 0 0 /)')).toBeUndefined()
+		expect(parseColor('rgb(1,,2,3)')).toBeUndefined()
+		expect(parseColor('rgb(1 2 3 4 5)')).toBeUndefined()
+		expect(parseColor('rgb(1px 2 3)')).toBeUndefined()
+		expect(parseColor('oklab(0.5 0 30deg)')).toBeUndefined()
+		expect(parseColor('oklch(0.5 0.2 50%)')).toBeUndefined()
+		expect(parseColor('color(srgb 1e999 0 0)')).toBeUndefined()
+		expect(parseColor('color(srgb calc(infinity) 0 0)')).toBeUndefined()
+		expect(parseColor('color(srgb NaN 0 0)')).toBeUndefined()
+		expect(parseColor('color(srgb 1 2 3) trailing')).toBeUndefined()
+		expect(parseColor('color(unknown 1 2 3)')).toBeUndefined()
+	})
+
+	it('skips unreadable transparent paint and stops before an occluded unreadable layer', () => {
+		const container = buildFixture(
+			'<div id="infinite" style="background: color(srgb calc(infinity) 0 0)"><p style="background: white">Opaque</p></div><p id="transparent-infinite" style="background: color(srgb calc(infinity) 0 0 / 0)">Transparent</p><p id="image-only" style="background-image: linear-gradient(red, blue)">Image</p>',
+		)
+		const transparent = requireValue(container.querySelector('#transparent-infinite'))
+		expect(readStyle(transparent, 'background-color')).toBe('color(srgb calc(infinity) 0 0 / 0)')
+		expect(readLayers(transparent)).toStrictEqual([])
+		expect(readLayers(requireValue(container.querySelector('#infinite p')))).toStrictEqual([
+			[255, 255, 255, 1],
+		])
+		expect(readLayers(requireValue(container.querySelector('#image-only')))).toStrictEqual([])
 	})
 })
