@@ -524,7 +524,17 @@ describe('skill family policy', () => {
 		expect(frontmatter?.description).toBe('Use this skill when a continuation contains: a colon.')
 	})
 
-	for (const control of SKILL_POLICY_CONTROLS) {
+	for (const control of SKILL_POLICY_CONTROLS.filter(
+		(candidate) => candidate.violations !== undefined,
+	)) {
+		it(`${control.label} [membership: ${control.membership}]`, () => {
+			expect(inspectPolicyControl(control)).toEqual(control.violations)
+		})
+	}
+
+	for (const control of SKILL_POLICY_CONTROLS.filter(
+		(candidate) => candidate.violations === undefined,
+	)) {
 		it(`${control.label} [membership: ${control.membership}]`, () => {
 			const violations = inspectPolicyControl(control)
 			expect(violations).toHaveLength(1)

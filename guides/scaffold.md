@@ -70,6 +70,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `Ownership`         | type | Names what scaffold claims at an artifact's path.                                                           |
 | `Release`           | type | Represents one declared dependency range measured against a registry release.                               |
 | `ScaffoldErrorCode` | type | Names the coded reasons a scaffold error is raised.                                                         |
+| `SetupRuntime`      | type | Names the runtime a root setup proof requires.                                                              |
 | `Snapshot`          | type | Holds exact lowercase hexadecimal target bytes keyed by artifact-relative path.                             |
 
 #### Interfaces
@@ -138,6 +139,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `HOST_PATHS`                      | const | Lists the paths a target receives from the vendored data root, frozen.                                 |
 | `INTEGRATION_TEST_PATH`           | const | Names the cross-environment composition proof whose presence makes a workspace `integration`.          |
 | `INVALID_PATH_CHARACTER_PATTERN`  | const | Matches the visible characters a target-relative path and a Markdown path cell both forbid.            |
+| `JOURNEY_CONFIG_PATH`             | const | Names the Vite wrapper whose presence makes a workspace `journey`.                                     |
 | `MANIFEST_PATH`                   | const | Names the manifest path every compiler plan emits with birth ownership.                                |
 | `MAX_ARTIFACT_BYTES`              | const | Caps the bytes accepted for one artifact.                                                              |
 | `MAX_ARTIFACT_HEX_LENGTH`         | const | Caps the length of the hexadecimal string carrying one artifact's bytes.                               |
@@ -406,7 +408,7 @@ The inventory contracts carry these data members.
 | `listCanonPaths`          | function | Lists the canon paths a target holds, filtered to a plan's groups.                     |
 | `listDirectories`         | function | Lists a directory's descendant directories as sorted root-relative paths.              |
 | `listFiles`               | function | Lists a directory's files as sorted root-relative paths.                               |
-| `matchesAnchor`           | function | Tests whether a captured directory is still the same directory.                        |
+| `matchesAnchor`           | function | Tests whether a path still holds the captured directory identity.                      |
 | `matchesExecutablePath`   | function | Tests whether a vendored path is one a target receives executable.                     |
 | `matchesExpectation`      | function | Tests whether a destination still holds what was captured of it.                       |
 | `matchesGitPath`          | function | Tests whether a path addresses a target's own repository metadata.                     |
@@ -588,10 +590,15 @@ files on `main`, the scaffold repository's `host.json` file, and changed vendore
 answers a read and grant no verb write authority that it did not already have.
 
 `new --bin` creates the executable entry, its test, and its scoped Vite and TypeScript wrappers. The
-other structural facts do not need creation flags. Add a root `tests/setup*.test.ts` proof for
+`new --app browser` command selects the journey axis, creates its birth-owned wrapper, defines
+`appJourney` in the root configuration, and excludes the browser integration suite from
+`app:browser`. Its manifest declares `test:journey` and invokes it after `npm run test:app` in
+`test`. A selection without a browser application emits no journey axis. Creation leaves `setup`
+empty. The other structural facts do not need creation flags. Add a root `tests/setup*.test.ts` proof for
 `setup`, `tests/guides.test.ts` for `guides`, `tests/integration.test.ts` for `integration`,
 `tests/conformance.test.ts` for `conformance`, `tests/setupService.ts` for `service`,
-`tests/setupGlobal.ts` for `global`, and `configs/app/vite.showcase.config.ts` for `showcase`;
+`tests/setupGlobal.ts` for `global`, `configs/app/vite.showcase.config.ts` for `showcase`, and
+`configs/app/vite.journey.config.ts` for `journey`;
 reading verbs detect each exact-case file and register its fixed machinery. An explicitly supplied
 plan with `vendors` owns and protects the birth-owned `scripts/service.sh` inventory skeleton.
 Reading verbs do not infer its vendor list from edited text and cannot preserve an arbitrary present
@@ -610,7 +617,8 @@ beside it could disagree. The remaining facts come from exact-case files: `src/b
 `bin`, each root `tests/setup*.test.ts` match selects `setup`, `tests/guides.test.ts` selects
 `guides`, `tests/integration.test.ts` selects `integration`, `tests/conformance.test.ts` selects
 `conformance`, `tests/setupService.ts` selects `service`, `tests/setupGlobal.ts` selects `global`,
-and `configs/app/vite.showcase.config.ts` selects `showcase`. A containing directory does not select
+`configs/app/vite.showcase.config.ts` selects `showcase`, and
+`configs/app/vite.journey.config.ts` selects `journey`. A containing directory does not select
 the fact by itself. `tests/distribution.test.ts` selects nothing: the published `src` axis the
 target ships already decides the `distribution` project, and the file is planned from that.
 
@@ -641,12 +649,33 @@ package before a publish lifecycle script runs, so crediting it would report a d
 one. Generated integration runs from `test`. One shell-token pass reads quoted and unquoted
 `--project value` and `--project=value` forms and follows literal `npm run` calls. A shell expansion
 or malformed quote that prevents a project or script name from being resolved statically produces a
-question instead of licensing a write. The classifier is deliberately bounded to manifest script
-text that names `vitest`; an external wrapper whose name does not identify its runner supplies no
-static Vitest fact to infer.
+question instead of licensing a write. The absent-project and absent-configuration checks read
+only manifest script text that names `vitest`; the configuration check also requires a `test:*`
+script name. An external wrapper whose text does not name `vitest` supplies no static Vitest fact
+to infer for these checks.
+
+The invocation reader also reads literal `-c <path>`, `--config <path>`, and `--config=<path>` values
+in command order. A configuration value containing an unresolved shell expansion makes the whole reading
+`undefined`. The executable keeps this contract in its own modules:
+
+| Declaration           | Summary                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `ScriptInvocations`   | Lists the literal Vitest projects, configuration paths, and npm run scripts a shell command names. |
+| `scriptToInvocations` | Reads the literal Vitest projects, configuration paths, and npm run scripts a shell command names. |
+
+When a `test:*` script whose text names `vitest` names a configuration that the plan does not emit
+and the target does not hold, the non-blocking `projects` question names the script and configuration
+path. Its remedy asks you to add the configuration, or remove the script that names it and its
+invocation from the `test` chain. When the plan emits `test:journey` and no chain from `test` reaches
+`npm run test:journey` through literal `npm run` calls, that question asks you to insert the invocation
+after `npm run test:app`. These advisories belong to `configs`
+and remain report-only during `repair`: the command preserves the `test` chain and an unplanned
+script. A configuration emitted by the plan or present in the target does not raise the absent
+configuration advisory.
 
 `audit` still completes the comparison and reports one non-blocking `projects` question when its
-selection includes `configs`. A scoped audit that excludes `configs` omits that question. For a
+selection includes `configs`. It reports the earliest of the facts it finds; settling that fact and
+re-running surfaces the next. A scoped audit that excludes `configs` omits that question. For a
 literal absent project, its advisory tells the developer to register the project or remove the
 script. For a planned project absent from the gate chains, the advisory reads the manifest after a
 writable script projection. The `scripts` question owns an absent direct `test:<project>` line. The
@@ -876,14 +905,26 @@ because the shape is chosen once and read afterwards: `new` refuses the advisory
 `repair` need the plan to describe and restore a target that already has that shape. A library
 caller creating a workspace holds the same refusal, and the Compile section states it.
 
-`bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `global`, and
-`showcase` are structural facts. Each is set only when the workspace physically ships the directory
+`bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `global`, `showcase`,
+and `journey` are structural facts. Reading verbs set each only when the workspace physically ships the directory
 or exact-case file that defines it, never because of the workspace's name and never because a
 sibling fact is set.
 
-`setup` registers every root `tests/setup*.test.ts` proof in one Node project that loads
-`tests/setup.ts`. A nested or wrong-case match does not set the fact. The generated manifest emits
-`test:setup` and invokes it from `test` only while the fact is set.
+The `setup` member is a `readonly SetupRuntime[]`, empty by default. Target inference adds
+`browser` for the exact-case `tests/setupBrowser.test.ts` proof and `node` for every other root
+`tests/setup*.test.ts` match, including `tests/setup.test.ts` and `tests/setupServer.test.ts`.
+A nested or wrong-case match adds no runtime.
+
+The `node` runtime registers the Node `setup` project, which loads `tests/setup.ts` and excludes
+`tests/setupBrowser.test.ts`. The `browser` runtime registers `setup:browser`, which collects
+only that browser proof and loads `tests/setup.ts` and `tests/setupBrowser.ts` through Playwright
+Chromium. The generated manifest emits the selected `test:setup` and `test:setup:browser` scripts
+and invokes them from `test`. Scaffold generates no setup proof for an empty setup seed.
+
+When the `app` axis selects `browser`, the browser setup project also applies the Vue
+single-file-component transform. Your `tests/setupBrowser.ts` module and its paired proof can
+import and render application Vue components. A browser setup proof without `app/browser` keeps
+the non-Vue pipeline; selecting `src/browser` alone adds no Vue plugin or dependency.
 
 A structural fact is read when a verb runs, not when the file appears. Writing
 `tests/integration.test.ts` into a workspace sets the fact, but the root configuration on disk was
@@ -926,6 +967,30 @@ rather than withholding it.
 `showcase` projects only when the browser `app` environment exists. Without that axis the flag adds
 no artifact, configuration, script, or dependency, and the gate reports a non-blocking question on
 that field so the caller who set it learns it emitted nothing.
+
+The library's `journey` flag defaults to `false`; `new` sets it when its `app` selection includes
+`browser`. Reading verbs infer it from the wrapper's presence. The flag requires a browser application. Without that
+application, it emits no journey configuration or script and raises a non-blocking `journey`
+question. With that application, the content-owned root configuration defines
+`appJourney(variant, variants)` and excludes `tests/app/browser/integration.test.ts` from the
+ordinary `app:browser` project.
+
+Edit the variant list in `configs/app/vite.journey.config.ts`. This wrapper is birth-owned:
+scaffold creates it when absent and preserves your edits during `repair`. It imports
+`JourneyVariant` from `@orkestrel/test`, declares `readonly JourneyVariant[]`, and seeds `desktop`
+at 1280 × 800 and `compact` at 390 × 844 without a theme. Rename and extend those variants for
+your application; apply themes through the application's interface in your tests.
+
+The wrapper registers `journey:<name>` for each variant through the root factory. Each project
+collects the browser integration suite alone, sets the variant viewport, and provides `variant`
+as its name, `variants` as the declared list, and `capture` as a boolean. The root configuration
+reads `process.env.CAPTURE === '1'` for that boolean. The generated `test:journey` script runs
+`vitest run --config configs/app/vite.journey.config.ts --no-cache --reporter=dot`, and the generated
+`test` chain runs it after the application projects. With the journey axis off, the ordinary
+browser project retains its integration suite.
+
+The generated browser resolver and gate cover Chromium alone. The emitted `configs/browsers.ts` doc
+block states the condition that reopens engine selection, and is that condition's one home.
 
 `createBlueprint` enforces shape only. Whether the name is a name, the version a version, and the
 axis combination one this package can generate are the gate's laws, and the gate answers them with
@@ -1088,6 +1153,29 @@ package catalog in `.claude/agents/orkestrel.md` registers to another package, b
 fetched bytes rather than prose this workspace wrote, and it reports a top-level guide that is
 neither this package's own, nor `guides/README.md`, nor a catalog row, so an exclusion always
 carries its evidence.
+
+The skill sweep reads named value and type imports from `@orkestrel/*` in every Markdown fence
+in `SKILL.md` and its named references, including fences inside lists and blockquotes. It resolves
+each entry through that package's exports map — the workspace's own manifest for the package the
+workspace publishes, and `node_modules` for every other package — and reads the declaration
+exports with Vite's Oxc parser without loading the runtime entry. A missing binding reports the
+skill file, the specifier, and the exported name. A fence the parser refuses reports a violation
+when its text names an `@orkestrel/` specifier, because error recovery drops the statements after
+the failure; a refused fence naming no such specifier stays outside the sweep. A package outside
+`BASE_DEV_DEPENDENCIES` reports a violation of its own.
+The sweep doesn't read identifiers in prose or table cells, indented code, default imports,
+namespace imports, or imports from other scopes. This proof checks exported names; it doesn't
+check call signatures or runtime behavior.
+The declaration reader follows exact exports-map keys and relative star and named re-exports.
+It reads exported functions, variables, classes, enums, interfaces, types, and local export lists.
+Each refused reading reports its own cause: an entry specifier outside the supported grammar, an
+absent package, an exports key the map lacks or maps through a wildcard, an array, a source alias,
+or a runtime path, a declaration file the package doesn't hold, a syntax error the parser raised, a
+re-exported name the target doesn't declare, and a refused declaration form — a default export, an
+export assignment, an ambient module, a namespace export, a star export alias, or a non-relative
+re-export. A file the branch already visited contributes the names it declares itself, so a named
+re-export through a cycle resolves against those declarations. Local export lists aren't
+typechecked, and ambiguous star exports aren't resolved semantically.
 
 The `surface` rule in `inspectPolicyWorkspace` compares live barrel exports and target-owned root
 `tests/setup*.ts` exports with the hosted guides. It matches bare names case-sensitively across
@@ -1587,7 +1675,8 @@ except the manifest.
   bare specifier, because `vite.config.ts` derives its `alias` record from these entries in order and
   a bare specifier also matches its own subpaths. An `app` environment publishes nothing and maps no
   such entry.
-- One template artifact, `configs/browsers.ts`, for a workspace selecting `browser` on either axis.
+- One template artifact, `configs/browsers.ts`, for a workspace selecting `browser` on either
+  environment axis or in its setup runtime list.
   It resolves the Chromium the Playwright provider launches, and the root `vite.config.ts` calls it
   once into `browserOptions` and passes that to every `playwright()` provider it configures. The
   precedence is `PLAYWRIGHT_EXECUTABLE_PATH`, `PLAYWRIGHT_WS_ENDPOINT`, `PLAYWRIGHT_CHANNEL`, the
@@ -1772,6 +1861,7 @@ A transaction owns a private root beside the target on the same volume, so every
 rename rather than a copy. A failure part way through commit restores every destination it already
 promoted and removes every directory it created. No destination ever receives half-written bytes.
 It is not a journal: a process killed between promotions leaves a mixed target.
+Directory anchors capture native bigint device and inode values without numeric rounding.
 The transaction binds each directory's location rather than its lifetime, so an ancestor swapped
 for another path, a file, a symlink, or nothing is refused, and one deleted and recreated in place
 may not be.

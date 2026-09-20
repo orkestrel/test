@@ -246,9 +246,27 @@ export function setup(override?: UserConfig): UserConfig {
 		test: {
 			name: { label: 'setup', color: 'white' },
 			include: ['tests/setup*.test.ts'],
+			exclude: ['tests/setupBrowser.test.ts'],
 			setupFiles: ['./tests/setup.ts'],
 			environment: 'node',
 			browser: { enabled: false },
+		},
+	}
+	return mergeOverride(project, override)
+}
+
+export function setupBrowser(override?: UserConfig): UserConfig {
+	const project: UserConfig = {
+		resolve,
+		test: {
+			name: { label: 'setup:browser', color: 'blue' },
+			include: ['tests/setupBrowser.test.ts'],
+			setupFiles: ['./tests/setup.ts', './tests/setupBrowser.ts'],
+			browser: {
+				enabled: true,
+				provider: playwright(browserOptions),
+				instances: [{ browser: 'chromium', headless: true }],
+			},
 		},
 	}
 	return mergeOverride(project, override)
@@ -310,6 +328,17 @@ export function probe(override?: UserConfig): UserConfig {
 export default defineConfig({
 	resolve,
 	test: {
-		projects: [srcCore, srcBrowser, srcServer, policy, config, setup, guides, distribution, probe],
+		projects: [
+			srcCore,
+			srcBrowser,
+			srcServer,
+			policy,
+			config,
+			setup,
+			setupBrowser,
+			guides,
+			distribution,
+			probe,
+		],
 	},
 })
