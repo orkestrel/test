@@ -194,3 +194,21 @@ export const IMPLICIT_ROLES: Readonly<Record<string, string>> = Object.freeze({
 	TR: 'row',
 	UL: 'list',
 })
+
+/**
+ * Names the tester root's attribute holding the media readings observed before the first stage.
+ *
+ * @remarks
+ * The value is a bit string in print, reduced motion, dark colour scheme, and forced colours order.
+ * Each bit is `1` for a matching query and `0` otherwise, for example `0100`.
+ */
+export const MEDIA_STAGE = 'data-media-stage'
+
+/**
+ * Names the tester root's attribute holding the pressed pointer's page coordinates.
+ *
+ * @remarks
+ * The value has the form `<x>x<y>`. The release removes it only after the button-up send resolves,
+ * so a rejected send keeps the marker for a retry.
+ */
+export const POINTER_HOLD = 'data-pointer-hold'

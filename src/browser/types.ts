@@ -189,6 +189,14 @@ export interface StateOptions extends WaitOptions {
 	readonly absent?: boolean
 }
 
+/** Configures the tester's print medium and motion preference. */
+export interface MediaOptions {
+	/** Determines whether the tester lays out for print. Omit it to leave the medium alone. */
+	readonly print?: boolean
+	/** Determines whether the tester prefers motion. Omit it to leave the preference alone. */
+	readonly motion?: boolean
+}
+
 /**
  * Configures an inert `Storage`: its seed, which operations the host permits, and its quota.
  *

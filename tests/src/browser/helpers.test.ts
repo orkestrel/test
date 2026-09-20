@@ -26,17 +26,21 @@ import {
 	fillAccessible,
 	findKeyframes,
 	findRule,
+	holdAccessible,
+	hoverAccessible,
 	IMPLICIT_ROLES,
 	isOutsideViewport,
 	isReachable,
 	isRendered,
 	matchesColor,
+	MEDIA_STAGE,
 	measureContent,
 	measureContrast,
 	measureLuminance,
 	mount,
 	parseColor,
 	parseCSSColor,
+	POINTER_HOLD,
 	pressKeys,
 	readBackdrop,
 	readCascade,
@@ -62,11 +66,15 @@ import {
 	readText,
 	readToken,
 	readValue,
+	releaseMedia,
 	releasePane,
+	releasePointer,
 	removeDatabase,
 	render,
 	resolveAccessible,
 	resolveRendered,
+	sendProtocol,
+	stageMedia,
 	stagePane,
 	traverseAccessible,
 	typeAccessible,
@@ -75,7 +83,7 @@ import {
 	waitForFrame,
 	waitForState,
 } from '@src/browser'
-import { createRecorder, createTeardown, requireValue } from '@src/core'
+import { createRecorder, createTeardown, requireValue, waitForCondition } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server, userEvent } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../setup.js'
@@ -209,6 +217,8 @@ afterAll(async () => {
 })
 
 afterEach(resetFixtures)
+afterEach(releasePointer)
+afterEach(releaseMedia)
 
 describe('computeNamePattern', () => {
 	it('admits a glyph run at either edge and nothing a reader would hear', () => {
@@ -885,6 +895,259 @@ describe('clickDisclosure', () => {
 		await expect(clickDisclosure('Advanced')).rejects.toThrow(
 			'Native disclosure "Advanced" is ambiguous across 2 elements',
 		)
+	})
+})
+
+describe('hoverAccessible', () => {
+	it('hovers the named control while its twin keeps the base paint, then clears hover', async () => {
+		buildStylesheet(
+			'.journey-hover { padding-top: 16px } .journey-hover:hover { padding-top: 32px }',
+		)
+		buildFixture(
+			'<button class="journey-hover">Hover me</button><button class="journey-hover">Twin</button>',
+		)
+		const target = resolveAccessible('Hover me')
+		const twin = resolveAccessible('Twin')
+		const clicks = createRecorder<[event: Event]>()
+		target.addEventListener('click', clicks.handler)
+		expect(readPixels(target, 'padding-top')).toBe(16)
+		await hoverAccessible('button', 'Hover me')
+		expect(target.matches(':hover')).toBe(true)
+		expect(readPixels(target, 'padding-top')).toBe(32)
+		expect(readPixels(twin, 'padding-top')).toBe(16)
+		await releasePointer()
+		expect(readPixels(target, 'padding-top')).toBe(16)
+		expect(clicks.count).toBe(0)
+	})
+
+	it('refuses an absent name', async () => {
+		await expect(hoverAccessible('Nowhere')).rejects.toThrow(
+			'No interactive element has the accessible name "Nowhere"',
+		)
+	})
+
+	it('refuses a gated control and disambiguates a tab from its panel', async () => {
+		buildFixture(
+			'<button disabled>Gated</button><button role="tab" id="journey-drafts">Drafts</button><div role="tabpanel" tabindex="0" aria-labelledby="journey-drafts">Draft content</div>',
+		)
+		await expect(hoverAccessible('Gated')).rejects.toThrow(
+			'Interactive target "Gated" is not visible and focus-reachable',
+		)
+		await expect(hoverAccessible('Drafts')).rejects.toThrow(
+			'Interactive target "Drafts" is ambiguous across 2 elements',
+		)
+		await hoverAccessible('tab', 'Drafts')
+		expect(resolveAccessible('tab', 'Drafts').matches(':hover')).toBe(true)
+	})
+})
+
+describe('holdAccessible', () => {
+	it('records the marker only after the press send resolves', async () => {
+		buildFixture('<button>Press delivery</button>')
+		const button = resolveAccessible('Press delivery')
+		const markers = createRecorder<[marked: boolean]>()
+		button.addEventListener('pointerdown', () => {
+			markers.handler(document.documentElement.hasAttribute(POINTER_HOLD))
+		})
+		// Control: a rejected send must record no marker, so the later `[[false]]` reading is
+		// unambiguous evidence of the resolved press, not a leftover from this failed attempt.
+		await expect(
+			sendProtocol('Input.dispatchMouseEvent', {
+				type: 'mousePressed',
+				x: Number.NaN,
+				y: Number.NaN,
+				button: 'left',
+				buttons: 1,
+				clickCount: 1,
+			}),
+		).rejects.toThrow('Invalid parameters')
+		await holdAccessible('Press delivery')
+		expect(markers.calls).toEqual([[false]])
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(true)
+		expect(button.matches(':active')).toBe(true)
+	})
+
+	// guides/test.md → Patterns → "Hold a control and read the pressed paint"
+	it('holds the pressed paint and restores it on release', async () => {
+		buildStylesheet(
+			'.journey-active { position: fixed; left: 140px; top: 140px; padding-top: 16px } .journey-active:active { padding-top: 32px }',
+		)
+		buildFixture('<button class="journey-active">Apply</button>')
+		const button = resolveAccessible('button', 'Apply')
+		const down = createRecorder<[event: PointerEvent]>()
+		const up = createRecorder<[event: PointerEvent]>()
+		button.addEventListener('pointerdown', down.handler)
+		button.addEventListener('pointerup', up.handler)
+		expect(readPixels(button, 'padding-top')).toBe(16)
+		await holdAccessible('button', 'Apply')
+		expect(readPixels(button, 'padding-top')).toBe(32)
+		expect(button.matches(':active')).toBe(true)
+		expect(document.activeElement).toBe(button)
+		expect(requireValue(down.calls[0])[0].isTrusted).toBe(true)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(true)
+		await releasePointer()
+		expect(readPixels(button, 'padding-top')).toBe(16)
+		expect(button.matches(':active')).toBe(false)
+		expect(up.count).toBe(1)
+		expect(requireValue(up.calls[0])[0].isTrusted).toBe(true)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+	})
+
+	it('misses at the unscaled point and reaches the pressed paint through the mapped hold', async () => {
+		buildStylesheet(
+			'.journey-active { position: fixed; left: 140px; top: 140px; padding-top: 16px } .journey-active:active { padding-top: 32px }',
+		)
+		buildFixture('<button class="journey-active">Scaled</button>')
+		const button = resolveAccessible('Scaled')
+		const box = button.getBoundingClientRect()
+		const frame = requireValue(window.frameElement).getBoundingClientRect()
+		expect(frame.width / window.innerWidth).not.toBe(1)
+		const x = frame.left + box.left + box.width / 2
+		const y = frame.top + box.top + box.height / 2
+		try {
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+			await sendProtocol('Input.dispatchMouseEvent', {
+				type: 'mousePressed',
+				x,
+				y,
+				button: 'left',
+				buttons: 1,
+				clickCount: 1,
+			})
+			await waitForFrame()
+			expect(readPixels(button, 'padding-top')).toBe(16)
+		} finally {
+			await sendProtocol('Input.dispatchMouseEvent', {
+				type: 'mouseReleased',
+				x,
+				y,
+				button: 'left',
+				buttons: 0,
+				clickCount: 1,
+			})
+		}
+		await holdAccessible('Scaled')
+		expect(readPixels(button, 'padding-top')).toBe(32)
+	})
+
+	it('releases a covered press before refusing the missed pressed state', async () => {
+		buildFixture(
+			'<button style="position: fixed; top: 140px; left: 140px">Covered</button><div class="journey-cover" style="position: fixed; inset: 0; z-index: 10"></div>',
+		)
+		await expect(holdAccessible('Covered')).rejects.toThrow(
+			'Interactive target "Covered" did not enter the pressed state',
+		)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+		expect(resolveAccessible('Covered').matches(':active')).toBe(false)
+	})
+
+	it('refuses a double hold without releasing the held control', async () => {
+		buildFixture('<button>Held</button>')
+		await holdAccessible('Held')
+		const held = document.documentElement.getAttribute(POINTER_HOLD)
+		await expect(holdAccessible('Held')).rejects.toThrow(`Pointer is already held at ${held}`)
+		expect(resolveAccessible('Held').matches(':active')).toBe(true)
+	})
+
+	it('refuses a double hold before resolving an absent second name', async () => {
+		buildFixture('<button>Held</button>')
+		await holdAccessible('Held')
+		const held = document.documentElement.getAttribute(POINTER_HOLD)
+		await expect(holdAccessible('Absent')).rejects.toThrow(`Pointer is already held at ${held}`)
+		expect(resolveAccessible('Held').matches(':active')).toBe(true)
+	})
+
+	it('holds at a 390 by 844 viewport with its scale measured afresh', async () => {
+		const previous = { width: window.innerWidth, height: window.innerHeight }
+		try {
+			await page.viewport(390, 844)
+			buildStylesheet(
+				'.journey-active { padding-top: 16px } .journey-active:active { padding-top: 32px }',
+			)
+			buildFixture('<button class="journey-active">Narrow</button>')
+			await holdAccessible('Narrow')
+			expect(readPixels(resolveAccessible('Narrow'), 'padding-top')).toBe(32)
+		} finally {
+			await releasePointer()
+			await page.viewport(previous.width, previous.height)
+		}
+	})
+
+	it('preserves the resolver voices before pressing', async () => {
+		await expect(holdAccessible('Nowhere')).rejects.toThrow(
+			'No interactive element has the accessible name "Nowhere"',
+		)
+		buildFixture(
+			'<button disabled>Gated</button><button role="tab" id="journey-drafts">Drafts</button><div role="tabpanel" tabindex="0" aria-labelledby="journey-drafts">Draft content</div>',
+		)
+		await expect(holdAccessible('Gated')).rejects.toThrow(
+			'Interactive target "Gated" is not visible and focus-reachable',
+		)
+		await expect(holdAccessible('Drafts')).rejects.toThrow(
+			'Interactive target "Drafts" is ambiguous across 2 elements',
+		)
+		await holdAccessible('tab', 'Drafts')
+		expect(resolveAccessible('tab', 'Drafts').matches(':active')).toBe(true)
+	})
+})
+
+describe('releasePointer', () => {
+	it('retains a rejected release marker so a corrected retry releases the held pointer', async () => {
+		buildFixture('<button>Retry release</button>')
+		await holdAccessible('Retry release')
+		const held = requireValue(document.documentElement.getAttribute(POINTER_HOLD))
+		try {
+			document.documentElement.setAttribute(POINTER_HOLD, 'invalidxinvalid')
+			await expect(releasePointer()).rejects.toThrow('Invalid parameters')
+			expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe('invalidxinvalid')
+		} finally {
+			document.documentElement.setAttribute(POINTER_HOLD, held)
+			await releasePointer()
+		}
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+		expect(resolveAccessible('Retry release').matches(':active')).toBe(false)
+	})
+
+	it('resolves with an idle pointer', async () => {
+		await expect(releasePointer()).resolves.toBeUndefined()
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+	})
+})
+
+describe.sequential('pointer teardown after failure', () => {
+	const releases = createRecorder<[event: PointerEvent]>()
+	beforeAll(() => document.addEventListener('pointerup', releases.handler))
+	afterAll(() => document.removeEventListener('pointerup', releases.handler))
+
+	// An assertion inside an it.fails body cannot fail the suite; the following case carries the proof.
+	it.fails('throws a sentinel after holding and leaves the release to afterEach', async () => {
+		buildFixture('<button>Sentinel hold</button>')
+		await holdAccessible('Sentinel hold')
+		expect(resolveAccessible('Sentinel hold').matches(':active')).toBe(true)
+		throw new Error('hold sentinel')
+	})
+
+	it('reads a released pointer in the following case', async () => {
+		expect(releases.count).toBe(1)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+		buildFixture('<button>Following hold</button>')
+		const moves = createRecorder<[event: PointerEvent]>()
+		resolveAccessible('Following hold').addEventListener('pointermove', moves.handler)
+		await hoverAccessible('Following hold')
+		expect(requireValue(moves.calls[0])[0].buttons).toBe(0)
+		expect(resolveAccessible('Following hold').matches(':active')).toBe(false)
+	})
+
+	it('releases explicitly before its afterEach hook', async () => {
+		releases.clear()
+		buildFixture('<button>Explicit hold</button>')
+		await holdAccessible('Explicit hold')
+		await releasePointer()
+		expect(releases.count).toBe(1)
+	})
+
+	it('reads no additional button release from the hook', () => {
+		expect(releases.count).toBe(1)
 	})
 })
 
@@ -2945,6 +3208,48 @@ describe('extractOrphans', () => {
 })
 
 describe('readStyle', () => {
+	// guides/test.md → Patterns → "Read a pseudo-element's paint"
+	it('distinguishes pseudo-element paint from its originating element', () => {
+		buildStylesheet(
+			'.journey-marked { padding-top: 0 } .journey-marked::after { content: ""; padding-top: 7px }',
+		)
+		buildFixture('<button class="journey-marked">Marked</button>')
+		const button = resolveAccessible('Marked')
+		expect(readStyle(button, 'padding-top', '::after')).toBe('7px')
+		expect(readPixels(button, 'padding-top', '::after')).toBe(7)
+		expect(readStyle(button, 'padding-top')).toBe('0px')
+		expect(readStyle(button, '--journey-absent', '::after')).toBe('')
+	})
+
+	it('reads the modal backdrop and the open details content', () => {
+		buildStylesheet(
+			'.journey-dialog::backdrop { background-color: rgb(1, 2, 3) } .journey-details::details-content { padding-top: 9px }',
+		)
+		const fixture = buildFixture(
+			'<dialog class="journey-dialog">Modal</dialog><details class="journey-details" open><summary>Details</summary>Content</details>',
+		)
+		const dialog = requireValue(fixture.querySelector('dialog'))
+		const details = requireValue(fixture.querySelector('details'))
+		dialog.showModal()
+		expect(readStyle(dialog, 'background-color', '::backdrop')).toBe('rgb(1, 2, 3)')
+		expect(readStyle(dialog, 'background-color')).not.toBe('rgb(1, 2, 3)')
+		expect(readPixels(details, 'padding-top', '::details-content')).toBe(9)
+		expect(readPixels(details, 'padding-top')).toBe(0)
+		dialog.close()
+	})
+
+	it('refuses a pseudo-class before the engine support check and refuses an unknown pseudo-element', () => {
+		buildFixture('<button>Subject</button>')
+		const button = resolveAccessible('Subject')
+		expect(CSS.supports('selector(:hover)')).toBe(true)
+		expect(() => readStyle(button, 'padding-top', ':hover')).toThrow(
+			'Pseudo-element ":hover" must start with "::"',
+		)
+		expect(() => readPixels(button, 'padding-top', '::journey-absent')).toThrow(
+			'Pseudo-element "::journey-absent" is not one this engine exposes',
+		)
+	})
+
 	it('reads the browser resolved value of one property', () => {
 		const container = buildFixture('<p style="padding-left: 12px">Ready</p>')
 		expect(readStyle(requireValue(container.querySelector('p')), 'padding-left')).toBe('12px')
@@ -3069,6 +3374,229 @@ describe('readPixels', () => {
 		expect(readStyle(subject, '--journey-label')).toBe('wide')
 		expect(readPixels(subject, '--journey-label')).toBe(0)
 		expect(readPixels(subject, '--journey-absent')).toBe(0)
+	})
+})
+
+describe('stageMedia', () => {
+	// guides/test.md → Patterns → "Emulate reduced motion and print"
+	it('pins the base, stages motion and print, and restores the host medium', async () => {
+		await releaseMedia()
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		const dark = matchMedia('(prefers-color-scheme: dark)').matches
+		const forced = matchMedia('(forced-colors: active)').matches
+		buildStylesheet(
+			'.journey-media { padding-top: 1px } @media (prefers-reduced-motion: reduce) { .journey-media { padding-top: 2px } } @media print { .journey-media { padding-top: 3px } }',
+		)
+		buildFixture('<button class="journey-media">Media</button>')
+		const button = resolveAccessible('Media')
+		await stageMedia({ motion: true })
+		expect(document.documentElement.getAttribute(MEDIA_STAGE)).toBe(
+			`0${Number(reduced)}${Number(dark)}${Number(forced)}`,
+		)
+		expect(readPixels(button, 'padding-top')).toBe(1)
+		expect(matchMedia('(prefers-reduced-motion: no-preference)').matches).toBe(true)
+		await stageMedia({ motion: false })
+		expect(readPixels(button, 'padding-top')).toBe(2)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true)
+		await stageMedia({ motion: reduced })
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		expect(readPixels(button, 'padding-top')).toBe(reduced ? 1 : 2)
+		await stageMedia({ print: true })
+		expect(readPixels(button, 'padding-top')).toBe(3)
+		expect(matchMedia('print').matches).toBe(true)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		await releaseMedia()
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		expect(readPixels(button, 'padding-top')).toBe(reduced ? 2 : 1)
+		expect(document.documentElement.hasAttribute(MEDIA_STAGE)).toBe(false)
+	})
+
+	it('preserves print and its paint through a motion-only stage', async () => {
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		buildStylesheet(
+			'.journey-media { padding-top: 1px } @media print { .journey-media { padding-top: 3px } }',
+		)
+		buildFixture('<button class="journey-media">Media</button>')
+		const button = resolveAccessible('Media')
+		await stageMedia({ print: true })
+		expect(readPixels(button, 'padding-top')).toBe(3)
+		await stageMedia({ motion: reduced })
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		expect(matchMedia('print').matches).toBe(true)
+		expect(readPixels(button, 'padding-top')).toBe(3)
+	})
+
+	it('preserves a provider color scheme inverse through stage and release', async () => {
+		await releaseMedia()
+		const dark = matchMedia('(prefers-color-scheme: dark)').matches
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		await sendProtocol('Emulation.setEmulatedMedia', {
+			features: [{ name: 'prefers-color-scheme', value: dark ? 'light' : 'dark' }],
+		})
+		await waitForCondition(
+			'inverse color scheme override',
+			() => matchMedia('(prefers-color-scheme: dark)').matches === !dark,
+		)
+		expect(matchMedia('(prefers-color-scheme: dark)').matches).toBe(!dark)
+		await stageMedia({ motion: reduced })
+		expect(matchMedia('(prefers-color-scheme: dark)').matches).toBe(!dark)
+		await releaseMedia()
+		expect(matchMedia('(prefers-color-scheme: dark)').matches).toBe(!dark)
+	})
+
+	it('preserves a provider forced colors inverse through stage and release', async () => {
+		await releaseMedia()
+		const forced = matchMedia('(forced-colors: active)').matches
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		await sendProtocol('Emulation.setEmulatedMedia', {
+			features: [{ name: 'forced-colors', value: forced ? 'none' : 'active' }],
+		})
+		await waitForCondition(
+			'inverse forced colors override',
+			() => matchMedia('(forced-colors: active)').matches === !forced,
+		)
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+		await stageMedia({ motion: reduced })
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+		await releaseMedia()
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+	})
+
+	it('stages screen explicitly and preserves an omitted motion axis', async () => {
+		await stageMedia({ print: true, motion: false })
+		await stageMedia({ print: false })
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('screen').matches).toBe(true)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true)
+	})
+
+	it('refuses an empty media stage', async () => {
+		await expect(stageMedia({})).rejects.toThrow(
+			'Media emulation was staged with nothing to emulate',
+		)
+	})
+})
+
+describe('releaseMedia', () => {
+	it('restores every media axis before the next line reads it', async () => {
+		await releaseMedia()
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		const dark = matchMedia('(prefers-color-scheme: dark)').matches
+		const forced = matchMedia('(forced-colors: active)').matches
+		await stageMedia({ print: true, motion: reduced })
+		await sendProtocol('Emulation.setEmulatedMedia', {
+			media: 'print',
+			features: [
+				{ name: 'prefers-reduced-motion', value: reduced ? 'no-preference' : 'reduce' },
+				{ name: 'prefers-color-scheme', value: dark ? 'light' : 'dark' },
+				{ name: 'forced-colors', value: forced ? 'none' : 'active' },
+			],
+		})
+		await waitForCondition(
+			'every inverse media axis staged',
+			() =>
+				matchMedia('print').matches &&
+				matchMedia('(prefers-reduced-motion: reduce)').matches === !reduced &&
+				matchMedia('(prefers-color-scheme: dark)').matches === !dark &&
+				matchMedia('(forced-colors: active)').matches === !forced,
+		)
+		await stageMedia({ print: true, motion: reduced })
+		await releaseMedia()
+		expect([
+			matchMedia('print').matches,
+			matchMedia('(prefers-reduced-motion: reduce)').matches,
+			matchMedia('(prefers-color-scheme: dark)').matches,
+			matchMedia('(forced-colors: active)').matches,
+		]).toEqual([false, reduced, dark, forced])
+	})
+
+	it('restores provider inverses on every axis after changing print and motion', async () => {
+		await releaseMedia()
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		const dark = matchMedia('(prefers-color-scheme: dark)').matches
+		const forced = matchMedia('(forced-colors: active)').matches
+		await sendProtocol('Emulation.setEmulatedMedia', {
+			media: 'print',
+			features: [
+				{ name: 'prefers-reduced-motion', value: reduced ? 'no-preference' : 'reduce' },
+				{ name: 'prefers-color-scheme', value: dark ? 'light' : 'dark' },
+				{ name: 'forced-colors', value: forced ? 'none' : 'active' },
+			],
+		})
+		await waitForCondition(
+			'provider inverses arrived',
+			() =>
+				matchMedia('print').matches &&
+				matchMedia('(prefers-reduced-motion: reduce)').matches === !reduced &&
+				matchMedia('(prefers-color-scheme: dark)').matches === !dark &&
+				matchMedia('(forced-colors: active)').matches === !forced,
+		)
+		await stageMedia({ print: false, motion: !reduced })
+		expect(document.documentElement.getAttribute(MEDIA_STAGE)).toBe(
+			`1${Number(!reduced)}${Number(!dark)}${Number(!forced)}`,
+		)
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		await releaseMedia()
+		expect([
+			matchMedia('print').matches,
+			matchMedia('(prefers-reduced-motion: reduce)').matches,
+			matchMedia('(prefers-color-scheme: dark)').matches,
+			matchMedia('(forced-colors: active)').matches,
+		]).toEqual([true, !reduced, !dark, !forced])
+		expect(document.documentElement.hasAttribute(MEDIA_STAGE)).toBe(false)
+	})
+
+	it('reads a stable value after a release with nothing staged', async () => {
+		expect(document.documentElement.hasAttribute(MEDIA_STAGE)).toBe(false)
+		await releaseMedia()
+		const readings = [
+			matchMedia('print').matches,
+			matchMedia('(prefers-reduced-motion: reduce)').matches,
+			matchMedia('(prefers-color-scheme: dark)').matches,
+			matchMedia('(forced-colors: active)').matches,
+		]
+		await waitForFrame()
+		expect([
+			matchMedia('print').matches,
+			matchMedia('(prefers-reduced-motion: reduce)').matches,
+			matchMedia('(prefers-color-scheme: dark)').matches,
+			matchMedia('(forced-colors: active)').matches,
+		]).toEqual(readings)
+	})
+})
+
+describe.sequential('media teardown after failure', () => {
+	let reduced = false
+	beforeAll(() => {
+		reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+	})
+
+	// An assertion inside an it.fails body cannot fail the suite; the following case carries the proof.
+	it.fails('throws a sentinel after staging and leaves the release to afterEach', async () => {
+		await stageMedia({ print: true, motion: reduced })
+		expect(matchMedia('print').matches).toBe(true)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		throw new Error('media sentinel')
+	})
+
+	it('reads restored media in the following case', () => {
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+	})
+
+	it('releases explicitly before its afterEach hook', async () => {
+		await stageMedia({ print: true, motion: reduced })
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		await releaseMedia()
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+	})
+
+	it('reads provider defaults after the repeated release', () => {
+		expect(matchMedia('print').matches).toBe(false)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
 	})
 })
 

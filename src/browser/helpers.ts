@@ -9,11 +9,18 @@ import type {
 	EscapeFixture,
 	FrameOptions,
 	FrameReading,
+	MediaOptions,
 	StateOptions,
 } from './types.js'
 import { isError, isString } from '@orkestrel/contract'
-import { checkBounds, waitForAbort, waitForCondition } from '@src/core'
-import { commands, page, userEvent } from 'vitest/browser'
+import {
+	checkBounds,
+	invokeUnchecked,
+	readProperty,
+	waitForAbort,
+	waitForCondition,
+} from '@src/core'
+import { cdp, commands, page, userEvent } from 'vitest/browser'
 import {
 	ACCESSIBLE_ROLES,
 	CANVAS_COLOR,
@@ -24,6 +31,8 @@ import {
 	FOCUSABLE_SELECTOR,
 	HEADER_ROLES,
 	IMPLICIT_ROLES,
+	MEDIA_STAGE,
+	POINTER_HOLD,
 } from './constants.js'
 
 /**
@@ -471,6 +480,191 @@ export async function clickDisclosure(name: string): Promise<void> {
 	const [target] = reachable
 	if (target === undefined) throw new Error(`Native disclosure "${name}" could not be resolved`)
 	await userEvent.click(target)
+}
+
+/**
+ * Sends one DevTools protocol command through the browser provider.
+ *
+ * @param method - The protocol method name.
+ * @param params - The protocol parameters.
+ * @returns A promise resolving after the command completes, discarding its response.
+ * @throws Thrown when the provider exposes no DevTools session, or the command fails.
+ *
+ * @example
+ * ```ts
+ * await sendProtocol('Emulation.setEmulatedMedia', { media: '', features: [] })
+ * ```
+ */
+export async function sendProtocol(
+	method: string,
+	params: Readonly<Record<string, unknown>>,
+): Promise<void> {
+	let session: unknown
+	let send: unknown
+	try {
+		session = cdp()
+		send = readProperty<unknown>(session, 'send')
+	} catch (cause) {
+		throw new Error('Browser provider exposes no DevTools session', { cause })
+	}
+	if (typeof send !== 'function') {
+		throw new Error('Browser provider exposes no DevTools session')
+	}
+	await invokeUnchecked<Promise<unknown>>(session, send, [method, params])
+}
+
+/**
+ * Hovers one visible, focus-reachable control by its accessible name through the browser provider.
+ *
+ * @param name - The target's exact accessible name.
+ * @returns A promise resolving after the pointer reaches the control.
+ * @throws Thrown when the resolver refuses the target.
+ *
+ * @example
+ * ```ts
+ * await hoverAccessible('Apply')
+ * ```
+ */
+export async function hoverAccessible(name: string): Promise<void>
+/**
+ * Hovers one visible, focus-reachable control by its exact ARIA role and accessible name.
+ *
+ * @param role - The control's exact ARIA role.
+ * @param name - The target's exact accessible name.
+ * @returns A promise resolving after the pointer reaches the control.
+ * @throws Thrown when the resolver refuses the target.
+ *
+ * @example
+ * ```ts
+ * await hoverAccessible('tab', 'Drafts')
+ * ```
+ */
+export async function hoverAccessible(role: string, name: string): Promise<void>
+export async function hoverAccessible(first: string, second?: string): Promise<void> {
+	await userEvent.hover(resolveRendered(first, second))
+}
+
+/**
+ * Holds the primary pointer button on one visible, focus-reachable control by its accessible name.
+ *
+ * @param name - The target's exact accessible name.
+ * @returns A promise resolving after the control enters its pressed state.
+ * @throws Thrown when the resolver refuses the target, a pointer is already held, or the press
+ * misses. A missed press that also fails to release carries the release rejection as its cause.
+ *
+ * @remarks
+ * The centre maps through the tester iframe's painted scale into page coordinates. The `:active`
+ * reading verifies delivery. A missed press releases before refusing; if that release also
+ * rejects, the refusal carries it as its cause. Register {@link releasePointer} in teardown
+ * before holding; release can produce a click on the pressed control. A rejected button-down send
+ * leaves no hold marker.
+ *
+ * @example
+ * ```ts
+ * await holdAccessible('Apply')
+ * await releasePointer()
+ * ```
+ */
+export async function holdAccessible(name: string): Promise<void>
+/**
+ * Holds the primary pointer button on one control by its exact ARIA role and accessible name.
+ *
+ * @param role - The control's exact ARIA role.
+ * @param name - The target's exact accessible name.
+ * @returns A promise resolving after the control enters its pressed state.
+ * @throws Thrown when the resolver refuses the target, a pointer is already held, or the press
+ * misses. A missed press that also fails to release carries the release rejection as its cause.
+ *
+ * @example
+ * ```ts
+ * await holdAccessible('tab', 'Drafts')
+ * await releasePointer()
+ * ```
+ */
+export async function holdAccessible(role: string, name: string): Promise<void>
+export async function holdAccessible(first: string, second?: string): Promise<void> {
+	const held = document.documentElement.getAttribute(POINTER_HOLD)
+	if (held !== null) throw new Error(`Pointer is already held at ${held}`)
+	const target = second === undefined ? resolveAccessible(first) : resolveAccessible(first, second)
+	const box = target.getBoundingClientRect()
+	const frame = window.frameElement?.getBoundingClientRect()
+	const scale = frame === undefined ? 1 : frame.width / window.innerWidth
+	const x = (frame?.left ?? 0) + (box.left + box.width / 2) * scale
+	const y = (frame?.top ?? 0) + (box.top + box.height / 2) * scale
+	await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+	await sendProtocol('Input.dispatchMouseEvent', {
+		type: 'mousePressed',
+		x,
+		y,
+		button: 'left',
+		buttons: 1,
+		clickCount: 1,
+	})
+	document.documentElement.setAttribute(POINTER_HOLD, `${String(x)}x${String(y)}`)
+	await waitForFrame()
+	if (!target.matches(':active')) {
+		try {
+			await releasePointer()
+		} catch (cause) {
+			throw new Error(`Interactive target "${second ?? first}" did not enter the pressed state`, {
+				cause,
+			})
+		}
+		throw new Error(`Interactive target "${second ?? first}" did not enter the pressed state`)
+	}
+}
+
+/**
+ * Releases a held pointer and parks it at the page origin, clearing hover.
+ *
+ * @returns A promise resolving after the released pointer's frame paints.
+ * @throws Thrown when the release or the park rejects. If both reject, the aggregate carries the
+ * park rejection as its cause and the release rejection in its errors.
+ *
+ * @remarks
+ * An idle pointer sends no button release. Calling this after an explicit release is safe in an
+ * `afterEach` hook. A rejected release keeps the marker for a later retry. The pointer still moves
+ * to the origin in cleanup, and a rejection there joins the aggregate described under `@throws`.
+ * The provider must expose a DevTools session.
+ *
+ * @example
+ * ```ts
+ * await releasePointer()
+ * ```
+ */
+export async function releasePointer(): Promise<void> {
+	const held = document.documentElement.getAttribute(POINTER_HOLD)
+	let released = held === null
+	let rejection: unknown
+	try {
+		if (held !== null) {
+			const [x, y] = held.split('x').map(Number)
+			await sendProtocol('Input.dispatchMouseEvent', {
+				type: 'mouseReleased',
+				x,
+				y,
+				button: 'left',
+				buttons: 0,
+				clickCount: 1,
+			})
+			released = true
+		}
+	} catch (cause) {
+		rejection = cause
+	}
+	if (released) document.documentElement.removeAttribute(POINTER_HOLD)
+	try {
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+		await waitForFrame()
+	} catch (cause) {
+		if (!released) {
+			throw new AggregateError([rejection], isError(cause) ? cause.message : String(cause), {
+				cause,
+			})
+		}
+		throw cause
+	}
+	if (!released) throw rejection
 }
 
 /**
@@ -2139,12 +2333,14 @@ export function extractStyles(root: ParentNode): readonly string[] {
 }
 
 /**
- * Reads one resolved CSS property from a real browser element.
+ * Reads one resolved CSS property from a real browser element or a named pseudo-element.
  *
  * @param element - The element whose resolved style to inspect.
  * @param property - The CSS property name, registered or custom.
+ * @param pseudo - The pseudo-element selector. Omit it to read the element itself.
  * @returns The browser's resolved property value, trimmed; an empty string when the element resolves
  * none.
+ * @throws Thrown when the pseudo argument lacks the `::` prefix or the engine does not support it.
  *
  * @remarks
  * The value is trimmed, so what comes back is the value and never the whitespace around it. Internal
@@ -2155,8 +2351,16 @@ export function extractStyles(root: ParentNode): readonly string[] {
  * readStyle(button, 'padding-left')
  * ```
  */
-export function readStyle(element: Element, property: string): string {
-	return getComputedStyle(element).getPropertyValue(property).trim()
+export function readStyle(element: Element, property: string, pseudo?: string): string {
+	if (pseudo !== undefined) {
+		if (!pseudo.startsWith('::')) {
+			throw new Error(`Pseudo-element "${pseudo}" must start with "::"`)
+		}
+		if (!CSS.supports(`selector(${pseudo})`)) {
+			throw new Error(`Pseudo-element "${pseudo}" is not one this engine exposes`)
+		}
+	}
+	return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
 }
 
 /**
@@ -2213,7 +2417,9 @@ export function readRootToken(name: string): string {
  *
  * @param element - The element whose resolved style to inspect.
  * @param property - The CSS property name, registered or custom.
+ * @param pseudo - The pseudo-element selector. Omit it to read the element itself.
  * @returns The leading numeric part of the resolved value, and `0` when it carries none.
+ * @throws Thrown when the pseudo argument lacks the `::` prefix or the engine does not support it.
  *
  * @remarks
  * A resolved length is text with a unit — `'12px'` — so this reads the number in front of the unit
@@ -2231,8 +2437,8 @@ export function readRootToken(name: string): string {
  * readPixels(button, 'width') // 0 when the width resolves to `auto`
  * ```
  */
-export function readPixels(element: Element, property: string): number {
-	const measured = Number.parseFloat(readStyle(element, property))
+export function readPixels(element: Element, property: string, pseudo?: string): number {
+	const measured = Number.parseFloat(readStyle(element, property, pseudo))
 	return Number.isFinite(measured) ? measured : 0
 }
 
@@ -2400,6 +2606,162 @@ export async function releasePane(): Promise<void> {
 	const width = Number(viewport[0])
 	const height = Number(viewport[1])
 	if (Number.isFinite(width) && Number.isFinite(height)) await page.viewport(width, height)
+}
+
+/**
+ * Stages the tester's print medium and motion preference through the browser provider.
+ *
+ * @param options - The media axes to override.
+ * @returns A promise resolving after a bounded read-back for `print: true` and either
+ * `motion` value. A `print: false` stage is sent and followed by a frame wait without a read-back.
+ * @throws Thrown when no axis is supplied or a staged query does not reach the tester.
+ *
+ * @remarks
+ * If `print` is true, uses print; if false, uses screen. If `motion` is true, uses no preference;
+ * if false, uses reduced motion. The print medium, reduced motion, colour scheme, and forced colours
+ * keep their effective readings when omitted. Any other emulated feature the provider configured
+ * is cleared. Each staged query waits up to 1000 milliseconds, polling every 10 milliseconds.
+ * A refused read-back restores the carried pre-call readings before throwing and can take two
+ * budgets. A restoration failure is attached as the refusal's cause. Register
+ * {@link releaseMedia} in teardown; it restores the readings observed before the first stage.
+ *
+ * @example
+ * ```ts
+ * await stageMedia({ motion: false, print: true })
+ * await releaseMedia()
+ * ```
+ */
+export async function stageMedia(options: MediaOptions): Promise<void> {
+	const print = options.print
+	const motion = options.motion
+	if (print === undefined && motion === undefined) {
+		throw new Error('Media emulation was staged with nothing to emulate')
+	}
+	const media = matchMedia('print').matches ? 'print' : 'screen'
+	const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+	const dark = matchMedia('(prefers-color-scheme: dark)').matches
+	const forced = matchMedia('(forced-colors: active)').matches
+	if (!document.documentElement.hasAttribute(MEDIA_STAGE)) {
+		document.documentElement.setAttribute(
+			MEDIA_STAGE,
+			[media === 'print', reduced, dark, forced].map(Number).join(''),
+		)
+	}
+	const features = [
+		{
+			name: 'prefers-color-scheme',
+			value: dark ? 'dark' : 'light',
+		},
+		{
+			name: 'forced-colors',
+			value: forced ? 'active' : 'none',
+		},
+		{
+			name: 'prefers-reduced-motion',
+			value: reduced ? 'reduce' : 'no-preference',
+		},
+	]
+	const queries: string[] = []
+	if (print === true) queries.push('print')
+	if (motion !== undefined) {
+		queries.push(`(prefers-reduced-motion: ${motion ? 'no-preference' : 'reduce'})`)
+	}
+	await sendProtocol('Emulation.setEmulatedMedia', {
+		media: print === undefined ? media : print ? 'print' : 'screen',
+		features: features.map((feature) =>
+			feature.name === 'prefers-reduced-motion' && motion !== undefined
+				? { name: feature.name, value: motion ? 'no-preference' : 'reduce' }
+				: feature,
+		),
+	})
+	await waitForFrame()
+	for (const query of queries) {
+		try {
+			await waitForCondition(query, () => matchMedia(query).matches)
+		} catch (cause) {
+			try {
+				await sendProtocol('Emulation.setEmulatedMedia', { media, features })
+				await waitForCondition(
+					'pre-call media readings restored',
+					() =>
+						matchMedia(media).matches &&
+						features.every((feature) => matchMedia(`(${feature.name}: ${feature.value})`).matches),
+				)
+			} catch (restoration) {
+				throw new Error(`Media emulation did not reach the tester: ${query}`, {
+					cause: restoration,
+				})
+			}
+			throw new Error(`Media emulation did not reach the tester: ${query}`, { cause })
+		}
+	}
+}
+
+/**
+ * Restores the media readings observed before the first stage as explicit emulation. With nothing
+ * staged, clears every override and waits for a stable reading, not a proved engine baseline. Checks
+ * the budget between polls, so a frame that never paints is not bounded by it.
+ *
+ * @returns A promise resolving after the media readings settle.
+ * @throws Thrown when a media read-back exhausts its 1000 millisecond budget between polls.
+ *
+ * @remarks
+ * Restores print, reduced motion, colour scheme, and forced colours from {@link MEDIA_STAGE},
+ * waits per axis for the recorded value, and removes the marker after every axis agrees. With no
+ * marker, sends the empty reset and compares readings taken strictly after that send. Each poll
+ * waits for a frame; the interval is 10 milliseconds. The provider must expose a DevTools session.
+ *
+ * @example
+ * ```ts
+ * await releaseMedia()
+ * ```
+ */
+export async function releaseMedia(): Promise<void> {
+	const queries = [
+		'print',
+		'(prefers-reduced-motion: reduce)',
+		'(prefers-color-scheme: dark)',
+		'(forced-colors: active)',
+	]
+	const staged = document.documentElement.getAttribute(MEDIA_STAGE)
+	if (staged !== null) {
+		const readings = staged.split('').map((value) => value === '1')
+		await sendProtocol('Emulation.setEmulatedMedia', {
+			media: readings[0] ? 'print' : 'screen',
+			features: [
+				{ name: 'prefers-reduced-motion', value: readings[1] ? 'reduce' : 'no-preference' },
+				{ name: 'prefers-color-scheme', value: readings[2] ? 'dark' : 'light' },
+				{ name: 'forced-colors', value: readings[3] ? 'active' : 'none' },
+			],
+		})
+		try {
+			await Promise.all(
+				queries.map((query, index) =>
+					waitForCondition(query, async () => {
+						await waitForFrame()
+						return matchMedia(query).matches === readings[index]
+					}),
+				),
+			)
+		} catch (cause) {
+			throw new Error('Media emulation did not clear from the tester', { cause })
+		}
+		document.documentElement.removeAttribute(MEDIA_STAGE)
+		return
+	}
+	await sendProtocol('Emulation.setEmulatedMedia', { media: '', features: [] })
+	let previous = queries.map((query) => matchMedia(query).matches)
+	try {
+		await waitForCondition('media emulation cleared', async () => {
+			await waitForFrame()
+			const readings = queries.map((query) => matchMedia(query).matches)
+			const stable = readings.every((reading, index) => reading === previous[index])
+			previous = readings
+			return stable
+		})
+	} catch (cause) {
+		throw new Error('Media emulation did not clear from the tester', { cause })
+	}
 }
 
 /**
