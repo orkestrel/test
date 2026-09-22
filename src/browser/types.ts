@@ -189,12 +189,14 @@ export interface StateOptions extends WaitOptions {
 	readonly absent?: boolean
 }
 
-/** Configures the tester's print medium and motion preference. */
+/** Configures the tester's print medium, motion preference, and forced colours. */
 export interface MediaOptions {
 	/** Determines whether the tester lays out for print. Omit it to leave the medium alone. */
 	readonly print?: boolean
 	/** Determines whether the tester prefers motion. Omit it to leave the preference alone. */
 	readonly motion?: boolean
+	/** Determines whether the tester runs under forced colours. Omit it to leave the colours alone. */
+	readonly forced?: boolean
 }
 
 /**

@@ -29,6 +29,8 @@ import {
 	convertRec2020,
 	describeFocus,
 	describeTree,
+	driveHold,
+	driveTraversal,
 	expandCaptures,
 	extractOrphans,
 	extractStyles,
@@ -37,6 +39,7 @@ import {
 	findKeyframes,
 	findRule,
 	holdAccessible,
+	holdAccessibleWithin,
 	hoverAccessible,
 	IMPLICIT_ROLES,
 	isOutsideViewport,
@@ -82,11 +85,13 @@ import {
 	removeDatabase,
 	render,
 	resolveAccessible,
+	resolveAccessibleWithin,
 	resolveRendered,
 	sendProtocol,
 	stageMedia,
 	stagePane,
 	traverseAccessible,
+	traverseAccessibleWithin,
 	typeAccessible,
 	typeInput,
 	waitForAnimations,
@@ -882,6 +887,35 @@ describe('clickAccessibleWithin', () => {
 	})
 })
 
+describe('resolveAccessibleWithin', () => {
+	it('resolves the control inside the named region and leaves its twin alone', () => {
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button type="button">Monthly income · ready</button></section>' +
+				'<section aria-label="Vault"><button type="button">Monthly income · ready</button></section>',
+		)
+		expect(resolveAccessibleWithin('Ledger', 'button', 'Monthly income')).toBe(
+			container.querySelector('section button'),
+		)
+		expect(resolveAccessibleWithin('Vault', 'button', 'Monthly income')).toBe(
+			container.querySelectorAll('section button')[1],
+		)
+	})
+
+	it('refuses a control the region does not reach, and a name several controls answer for', () => {
+		buildFixture(
+			'<section aria-label="Ledger">' +
+				'<button type="button">Add row</button><button type="button">Add column</button>' +
+				'</section>',
+		)
+		expect(() => resolveAccessibleWithin('Ledger', 'button', 'Remove')).toThrow(
+			'Interactive target "Remove" is not reachable inside "Ledger"',
+		)
+		expect(() => resolveAccessibleWithin('Ledger', 'button', 'Add')).toThrow(
+			'Interactive target "Add" is ambiguous across 2 elements inside "Ledger"',
+		)
+	})
+})
+
 describe('clickDisclosure', () => {
 	it('opens a native details disclosure by its rendered summary', async () => {
 		const container = buildFixture('<details><summary>Advanced</summary><p>Body</p></details>')
@@ -1249,6 +1283,79 @@ describe('pressKeys', () => {
 	})
 })
 
+describe('holdAccessibleWithin', () => {
+	it('holds the control inside the named region and leaves its twin unpressed', async () => {
+		buildStylesheet(
+			'.journey-hold { position: fixed; top: 140px; padding-top: 16px } .journey-hold:active { padding-top: 32px }',
+		)
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button class="journey-hold" style="left: 140px">Apply</button></section>' +
+				'<section aria-label="Vault"><button class="journey-hold" style="left: 300px">Apply</button></section>',
+		)
+		const ledger = requireValue(container.querySelector('section button'))
+		const vault = requireValue(container.querySelectorAll('section button')[1])
+		await holdAccessibleWithin('Ledger', 'button', 'Apply')
+		expect(readPixels(ledger, 'padding-top')).toBe(32)
+		expect(ledger.matches(':active')).toBe(true)
+		expect(vault.matches(':active')).toBe(false)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(true)
+		await releasePointer()
+		expect(readPixels(ledger, 'padding-top')).toBe(16)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+	})
+
+	it('scrolls a control below the fold into view before holding it', async () => {
+		buildStylesheet(
+			'.journey-fold { padding-top: 16px } .journey-fold:active { padding-top: 32px }',
+		)
+		const container = buildFixture(
+			'<section aria-label="Ledger"><div style="height: 300vh"></div><button class="journey-fold">Apply</button></section>',
+		)
+		const button = requireValue(container.querySelector('button'))
+		expect(isOutsideViewport(button.getBoundingClientRect())).toBe(true)
+		await holdAccessibleWithin('Ledger', 'button', 'Apply')
+		expect(readPixels(button, 'padding-top')).toBe(32)
+		expect(button.matches(':active')).toBe(true)
+		await releasePointer()
+		window.scrollTo(0, 0)
+	})
+
+	it('refuses a control the region does not reach, and a double hold before resolving', async () => {
+		buildStylesheet('.journey-hold { position: fixed; top: 140px; left: 140px }')
+		buildFixture(
+			'<section aria-label="Ledger"><button class="journey-hold">Apply</button></section>',
+		)
+		await expect(holdAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrow(
+			'Interactive target "Remove" is not reachable inside "Ledger"',
+		)
+		await holdAccessibleWithin('Ledger', 'button', 'Apply')
+		await expect(holdAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrow(
+			'Pointer is already held at',
+		)
+	})
+})
+
+describe('driveHold', () => {
+	it('holds the control a resolver returns, and refuses a double hold before resolving', async () => {
+		buildStylesheet('.journey-hold { position: fixed; top: 140px; left: 140px }')
+		const container = buildFixture('<button class="journey-hold">Apply</button>')
+		const button = requireValue(container.querySelector('button'))
+		await driveHold(() => button, 'Apply')
+		expect(button.matches(':active')).toBe(true)
+		await expect(
+			driveHold(() => {
+				throw new Error('resolver reached')
+			}, 'Apply'),
+		).rejects.toThrow('Pointer is already held at')
+		await releasePointer()
+		await expect(
+			driveHold(() => {
+				throw new Error('resolver reached')
+			}, 'Apply'),
+		).rejects.toThrow('resolver reached')
+	})
+})
+
 describe('traverseAccessible', () => {
 	it('reaches a named control through forward Tab alone', async () => {
 		const container = buildFixture(
@@ -1277,6 +1384,55 @@ describe('traverseAccessible', () => {
 		await expect(traverseAccessible('Ghost')).rejects.toThrow(
 			/^Interactive target "Ghost" is not reachable through forward Tab traversal: .+$/u,
 		)
+	})
+})
+
+describe('traverseAccessibleWithin', () => {
+	it('passes over a twin outside the region and reaches the control inside it', async () => {
+		const container = buildFixture(
+			'<section aria-label="Vault"><button type="button">Evaluate</button></section>' +
+				'<section aria-label="Ledger"><button type="button">Evaluate</button></section>',
+		)
+		const ledger = requireValue(container.querySelectorAll('section button')[1])
+		await expect(traverseAccessible('Evaluate')).rejects.toThrow(
+			'Interactive target "Evaluate" is ambiguous across 2 elements',
+		)
+		const reached = await traverseAccessibleWithin('Ledger', 'button', 'Evaluate')
+		expect(reached).toBe(ledger)
+		expect(document.activeElement).toBe(ledger)
+	})
+
+	it('refuses a control the region does not reach before pressing any key', async () => {
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button type="button">Evaluate</button></section>',
+		)
+		const focus = createRecorder<[event: FocusEvent]>()
+		requireValue(container.querySelector('button')).addEventListener('focus', focus.handler)
+		await expect(traverseAccessibleWithin('Ledger', 'button', 'Remove')).rejects.toThrow(
+			'Interactive target "Remove" is not reachable inside "Ledger"',
+		)
+		expect(focus.count).toBe(0)
+	})
+})
+
+describe('driveTraversal', () => {
+	it('reaches the control a resolver returns, re-resolving on every step', async () => {
+		const container = buildFixture(
+			'<button type="button">First</button><button type="button">Second</button>',
+		)
+		const first = requireValue(container.querySelectorAll('button')[0])
+		const second = requireValue(container.querySelectorAll('button')[1])
+		const resolutions = createRecorder<[]>()
+		// The resolver answers with the first button before the loop starts and with the second on
+		// every step after that: a loop that compared focus against its first resolution would stop
+		// on the first button, and a loop that resolves on every step passes it and reaches the second.
+		const reached = await driveTraversal(() => {
+			resolutions.handler()
+			return resolutions.count > 1 ? second : first
+		}, 'Second')
+		expect(reached).toBe(second)
+		expect(document.activeElement).toBe(second)
+		expect(resolutions.count).toBeGreaterThan(2)
 	})
 })
 
@@ -3479,6 +3635,28 @@ describe('stageMedia', () => {
 		expect(matchMedia('print').matches).toBe(false)
 		expect(matchMedia('screen').matches).toBe(true)
 		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true)
+	})
+
+	it('stages forced colours on and off, reads each back, and restores the host mode', async () => {
+		await releaseMedia()
+		const forced = matchMedia('(forced-colors: active)').matches
+		const print = matchMedia('print').matches
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		await stageMedia({ forced: !forced })
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+		expect(matchMedia('print').matches).toBe(print)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		expect(document.documentElement.getAttribute(MEDIA_STAGE)?.at(3)).toBe(String(Number(forced)))
+		await stageMedia({ forced })
+		expect(matchMedia('(forced-colors: active)').matches).toBe(forced)
+		await stageMedia({ forced: !forced, motion: reduced })
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		await stageMedia({ motion: !reduced })
+		expect(matchMedia('(forced-colors: active)').matches).toBe(!forced)
+		await releaseMedia()
+		expect(matchMedia('(forced-colors: active)').matches).toBe(forced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
 	})
 
 	it('refuses an empty media stage', async () => {

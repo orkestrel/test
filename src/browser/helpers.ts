@@ -425,6 +425,30 @@ export async function clickAccessibleWithin(
 	role: string,
 	name: string,
 ): Promise<void> {
+	await userEvent.click(resolveAccessibleWithin(region, role, name))
+}
+
+/**
+ * Resolves one human-reachable control by role and accessible-name text inside a named region.
+ *
+ * @param region - The containing region's exact accessible name.
+ * @param role - The control's exact ARIA role.
+ * @param name - The rendered accessible-name text that identifies the control in that region.
+ * @returns The one reachable element carrying that role and name inside the region.
+ * @throws When the named control is absent, unreachable, or ambiguous inside the region.
+ *
+ * @remarks
+ * The region's name is matched exactly and the control's name loosely, over a computed name that
+ * includes hidden subtrees, so a glyph joins the text rather than displacing it. One pass answers
+ * this: a control the region cannot reach is refused whether it is absent or hidden. This is the
+ * resolver the region-scoped verbs share.
+ *
+ * @example
+ * ```ts
+ * resolveAccessibleWithin('Ledger', 'button', 'Monthly income')
+ * ```
+ */
+export function resolveAccessibleWithin(region: string, role: string, name: string): HTMLElement {
 	const matches = page
 		.getByRole('region', { name: region, exact: true })
 		.getByRole(role, { name, exact: false, includeHidden: true })
@@ -444,7 +468,7 @@ export async function clickAccessibleWithin(
 	if (!(target instanceof HTMLElement)) {
 		throw new Error(`Interactive target "${name}" could not be resolved inside "${region}"`)
 	}
-	await userEvent.click(target)
+	return target
 }
 
 /**
@@ -557,7 +581,7 @@ export async function hoverAccessible(first: string, second?: string): Promise<v
  * reading verifies delivery. A missed press releases before refusing; if that release also
  * rejects, the refusal carries it as its cause. Register {@link releasePointer} in teardown
  * before holding; release can produce a click on the pressed control. A rejected button-down send
- * leaves no hold marker.
+ * leaves no hold marker. The hold itself is {@link driveHold}.
  *
  * @example
  * ```ts
@@ -583,10 +607,77 @@ export async function holdAccessible(name: string): Promise<void>
  */
 export async function holdAccessible(role: string, name: string): Promise<void>
 export async function holdAccessible(first: string, second?: string): Promise<void> {
+	await driveHold(
+		() => (second === undefined ? resolveAccessible(first) : resolveAccessible(first, second)),
+		second ?? first,
+	)
+}
+
+/**
+ * Holds the primary pointer button on one control by role and accessible-name text inside a named
+ * region.
+ *
+ * @param region - The containing region's exact accessible name.
+ * @param role - The control's exact ARIA role.
+ * @param name - The rendered accessible-name text that identifies the control in that region.
+ * @returns A promise resolving after the control enters its pressed state.
+ * @throws Thrown when a pointer is already held, the region refuses the target, or the press
+ * misses. A missed press that also fails to release carries the release rejection as its cause.
+ *
+ * @remarks
+ * The resolution is {@link resolveAccessibleWithin} and the hold is {@link driveHold}, so a twin
+ * of the same name in another region is left alone. Register {@link releasePointer} in teardown
+ * before holding.
+ *
+ * @example
+ * ```ts
+ * await holdAccessibleWithin('Ledger', 'button', 'Apply')
+ * await releasePointer()
+ * ```
+ */
+export async function holdAccessibleWithin(
+	region: string,
+	role: string,
+	name: string,
+): Promise<void> {
+	await driveHold(() => resolveAccessibleWithin(region, role, name), name)
+}
+
+/**
+ * Holds the primary pointer button on the control a resolver returns, through the browser provider.
+ *
+ * @param resolve - The resolver that returns the target, called after the held-pointer refusal.
+ * @param name - The target's name, as the refusals voice it.
+ * @returns A promise resolving after the control enters its pressed state.
+ * @throws Thrown when a pointer is already held, the resolver refuses, the target stays outside
+ * the viewport after scrolling, or the press misses. A missed press that also fails to release
+ * carries the release rejection as its cause.
+ *
+ * @remarks
+ * This is the one pointer drive every hold verb shares: the held-marker refusal, a scroll that
+ * brings a wholly off-viewport target into view and a refusal for one that stays outside, the
+ * centre mapped through the tester iframe's painted scale into page coordinates, the trusted move
+ * and press, the marker, a frame wait, and the `:active` read-back that releases before refusing a
+ * missed press. The refusal precedes resolution, so a double hold is refused before an absent
+ * name is.
+ *
+ * @example
+ * ```ts
+ * await driveHold(() => resolveAccessible('Apply'), 'Apply')
+ * await releasePointer()
+ * ```
+ */
+export async function driveHold(resolve: () => HTMLElement, name: string): Promise<void> {
 	const held = document.documentElement.getAttribute(POINTER_HOLD)
 	if (held !== null) throw new Error(`Pointer is already held at ${held}`)
-	const target = second === undefined ? resolveAccessible(first) : resolveAccessible(first, second)
+	const target = resolve()
+	if (isOutsideViewport(target.getBoundingClientRect())) {
+		target.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+	}
 	const box = target.getBoundingClientRect()
+	if (isOutsideViewport(box)) {
+		throw new Error(`Interactive target "${name}" is unreachable after scrolling`)
+	}
 	const frame = window.frameElement?.getBoundingClientRect()
 	const scale = frame === undefined ? 1 : frame.width / window.innerWidth
 	const x = (frame?.left ?? 0) + (box.left + box.width / 2) * scale
@@ -606,11 +697,9 @@ export async function holdAccessible(first: string, second?: string): Promise<vo
 		try {
 			await releasePointer()
 		} catch (cause) {
-			throw new Error(`Interactive target "${second ?? first}" did not enter the pressed state`, {
-				cause,
-			})
+			throw new Error(`Interactive target "${name}" did not enter the pressed state`, { cause })
 		}
-		throw new Error(`Interactive target "${second ?? first}" did not enter the pressed state`)
+		throw new Error(`Interactive target "${name}" did not enter the pressed state`)
 	}
 }
 
@@ -749,13 +838,70 @@ export async function pressKeys(keys: string): Promise<void> {
  * @returns The target after the browser moves focus to it.
  * @throws When one complete traversal cannot reach the target.
  *
+ * @remarks
+ * The loop is {@link driveTraversal} over {@link resolveRendered}.
+ *
  * @example
  * ```ts
  * await traverseAccessible('Evaluate')
  * ```
  */
 export async function traverseAccessible(name: string): Promise<HTMLElement> {
-	resolveRendered(name)
+	return driveTraversal(() => resolveRendered(name), name)
+}
+
+/**
+ * Reaches a control by role and accessible-name text inside a named region, only through natural
+ * forward Tab traversal from the current focus.
+ *
+ * @param region - The containing region's exact accessible name.
+ * @param role - The control's exact ARIA role.
+ * @param name - The rendered accessible-name text that identifies the control in that region.
+ * @returns The target after the browser moves focus to it.
+ * @throws When the region refuses the target, or one complete traversal cannot reach it.
+ *
+ * @remarks
+ * The resolution is {@link resolveAccessibleWithin} and the loop is {@link driveTraversal}, so a
+ * twin of the same name earlier in the tab order is passed over rather than reached.
+ *
+ * @example
+ * ```ts
+ * await traverseAccessibleWithin('Ledger', 'button', 'Evaluate')
+ * ```
+ */
+export async function traverseAccessibleWithin(
+	region: string,
+	role: string,
+	name: string,
+): Promise<HTMLElement> {
+	return driveTraversal(() => resolveAccessibleWithin(region, role, name), name)
+}
+
+/**
+ * Reaches the control a resolver returns, only through natural forward Tab traversal from the
+ * current focus.
+ *
+ * @param resolve - The resolver that returns the target, called before the first step and again on
+ * every step, because a framework may replace the node between resolution and focus arrival.
+ * @param name - The target's name, as the refusal voices it.
+ * @returns The target after the browser moves focus to it.
+ * @throws When the resolver refuses, or one complete traversal cannot reach the target.
+ *
+ * @remarks
+ * This is the one loop every traversal verb shares. A step counts only when focus lands on an
+ * element, the traversal is over when focus revisits one, and the cap is counted off
+ * {@link FOCUSABLE_SELECTOR}.
+ *
+ * @example
+ * ```ts
+ * await driveTraversal(() => resolveRendered('Evaluate'), 'Evaluate')
+ * ```
+ */
+export async function driveTraversal(
+	resolve: () => HTMLElement,
+	name: string,
+): Promise<HTMLElement> {
+	resolve()
 	// Two facts shape the loop. A Tab pressed before the page has real input focus moves nothing,
 	// so a step counts only when focus actually lands somewhere; the traversal is over when focus
 	// revisits an element, because that is one full cycle of the tab order. And the target is
@@ -772,7 +918,7 @@ export async function traverseAccessible(name: string): Promise<HTMLElement> {
 		if (!(focused instanceof HTMLElement) || focused === document.body) continue
 		let current: HTMLElement | undefined
 		try {
-			current = resolveRendered(name)
+			current = resolve()
 		} catch {
 			continue
 		}
@@ -2961,17 +3107,20 @@ export async function releasePane(): Promise<void> {
 }
 
 /**
- * Stages the tester's print medium and motion preference through the browser provider.
+ * Stages the tester's print medium, motion preference, and forced colours through the browser
+ * provider.
  *
  * @param options - The media axes to override.
- * @returns A promise resolving after a bounded read-back for `print: true` and either
- * `motion` value. A `print: false` stage is sent and followed by a frame wait without a read-back.
+ * @returns A promise resolving after a bounded read-back for `print: true`, either `motion` value,
+ * and either `forced` value. A `print: false` stage is sent and followed by a frame wait without a
+ * read-back.
  * @throws Thrown when no axis is supplied or a staged query does not reach the tester.
  *
  * @remarks
  * If `print` is true, uses print; if false, uses screen. If `motion` is true, uses no preference;
- * if false, uses reduced motion. The print medium, reduced motion, colour scheme, and forced colours
- * keep their effective readings when omitted. Any other emulated feature the provider configured
+ * if false, uses reduced motion. If `forced` is true, uses active forced colours; if false, uses
+ * none. The print medium, reduced motion, colour scheme, and forced colours keep their effective
+ * readings when omitted. Any other emulated feature the provider configured
  * is cleared. Each staged query waits up to 1000 milliseconds, polling every 10 milliseconds.
  * A refused read-back restores the carried pre-call readings before throwing and can take two
  * budgets. A restoration failure is attached as the refusal's cause. Register
@@ -2986,17 +3135,18 @@ export async function releasePane(): Promise<void> {
 export async function stageMedia(options: MediaOptions): Promise<void> {
 	const print = options.print
 	const motion = options.motion
-	if (print === undefined && motion === undefined) {
+	const forced = options.forced
+	if (print === undefined && motion === undefined && forced === undefined) {
 		throw new Error('Media emulation was staged with nothing to emulate')
 	}
 	const media = matchMedia('print').matches ? 'print' : 'screen'
 	const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 	const dark = matchMedia('(prefers-color-scheme: dark)').matches
-	const forced = matchMedia('(forced-colors: active)').matches
+	const active = matchMedia('(forced-colors: active)').matches
 	if (!document.documentElement.hasAttribute(MEDIA_STAGE)) {
 		document.documentElement.setAttribute(
 			MEDIA_STAGE,
-			[media === 'print', reduced, dark, forced].map(Number).join(''),
+			[media === 'print', reduced, dark, active].map(Number).join(''),
 		)
 	}
 	const features = [
@@ -3006,7 +3156,7 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 		},
 		{
 			name: 'forced-colors',
-			value: forced ? 'active' : 'none',
+			value: active ? 'active' : 'none',
 		},
 		{
 			name: 'prefers-reduced-motion',
@@ -3018,12 +3168,15 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 	if (motion !== undefined) {
 		queries.push(`(prefers-reduced-motion: ${motion ? 'no-preference' : 'reduce'})`)
 	}
+	if (forced !== undefined) queries.push(`(forced-colors: ${forced ? 'active' : 'none'})`)
 	await sendProtocol('Emulation.setEmulatedMedia', {
 		media: print === undefined ? media : print ? 'print' : 'screen',
 		features: features.map((feature) =>
 			feature.name === 'prefers-reduced-motion' && motion !== undefined
 				? { name: feature.name, value: motion ? 'no-preference' : 'reduce' }
-				: feature,
+				: feature.name === 'forced-colors' && forced !== undefined
+					? { name: feature.name, value: forced ? 'active' : 'none' }
+					: feature,
 		),
 	})
 	await waitForFrame()
