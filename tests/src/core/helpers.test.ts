@@ -33,7 +33,7 @@ import {
 	waitForText,
 } from '@src/core'
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { createAsyncSource, createStreamSource } from '../../setup.js'
+import { createAsyncSource, createStreamSource, REFUSAL } from '../../setup.js'
 
 // Interfaces rather than type aliases: TypeScript grants an implicit index signature to an alias
 // and never to an interface, so only an interface exercises what the `JSONValue` bound rejected.
@@ -1046,10 +1046,6 @@ class Disclosure {
 		this.#state = 'closed'
 	}
 }
-
-// Thrown by identity, so the non-error case asserts on the value that came back rather than on a
-// rendering of it. A frozen record is not an `Error`, which is the whole of what the case turns on.
-const REFUSAL = Object.freeze({ reason: 'refused' })
 
 function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
 	context.trail.handler('arrange', state)

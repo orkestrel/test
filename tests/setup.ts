@@ -224,3 +224,10 @@ export const MODULES: Readonly<Record<string, string>> = Object.freeze({
  * here stops being stranded, so the list cannot rot.
  */
 export const INTERNAL: readonly string[] = Object.freeze([])
+
+/**
+ * Carries the refusal a scenario phase throws by identity, so a case over a non-error throw asserts on
+ * the value that came back rather than on a rendering of it. A frozen record is not an `Error`, which
+ * is the whole of what such a case turns on.
+ */
+export const REFUSAL = Object.freeze({ reason: 'refused' })
