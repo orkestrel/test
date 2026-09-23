@@ -28,14 +28,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../setup.js'
-import { buildFixture, resetFixtures } from '../../setupBrowser.js'
-
-const STATES: readonly string[] = ['start-empty', 'answer-ideal']
-
-const VARIANTS: readonly CaptureVariant[] = [
-	{ name: 'light-1440', width: 1440, height: 1000 },
-	{ name: 'dark-390', width: 390, height: 844 },
-]
+import { buildFixture, resetFixtures, STATES, VARIANTS } from '../../setupBrowser.js'
 
 // Relative to this test file, which is where the provider resolves a screenshot path from. `tmp` is
 // ignored by git, so a written portfolio never reaches a commit.

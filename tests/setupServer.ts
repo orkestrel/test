@@ -28,3 +28,41 @@ export const CASE_SENSITIVE_FS = supportsCase()
  * {@link supportsBytes} reads it.
  */
 export const RAW_BYTE_NAMES = supportsBytes()
+
+/**
+ * Lists every host-capability probe, paired with the name its failures are reported under. The
+ * pairs are a case matrix rather than test registration, so a residue or boolean proof runs once
+ * per probe instead of being written out per probe.
+ */
+export const HOST_PROBES: ReadonlyArray<readonly [name: string, probe: () => boolean]> =
+	Object.freeze([
+		Object.freeze<readonly [name: string, probe: () => boolean]>([
+			'supportsDirectoryLinks',
+			supportsDirectoryLinks,
+		]),
+		Object.freeze<readonly [name: string, probe: () => boolean]>([
+			'supportsFileLinks',
+			supportsFileLinks,
+		]),
+		Object.freeze<readonly [name: string, probe: () => boolean]>(['supportsMode', supportsMode]),
+		Object.freeze<readonly [name: string, probe: () => boolean]>(['supportsCase', supportsCase]),
+		Object.freeze<readonly [name: string, probe: () => boolean]>(['supportsBytes', supportsBytes]),
+	])
+
+/**
+ * Lists every environment variable a host's `os.tmpdir()` reads. Each platform reads its own name
+ * first — win32 takes `TEMP`, then `TMP`; POSIX takes `TMPDIR`, then `TMP`, then `TEMP` — so an
+ * override that sets one name steers one platform, and an override that sets the whole set steers
+ * either.
+ */
+export const TEMPORARY_VARIABLES: readonly string[] = Object.freeze(['TMPDIR', 'TEMP', 'TMP'])
+
+/**
+ * Lists absolute target spellings that carry a root of their own. `relative` compares spellings and
+ * reads no filesystem, so neither the drive nor the share has to exist for the comparison to
+ * answer.
+ */
+export const FOREIGN_ROOT_SPELLINGS: readonly string[] = Object.freeze([
+	'Z:\\orkestrel-test-outside',
+	'\\\\orkestrel-test-host\\share\\outside',
+])

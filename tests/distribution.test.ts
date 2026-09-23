@@ -29,6 +29,16 @@ import { chromium } from 'playwright'
 import { build } from 'vite'
 import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
 import { afterAll, describe, expect, it } from 'vitest'
+import type { Format, Resolution } from './setup.js'
+import {
+	DECLARATION_CONDITIONS,
+	DECLARATION_EXTENSIONS,
+	FORMATS,
+	MODULE_EXTENSIONS,
+	PING,
+	RESOLUTIONS,
+	RUNTIME_CONDITIONS,
+} from './setup.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -60,7 +70,6 @@ const ABSENT_SUBPATH = '/no-subpath-is-published-under-this-name'
 // compiler majors this toolchain supports, so a reported line matching nothing here
 // came from something other than a check of a consumer module.
 const DIAGNOSTIC_PATTERN = /^(.+?)\(\d+,\d+\): error TS\d+: /u
-const PING = ['ping', '--fetch-retries=0', '--fetch-timeout=5000', '--loglevel=silent']
 const ESM_DRIVER = 'drive.mjs'
 const CJS_DRIVER = 'drive.cjs'
 const CONSUMER_MANIFEST = `{ "name": "distribution-consumer", "private": true, "type": "module" }\n`
@@ -73,83 +82,17 @@ process.stdout.write(JSON.stringify(Object.keys(entry).sort()))
 
 // The extensions a JavaScript handler loads as modules. Node loads a native addon
 // through its addon handler instead, so that extension is named separately.
-const MODULE_EXTENSIONS = ['.js', '.mjs', '.cjs']
 const ADDON_EXTENSION = '.node'
-// The extensions a declaration file carries. A `require` condition declares
-// `.d.cts` and an ESM-only one `.d.mts`, so the `.d.ts` spelling alone does not
-// name them.
-const DECLARATION_EXTENSIONS = ['.d.ts', '.d.cts', '.d.mts']
-type Format = 'module' | 'commonjs'
-
-// The Node import target is resolved with the conditions that driver supplies. The
-// CommonJS compile probe is selected from its declaration's format, and its runtime
-// drive loads the same subpath through Node's require resolver. Vite's production
-// client build enables its module and browser conditions.
-const RUNTIME_CONDITIONS = Object.freeze({
-	module: Object.freeze(['node-addons', 'node', 'import', 'module-sync']),
-	commonjs: Object.freeze(['node-addons', 'node', 'require', 'module-sync']),
-	browser: Object.freeze(['module', 'browser', 'production', 'import']),
-})
-// TypeScript's Node resolutions add `node` to the format condition. Its bundler
-// resolution does not, so a browser drive compares against the declaration a bundler
-// consumer reads rather than borrowing the Node declaration.
-const BUNDLER_CONDITIONS = Object.freeze({
-	module: ['types', 'import'],
-	commonjs: ['types', 'require'],
-})
-const DECLARATION_CONDITIONS = Object.freeze({
-	module: ['types', 'node', 'import'],
-	commonjs: ['types', 'node', 'require'],
-	browser: BUNDLER_CONDITIONS.module,
-})
-
-interface Resolution {
-	readonly label: string
-	readonly resolution: string
-	readonly module: string
-	readonly conditions: Readonly<Record<Format, readonly string[]>>
-}
 
 interface TargetResolution {
 	readonly target: string
 }
-
-// Each compile driver carries the compiler options its scratch project sets and
-// the conditions TypeScript applies for that resolution and importing format. A
-// `require`-only subpath therefore stays in each CommonJS probe that can resolve it.
-// The option values are the spellings the project file takes, so nothing here needs
-// the compiler's own API to name them.
-const RESOLUTIONS: readonly Resolution[] = [
-	{
-		label: 'node16',
-		resolution: 'node16',
-		module: 'node16',
-		conditions: DECLARATION_CONDITIONS,
-	},
-	{
-		label: 'nodenext',
-		resolution: 'nodenext',
-		module: 'nodenext',
-		conditions: DECLARATION_CONDITIONS,
-	},
-	{
-		label: 'bundler',
-		resolution: 'bundler',
-		module: 'esnext',
-		conditions: BUNDLER_CONDITIONS,
-	},
-]
 
 // The driver a bundled consumer reads declarations under. A browser application
 // compiles through a bundler, so the browser drive answers under this one alone,
 // and naming it here is what keeps that selection tied to the driver it selects.
 const BROWSER_DRIVER = RESOLUTIONS.find((candidate) => candidate.label === 'bundler')
 if (BROWSER_DRIVER === undefined) throw new Error("RESOLUTIONS carries no 'bundler' row")
-
-const FORMATS: ReadonlyArray<readonly [extension: string, format: Format]> = [
-	['ts', 'module'],
-	['cts', 'commonjs'],
-]
 
 // One published subpath, resolved to what this proof can drive: the specifier a
 // consumer writes, whether the declarations its consumer formats resolve at all,

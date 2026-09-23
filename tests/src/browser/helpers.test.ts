@@ -111,109 +111,11 @@ import {
 	CLIP_CASES,
 	CLIP_EDGE_CASES,
 	CLIP_MARGIN_CASES,
+	FIELD_ROLE_CASES,
+	IMPLICIT_ROLE_CASES,
 	resetFixtures,
+	VARIANTS,
 } from '../../setupBrowser.js'
-
-const VARIANTS: readonly CaptureVariant[] = [
-	{ name: 'light-1440', width: 1440, height: 1000 },
-	{ name: 'dark-390', width: 390, height: 844 },
-]
-
-// The expectations below are written out rather than read back from the constants, so a case that
-// disagrees with the map reddens instead of re-deriving the map's own answer. The membership
-// assertions beside them are what make the tables and the maps fail together.
-const IMPLICIT_ROLE_CASES: ReadonlyArray<{
-	readonly tag: string
-	readonly markup: string
-	readonly role: string
-}> = [
-	{ tag: 'ARTICLE', markup: '<article id="subject">Body</article>', role: 'article' },
-	{ tag: 'ASIDE', markup: '<aside id="subject">Body</aside>', role: 'complementary' },
-	{ tag: 'BUTTON', markup: '<button id="subject" type="button">Save</button>', role: 'button' },
-	{ tag: 'DIALOG', markup: '<dialog id="subject" open>Body</dialog>', role: 'dialog' },
-	{
-		tag: 'FIELDSET',
-		markup: '<fieldset id="subject"><legend>Range</legend></fieldset>',
-		role: 'group',
-	},
-	{ tag: 'FOOTER', markup: '<footer id="subject">Body</footer>', role: 'contentinfo' },
-	{ tag: 'FORM', markup: '<form id="subject"></form>', role: 'form' },
-	{ tag: 'H1', markup: '<h1 id="subject">Totals</h1>', role: 'heading' },
-	{ tag: 'H2', markup: '<h2 id="subject">Totals</h2>', role: 'heading' },
-	{ tag: 'H3', markup: '<h3 id="subject">Totals</h3>', role: 'heading' },
-	{ tag: 'H4', markup: '<h4 id="subject">Totals</h4>', role: 'heading' },
-	{ tag: 'H5', markup: '<h5 id="subject">Totals</h5>', role: 'heading' },
-	{ tag: 'H6', markup: '<h6 id="subject">Totals</h6>', role: 'heading' },
-	{ tag: 'HEADER', markup: '<header id="subject">Body</header>', role: 'banner' },
-	{ tag: 'HR', markup: '<hr id="subject">', role: 'separator' },
-	{ tag: 'IMG', markup: '<img id="subject" alt="Chart">', role: 'img' },
-	{ tag: 'LI', markup: '<ul><li id="subject">One</li></ul>', role: 'listitem' },
-	{ tag: 'MAIN', markup: '<main id="subject">Body</main>', role: 'main' },
-	{ tag: 'NAV', markup: '<nav id="subject">Body</nav>', role: 'navigation' },
-	{ tag: 'OL', markup: '<ol id="subject"><li>One</li></ol>', role: 'list' },
-	{ tag: 'OPTION', markup: '<select><option id="subject">One</option></select>', role: 'option' },
-	{ tag: 'OUTPUT', markup: '<output id="subject">7</output>', role: 'status' },
-	{
-		tag: 'PROGRESS',
-		markup: '<progress id="subject" value="1" max="2"></progress>',
-		role: 'progressbar',
-	},
-	{ tag: 'SEARCH', markup: '<search id="subject"></search>', role: 'search' },
-	{
-		tag: 'SECTION',
-		markup: '<section id="subject" aria-label="Ledger"></section>',
-		role: 'region',
-	},
-	{
-		tag: 'SUMMARY',
-		markup: '<details><summary id="subject">Advanced</summary></details>',
-		role: 'button',
-	},
-	{ tag: 'TABLE', markup: '<table id="subject"></table>', role: 'table' },
-	{
-		tag: 'TBODY',
-		markup: '<table><tbody id="subject"><tr><td>A</td></tr></tbody></table>',
-		role: 'rowgroup',
-	},
-	{
-		tag: 'TD',
-		markup: '<table><tbody><tr><td id="subject">A</td></tr></tbody></table>',
-		role: 'cell',
-	},
-	{ tag: 'TEXTAREA', markup: '<textarea id="subject"></textarea>', role: 'textbox' },
-	{
-		tag: 'TH',
-		markup: '<table><thead><tr><th id="subject">A</th></tr></thead></table>',
-		role: 'columnheader',
-	},
-	{
-		tag: 'THEAD',
-		markup: '<table><thead id="subject"><tr><th>A</th></tr></thead></table>',
-		role: 'rowgroup',
-	},
-	{
-		tag: 'TR',
-		markup: '<table><tbody><tr id="subject"><td>A</td></tr></tbody></table>',
-		role: 'row',
-	},
-	{ tag: 'UL', markup: '<ul id="subject"><li>One</li></ul>', role: 'list' },
-]
-
-const FIELD_ROLE_CASES: ReadonlyArray<{ readonly type: string; readonly role: string }> = [
-	{ type: 'button', role: 'button' },
-	{ type: 'checkbox', role: 'checkbox' },
-	{ type: 'email', role: 'textbox' },
-	{ type: 'number', role: 'spinbutton' },
-	{ type: 'password', role: 'textbox' },
-	{ type: 'radio', role: 'radio' },
-	{ type: 'range', role: 'slider' },
-	{ type: 'reset', role: 'button' },
-	{ type: 'search', role: 'searchbox' },
-	{ type: 'submit', role: 'button' },
-	{ type: 'tel', role: 'textbox' },
-	{ type: 'text', role: 'textbox' },
-	{ type: 'url', role: 'textbox' },
-]
 
 // An icon font paints its glyph as `::before` content on an element marked `aria-hidden`, which is
 // how Bootstrap Icons writes one. The character is a private-use codepoint, so only a name

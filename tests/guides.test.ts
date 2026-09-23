@@ -11,28 +11,12 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { createVitest } from 'vitest/node'
+import { FENCE_LANGUAGES, INTERNAL, MODULES } from './setup.js'
 
-/** Every fence language this package's guides are allowed to use. */
-const FENCE_LANGUAGES = Object.freeze(['bash', 'ts'])
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
 /** The one guide this package sources, whose tagline the README pitch equals. */
 const GUIDE_SPEC = 'guides/test.md'
-/** Each import specifier this package's own guides may resolve against. */
-const MODULES = Object.freeze({
-	'@orkestrel/test': 'src/core',
-	'@orkestrel/test/server': 'src/server',
-	'@orkestrel/test/browser': 'src/browser',
-})
-/**
- * Declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
- *
- * A class that one-class-per-file evicted from its single consumer cannot become a
- * local, so it stays exported without being public. Naming it here is what makes that
- * intentional rather than forgotten — and the assertion that follows it fails when a name
- * here stops being stranded, so the list cannot rot.
- */
-const INTERNAL: readonly string[] = Object.freeze([])
 
 // The emitter fence drives `createRecorders` from a loader that emits `read` for every file it read
 // and `fail` for every file it could not. That loader is the consumer's own code, so what stands here

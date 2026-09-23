@@ -109,3 +109,118 @@ export function isSerializableRecord(value: unknown): value is Readonly<Record<s
 		return false
 	}
 }
+
+/** Lists the `npm` command line `tests/distribution.test.ts` packs and installs a consumer with. */
+export const PING = Object.freeze([
+	'ping',
+	'--fetch-retries=0',
+	'--fetch-timeout=5000',
+	'--loglevel=silent',
+])
+
+/**
+ * Lists the extensions a JavaScript handler loads as modules. Node loads a native addon through its
+ * addon handler instead, so that extension is named separately.
+ */
+export const MODULE_EXTENSIONS = Object.freeze(['.js', '.mjs', '.cjs'])
+
+/**
+ * Lists the extensions a declaration file carries. A `require` condition declares `.d.cts` and an
+ * ESM-only one `.d.mts`, so the `.d.ts` spelling alone does not name them.
+ */
+export const DECLARATION_EXTENSIONS = Object.freeze(['.d.ts', '.d.cts', '.d.mts'])
+
+/** Names whether a consumer module resolves through an ECMAScript module or a CommonJS one. */
+export type Format = 'module' | 'commonjs'
+
+/**
+ * Describes a compile-and-resolve drive `tests/distribution.test.ts` runs against the installed
+ * consumer: the compiler options its scratch project sets, and the conditions TypeScript applies
+ * for that resolution and importing format.
+ */
+export interface Resolution {
+	readonly label: string
+	readonly resolution: string
+	readonly module: string
+	readonly conditions: Readonly<Record<Format, readonly string[]>>
+}
+
+/**
+ * Lists the Node import target's resolution conditions. The CommonJS compile probe is selected from
+ * its declaration's format, and its runtime drive loads the same subpath through Node's require
+ * resolver. Vite's production client build enables its module and browser conditions.
+ */
+export const RUNTIME_CONDITIONS = Object.freeze({
+	module: Object.freeze(['node-addons', 'node', 'import', 'module-sync']),
+	commonjs: Object.freeze(['node-addons', 'node', 'require', 'module-sync']),
+	browser: Object.freeze(['module', 'browser', 'production', 'import']),
+})
+
+/**
+ * Lists TypeScript's bundler resolution's declaration conditions. Its Node resolutions add `node`
+ * to the format condition; its bundler resolution does not, so a browser drive compares against the
+ * declaration a bundler consumer reads rather than borrowing the Node declaration.
+ */
+export const BUNDLER_CONDITIONS = Object.freeze({
+	module: Object.freeze(['types', 'import']),
+	commonjs: Object.freeze(['types', 'require']),
+})
+
+/** Lists TypeScript's Node resolutions' declaration conditions. */
+export const DECLARATION_CONDITIONS = Object.freeze({
+	module: Object.freeze(['types', 'node', 'import']),
+	commonjs: Object.freeze(['types', 'node', 'require']),
+	browser: BUNDLER_CONDITIONS.module,
+})
+
+/**
+ * Lists every compile-and-resolve drive `tests/distribution.test.ts` runs against the installed
+ * consumer. The option values are the spellings the project file takes, so nothing here needs the
+ * compiler's own API to name them.
+ */
+export const RESOLUTIONS: readonly Resolution[] = Object.freeze([
+	Object.freeze({
+		label: 'node16',
+		resolution: 'node16',
+		module: 'node16',
+		conditions: DECLARATION_CONDITIONS,
+	}),
+	Object.freeze({
+		label: 'nodenext',
+		resolution: 'nodenext',
+		module: 'nodenext',
+		conditions: DECLARATION_CONDITIONS,
+	}),
+	Object.freeze({
+		label: 'bundler',
+		resolution: 'bundler',
+		module: 'esnext',
+		conditions: BUNDLER_CONDITIONS,
+	}),
+])
+
+/** Pairs the declaration extension and format each source extension resolves through. */
+export const FORMATS: ReadonlyArray<readonly [extension: string, format: Format]> = Object.freeze([
+	Object.freeze<readonly [extension: string, format: Format]>(['ts', 'module']),
+	Object.freeze<readonly [extension: string, format: Format]>(['cts', 'commonjs']),
+])
+
+/** Lists every fence language this package's guides are allowed to use. */
+export const FENCE_LANGUAGES = Object.freeze(['bash', 'ts'])
+
+/** Maps each import specifier this package's own guides may resolve against. */
+export const MODULES: Readonly<Record<string, string>> = Object.freeze({
+	'@orkestrel/test': 'src/core',
+	'@orkestrel/test/server': 'src/server',
+	'@orkestrel/test/browser': 'src/browser',
+})
+
+/**
+ * Declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
+ *
+ * A class that one-class-per-file evicted from its single consumer cannot become a local, so it
+ * stays exported without being public. Naming it here is what makes that intentional rather than
+ * forgotten — and the assertion in `tests/guides.test.ts` that reads this table fails when a name
+ * here stops being stranded, so the list cannot rot.
+ */
+export const INTERNAL: readonly string[] = Object.freeze([])

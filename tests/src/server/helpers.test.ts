@@ -35,15 +35,18 @@ import {
 	requestUpgrade,
 	requireContained,
 	resolveContained,
-	supportsBytes,
 	supportsCase,
-	supportsDirectoryLinks,
-	supportsFileLinks,
 	supportsMode,
 	waitForSocketClose,
 } from '@src/server'
 import { describe, expect, it } from 'vitest'
-import { DIRECTORY_LINKS, FILE_LINKS } from '../../setupServer.js'
+import {
+	DIRECTORY_LINKS,
+	FILE_LINKS,
+	FOREIGN_ROOT_SPELLINGS,
+	HOST_PROBES,
+	TEMPORARY_VARIABLES,
+} from '../../setupServer.js'
 
 // The child announces itself on stdout and then parks on a timer that never fires within a test, so
 // it holds its working directory until the parent kills it. A child that self-exits on a fixed delay
@@ -93,26 +96,6 @@ function countSocketHandles(): number {
 }
 
 /**
- * Every host-capability probe, paired with the name its failures are reported under. The pairs are
- * a case matrix rather than test registration, so the residue and boolean proofs below run once per
- * probe instead of being written out per probe.
- */
-const HOST_PROBES: ReadonlyArray<readonly [name: string, probe: () => boolean]> = Object.freeze([
-	['supportsDirectoryLinks', supportsDirectoryLinks],
-	['supportsFileLinks', supportsFileLinks],
-	['supportsMode', supportsMode],
-	['supportsCase', supportsCase],
-	['supportsBytes', supportsBytes],
-])
-
-/**
- * Every environment variable a host's `os.tmpdir()` reads. Each platform reads its own name first —
- * win32 takes `TEMP`, then `TMP`; POSIX takes `TMPDIR`, then `TMP`, then `TEMP` — so an override
- * that sets one name steers one platform, and an override that sets the whole set steers either.
- */
-const TEMPORARY_VARIABLES: readonly string[] = Object.freeze(['TMPDIR', 'TEMP', 'TMP'])
-
-/**
  * Points every temporary-directory environment variable at one directory.
  *
  * @param path - The directory `os.tmpdir()` reports while the override holds.
@@ -133,15 +116,6 @@ function overrideTemporaryDirectory(path: string): () => void {
 		}
 	}
 }
-
-/**
- * Absolute target spellings that carry a root of their own. `relative` compares spellings and reads
- * no filesystem, so neither the drive nor the share has to exist for the comparison to answer.
- */
-const FOREIGN_ROOT_SPELLINGS: readonly string[] = Object.freeze([
-	'Z:\\orkestrel-test-outside',
-	'\\\\orkestrel-test-host\\share\\outside',
-])
 
 // `resolveContained` refuses a target whose root-relative spelling is itself absolute, and `relative`
 // answers that way only where the two paths carry roots that differ. The mechanism is asked of this
