@@ -2908,7 +2908,7 @@ describe('measureContent', () => {
 		const tall = measureContent()
 		await releasePane()
 
-		// The two frames stack: 300 rows of the contained frame and 200 of the scroll container.
+		// The frames stack: 300 rows of the contained frame and 200 of the scroll container.
 		expect([short, tall]).toStrictEqual([500, 500])
 	})
 
