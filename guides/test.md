@@ -359,7 +359,7 @@ A `Shape` cell holds the constant's declared type.
 | `readRing`                 | function | `(control: Element, worn?: Element) => number \| undefined`                                                             | Measures the contrast the focus chrome painted on one control reaches against its own backdrop.                                                                                                                                                                                 |
 | `readClipEdge`             | function | `(element: Element) => number \| undefined`                                                                             | Measures the row a clipping element cuts its content off at, in document coordinates.                                                                                                                                                                                           |
 | `readClipMargin`           | function | `(element: Element) => number`                                                                                          | Measures how far past its own box a clipping element lets its content show.                                                                                                                                                                                                     |
-| `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                         | Reports whether an element clips its descendants' overflow at its own padding box.                                                                                                                                                                                              |
+| `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                         | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
 | `measureContent`           | function | `() => number`                                                                                                          | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                      | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
 | `releasePane`              | function | `() => Promise<void>`                                                                                                   | Hands the tester pane back to the runner's own layout, at the viewport it had before staging.                                                                                                                                                                                   |
@@ -622,10 +622,11 @@ the body instead, taking the largest bottom edge in document coordinates plus th
 bottom margin, and adds the body's and the root's bottom padding and margin under them. An
 ancestor that clips its overflow (the `clipsOverflow` helper: an `overflow-y` value other than the
 `visible` keyword, or a paint containment) caps a descendant's edge at that ancestor's clip edge,
-which the `readClipEdge` helper reads. A `hidden`, `auto`, or `scroll` overflow clips at the
-padding box, whatever the ancestor's `overflow-clip-margin` value selects. The `clip` keyword and a
-paint containment over a `visible` overflow clip at the box that value selects, the padding box by
-default, expanded by the length the `readClipMargin` helper reads. So a viewport-height specimen
+which the `readClipEdge` helper reads. An `overflow-y` value of the `hidden` keyword, the `auto`
+keyword, or the `scroll` keyword clips at the padding box, whatever the ancestor's
+`overflow-clip-margin` value selects. The `clip` keyword and a paint containment over a `visible`
+overflow clip at the box that value selects, the padding box by default, expanded by the length the
+`readClipMargin` helper reads. So a viewport-height specimen
 inside a bounded frame ends, for the reading, where the frame ends rather than stretching the
 document with every pane. It rounds up, which is what covers a body ending part way through a row: a
 box ending on a fraction under a half is a row the integer scroll height drops, and that row comes
@@ -3429,8 +3430,9 @@ descend from it. `measureContent` walks the elements inside the body instead, so
 the document is laid out against the viewport, it moves with the viewport and reports what the
 reflow produced rather than what the pane claimed, except inside a frame that clips its overflow,
 where a viewport-bound child ends at the frame's clip edge. The `clipsOverflow` helper names the
-frames that count, and the `readClipEdge` helper reads each frame's clip edge. A `hidden`, `auto`,
-or `scroll` overflow ends at the padding box. The `clip` keyword and a paint containment over a
+frames that count, and the `readClipEdge` helper reads each frame's clip edge. An `overflow-y`
+value of the `hidden` keyword, the `auto` keyword, or the `scroll` keyword ends at the padding box.
+The `clip` keyword and a paint containment over a
 `visible` overflow end at the box the frame's `overflow-clip-margin` value selects, the padding box
 by default, expanded by the margin the `readClipMargin` helper reads.
 

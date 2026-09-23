@@ -2948,11 +2948,12 @@ export function readPixels(element: Element, property: string, pseudo?: string):
  * for an element that clips nothing ({@link clipsOverflow}).
  *
  * @remarks
- * A `hidden`, `auto`, or `scroll` overflow stops its content at the padding box, whatever the
- * element's `overflow-clip-margin` value says. A `clip` overflow and a paint containment start the
- * edge from the box the computed `overflow-clip-margin` value names (the `border-box`,
- * `padding-box`, or `content-box` keyword, the padding box where the value names none) and expand it
- * by the length {@link readClipMargin} reads. So a bordered or padded frame with a clip margin ends
+ * An `overflow-y` value of the `hidden` keyword, the `auto` keyword, or the `scroll` keyword stops
+ * the content at the padding box, whatever the element's `overflow-clip-margin` value says. A `clip`
+ * overflow and a paint containment start the edge from the box the computed `overflow-clip-margin`
+ * value names (the `border-box` keyword, the `padding-box` keyword, or the `content-box` keyword,
+ * and the padding box where the value names none) and expand it by the length
+ * {@link readClipMargin} reads. So a bordered or padded frame with a clip margin ends
  * where the browser stops painting its content, not at its border box plus the margin. The computed
  * value drops the `padding-box` keyword because it is the default, which is why a value carrying no
  * keyword reads from the padding box.
@@ -2989,8 +2990,9 @@ export function readClipEdge(element: Element): number | undefined {
  *
  * @remarks
  * The `overflow-clip-margin` property expands the clip edge of a `clip` overflow and of a paint
- * containment and has no effect on a `hidden`, `auto`, or `scroll` overflow, whose content stops
- * at the padding box whatever the property says. The computed value can carry a visual-box keyword
+ * containment and has no effect on an `overflow-y` value of the `hidden` keyword, the `auto`
+ * keyword, or the `scroll` keyword, whose content stops at the padding box whatever the property
+ * says. The computed value can carry a visual-box keyword
  * beside the length, so the length is read wherever it sits in the value.
  *
  * @example
@@ -3006,12 +3008,12 @@ export function readClipMargin(element: Element): number {
 }
 
 /**
- * Reports whether an element clips its descendants' overflow at its own padding box.
+ * Reports whether an element clips its descendants' overflow.
  *
  * @param element - The element to read.
  * @returns `true` for an element whose computed `overflow-y` value is other than the `visible`
- * keyword or whose computed `contain` value carries paint containment (the `paint`, `content`, or
- * `strict` keyword).
+ * keyword or whose computed `contain` value carries paint containment (the `paint` keyword, the
+ * `content` keyword, or the `strict` keyword).
  *
  * @remarks
  * A scroll container (`auto` or `scroll`) keeps what overflows inside its own scrollable area, and
