@@ -42,6 +42,27 @@ export const CLIP_MARGIN_CASES: ReadonlyArray<{ readonly style: string; readonly
 	])
 
 /**
+ * Lists the inline styles a clip-edge reader measures over a frame styled `height: 400px;
+ * padding-bottom: 20px; border-bottom: 3px solid`, and the row each clip edge sits on counted from
+ * the frame's top: a `hidden` or scrolling overflow stops at the padding box whatever its clip
+ * margin, a `clip` overflow and a paint containment expand the box their clip margin selects (the
+ * padding box by default), and a frame that clips nothing has no edge.
+ */
+export const CLIP_EDGE_CASES: ReadonlyArray<{
+	readonly style: string
+	readonly edge: number | undefined
+}> = Object.freeze([
+	Object.freeze({ style: 'overflow: hidden', edge: 420 }),
+	Object.freeze({ style: 'overflow: auto; overflow-clip-margin: 100px', edge: 420 }),
+	Object.freeze({ style: 'overflow: clip', edge: 420 }),
+	Object.freeze({ style: 'overflow: clip; overflow-clip-margin: 100px', edge: 520 }),
+	Object.freeze({ style: 'overflow: clip; overflow-clip-margin: content-box 100px', edge: 500 }),
+	Object.freeze({ style: 'overflow: clip; overflow-clip-margin: border-box 100px', edge: 523 }),
+	Object.freeze({ style: 'contain: paint; overflow-clip-margin: content-box 100px', edge: 500 }),
+	Object.freeze({ style: '', edge: undefined }),
+])
+
+/**
  * Renders fixture markup into a recorded container attached to the document.
  *
  * @param markup - The fixture markup to render.

@@ -2941,6 +2941,45 @@ export function readPixels(element: Element, property: string, pseudo?: string):
 }
 
 /**
+ * Measures the row a clipping element cuts its content off at, in document coordinates.
+ *
+ * @param element - The element to read.
+ * @returns The element's overflow clip edge in CSS pixels from the document's top, and `undefined`
+ * for an element that clips nothing ({@link clipsOverflow}).
+ *
+ * @remarks
+ * A `hidden`, `auto`, or `scroll` overflow stops its content at the padding box, whatever the
+ * element's `overflow-clip-margin` value says. A `clip` overflow and a paint containment start the
+ * edge from the box the computed `overflow-clip-margin` value names (the `border-box`,
+ * `padding-box`, or `content-box` keyword, the padding box where the value names none) and expand it
+ * by the length {@link readClipMargin} reads. So a bordered or padded frame with a clip margin ends
+ * where the browser stops painting its content, not at its border box plus the margin. The computed
+ * value drops the `padding-box` keyword because it is the default, which is why a value carrying no
+ * keyword reads from the padding box.
+ *
+ * The edge is the bottom one, because that is the edge a reading of the document's height meets.
+ *
+ * @example
+ * ```ts
+ * const edge = readClipEdge(frame)
+ * if (edge !== undefined && edge < bottom) bottom = edge
+ * ```
+ */
+export function readClipEdge(element: Element): number | undefined {
+	if (!clipsOverflow(element)) return undefined
+	const border = element.getBoundingClientRect().bottom + window.scrollY
+	const padding = border - readPixels(element, 'border-bottom-width')
+	const overflow = readStyle(element, 'overflow-y')
+	if (overflow !== 'clip' && overflow !== 'visible') return padding
+	const margin = readStyle(element, 'overflow-clip-margin')
+	if (margin.includes('border-box')) return border + readClipMargin(element)
+	if (margin.includes('content-box')) {
+		return padding - readPixels(element, 'padding-bottom') + readClipMargin(element)
+	}
+	return padding + readClipMargin(element)
+}
+
+/**
  * Measures how far past its own box a clipping element lets its content show.
  *
  * @param element - The element to read.
@@ -3011,18 +3050,19 @@ export function clipsOverflow(element: Element): boolean {
  *
  * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
  * bottom margin, which sits outside that rectangle, and the largest contribution wins. An ancestor
- * that clips its overflow ({@link clipsOverflow}) caps the contribution at that ancestor's own
- * bottom edge, because the rows a descendant lays out past a clipping frame are cut, scrolled, or
- * discarded rather than added to the document: a viewport-height specimen inside a bounded frame
- * ends, for this reading, where the frame ends, so a taller pane does not read back as a taller
- * document. The frame's own edge is its border-box bottom, which the frame itself contributes, so
- * the cap sits at the same row whether it is read at the padding edge or the border edge; where the
- * clip is the `clip` keyword or a paint containment, the edge is expanded by the frame's computed
- * `overflow-clip-margin` length, which is how far past its box such a frame lets its content show. Taking the
- * largest is what handles a collapsed margin without asking whether it collapsed: a child margin
- * that collapses out through its parent is counted once, at the child, and one the parent's padding
- * holds in is counted once, at the parent. The body's and the root's own bottom padding and margin
- * sit under every child rather than beside them, so they are added after the walk.
+ * that clips its overflow caps the contribution at that ancestor's clip edge ({@link readClipEdge}),
+ * because the rows a descendant lays out past a clipping frame are cut, scrolled, or discarded
+ * rather than added to the document: a viewport-height specimen inside a bounded frame ends, for
+ * this reading, where the frame ends, so a taller pane does not read back as a taller document. The
+ * clip edge is read from the box the frame's `overflow-clip-margin` value selects, the padding box
+ * by default, and expanded by that value's length where the clip is the `clip` keyword or a paint
+ * containment; a `hidden` or scrolling frame stops at its padding box. The frame's own contribution
+ * stays its border-box bottom plus its bottom margin, so a bordered frame still ends the reading
+ * under its border. Taking the largest is what handles a collapsed margin without asking whether it
+ * collapsed: a child margin that collapses out through its parent is counted once, at the child,
+ * and one the parent's padding holds in is counted once, at the parent. The body's and the root's
+ * own bottom padding and margin sit under every child rather than beside them, so they are added
+ * after the walk.
  *
  * The sum is rounded up because a box can end part way through a row and a frame cannot hold part
  * of one.
@@ -3042,9 +3082,8 @@ export function measureContent(): number {
 			frame !== null && frame !== document.body;
 			frame = frame.parentElement
 		) {
-			if (!clipsOverflow(frame)) continue
-			const limit = frame.getBoundingClientRect().bottom + window.scrollY + readClipMargin(frame)
-			if (limit < bottom) bottom = limit
+			const limit = readClipEdge(frame)
+			if (limit !== undefined && limit < bottom) bottom = limit
 		}
 		if (bottom > edge) edge = bottom
 	}

@@ -59,6 +59,7 @@ import {
 	readBackdrop,
 	readCascade,
 	readCensus,
+	readClipEdge,
 	readClipMargin,
 	readClasses,
 	readContrast,
@@ -108,6 +109,7 @@ import {
 	buildFixture,
 	buildStylesheet,
 	CLIP_CASES,
+	CLIP_EDGE_CASES,
 	CLIP_MARGIN_CASES,
 	resetFixtures,
 } from '../../setupBrowser.js'
@@ -2915,6 +2917,23 @@ describe('clipsOverflow', () => {
 	})
 })
 
+describe('readClipEdge', () => {
+	it('reads the clip edge from the box the clip margin selects, the padding box by default', () => {
+		for (const { style, edge } of CLIP_EDGE_CASES) {
+			const container = buildFixture(
+				`<div style="height: 400px; padding-bottom: 20px; border-bottom: 3px solid; ${style}"></div>`,
+			)
+			const frame = requireValue(container.firstElementChild)
+			const top = frame.getBoundingClientRect().top + window.scrollY
+			const read = readClipEdge(frame)
+			expect({ style, edge: read === undefined ? undefined : read - top }).toStrictEqual({
+				style,
+				edge,
+			})
+		}
+	})
+})
+
 describe('readClipMargin', () => {
 	it('reads the clip margin of a clip overflow and of a paint containment, and nothing of the rest', () => {
 		for (const { style, margin } of CLIP_MARGIN_CASES) {
@@ -2996,6 +3015,22 @@ describe('measureContent', () => {
 		// frame, so the document ends at 500 rather than at the frame's 400 or the child's 600.
 		buildFixture(
 			'<div style="height: 400px; overflow: clip; overflow-clip-margin: 100px"><div style="height: 600px">Margined</div></div>',
+		)
+		await stagePane(390, 844)
+		const short = measureContent()
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		expect([short, tall]).toStrictEqual([500, 500])
+	})
+
+	it('expands a clip margin from the padding box rather than from the border box', async () => {
+		// The 100-row clip margin grows from the frame's padding edge at row 400, so 100 rows of the
+		// 600-row child show and the document ends at 500; grown from the border edge under the
+		// 3-row bottom border, the reading would be 503.
+		buildFixture(
+			'<div style="height: 400px; border-bottom: 3px solid; overflow: clip; overflow-clip-margin: 100px"><div style="height: 600px">Bordered</div></div>',
 		)
 		await stagePane(390, 844)
 		const short = measureContent()
