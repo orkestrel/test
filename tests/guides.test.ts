@@ -1,6 +1,7 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
-// this repo's own `guides/README.md` manifest. The constants that follow are this
-// package's own, as is the executed section that closes the file.
+// this repo's own `guides/README.md` manifest. The constants this file reads are this
+// package's own, as is the executed section that closes the file. Node runs this file
+// with type stripping and no bundler, so it imports the setup module by its `.ts` path.
 
 import type { Duplex } from 'node:stream'
 import type { EventSourceInterface, RecorderInterface, invokeUnchecked } from '@src/core'
@@ -11,7 +12,7 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { createVitest } from 'vitest/node'
-import { FENCE_LANGUAGES, INTERNAL, MODULES } from './setup.js'
+import { FENCE_LANGUAGES, INTERNAL, MODULES } from './setup.ts'
 
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
