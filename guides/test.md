@@ -622,13 +622,14 @@ the body instead, taking the largest bottom edge in document coordinates plus th
 bottom margin, and adds the body's and the root's bottom padding and margin under them. An
 ancestor that clips its overflow (the `clipsOverflow` helper: an `overflow-y` value other than the
 `visible` keyword, or a paint containment) caps a descendant's edge at that ancestor's clip edge,
-which the `readClipEdge` helper reads from the box the ancestor's `overflow-clip-margin` value
-selects, the padding box by default, expanded by the length the `readClipMargin` helper reads where
-the clip is the `clip` keyword or a paint containment. So a viewport-height specimen inside a
-bounded frame ends, for the reading, where the frame ends rather than stretching the document with
-every pane. It rounds up, which is what covers a body ending part way through a row: a box ending
-on a fraction under a half is a row the integer scroll height drops, and that row comes out as the
-runner's page.
+which the `readClipEdge` helper reads. A `hidden`, `auto`, or `scroll` overflow clips at the
+padding box, whatever the ancestor's `overflow-clip-margin` value selects. The `clip` keyword and a
+paint containment over a `visible` overflow clip at the box that value selects, the padding box by
+default, expanded by the length the `readClipMargin` helper reads. So a viewport-height specimen
+inside a bounded frame ends, for the reading, where the frame ends rather than stretching the
+document with every pane. It rounds up, which is what covers a body ending part way through a row: a
+box ending on a fraction under a half is a row the integer scroll height drops, and that row comes
+out as the runner's page.
 
 The edge is read again after every staging, because a rule bound to the viewport height — a `vh`
 length, a fixed footer, a full-height panel — lays the document out taller against the taller pane,
@@ -3428,9 +3429,10 @@ descend from it. `measureContent` walks the elements inside the body instead, so
 the document is laid out against the viewport, it moves with the viewport and reports what the
 reflow produced rather than what the pane claimed, except inside a frame that clips its overflow,
 where a viewport-bound child ends at the frame's clip edge. The `clipsOverflow` helper names the
-frames that count, and the `readClipEdge` helper reads each frame's clip edge from the box its
-`overflow-clip-margin` value selects, the padding box by default, expanded by the margin the
-`readClipMargin` helper reads.
+frames that count, and the `readClipEdge` helper reads each frame's clip edge. A `hidden`, `auto`,
+or `scroll` overflow ends at the padding box. The `clip` keyword and a paint containment over a
+`visible` overflow end at the box the frame's `overflow-clip-margin` value selects, the padding box
+by default, expanded by the margin the `readClipMargin` helper reads.
 
 ### Read a written frame back
 
