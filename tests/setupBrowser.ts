@@ -43,11 +43,12 @@ export const CLIP_MARGIN_CASES: ReadonlyArray<{ readonly style: string; readonly
 	])
 
 /**
- * Lists the inline styles a clip-edge reader measures over a frame styled `height: 400px;
- * padding-bottom: 20px; border-bottom: 3px solid`, and the row each clip edge sits on counted from
- * the frame's top: a `hidden` or scrolling overflow stops at the padding box whatever its clip
- * margin, a `clip` overflow and a paint containment expand the box their clip margin selects (the
- * padding box by default), and a frame that clips nothing has no edge.
+ * Lists the inline styles a clip-edge reader measures over a frame with the
+ * `height: 400px; padding-bottom: 20px; border-bottom: 3px solid` style, and the row each clip edge
+ * sits on counted from the frame's top: a hidden or scrolling overflow stops at the padding box
+ * whatever its clip margin, a `clip` overflow and a paint containment over a `visible` overflow
+ * expand the box their clip margin selects (the padding box by default), and a frame that clips
+ * nothing has no edge.
  */
 export const CLIP_EDGE_CASES: ReadonlyArray<{
 	readonly style: string

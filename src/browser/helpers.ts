@@ -2944,19 +2944,19 @@ export function readPixels(element: Element, property: string, pseudo?: string):
  * Measures the row a clipping element cuts its content off at, in document coordinates.
  *
  * @param element - The element to read.
- * @returns The element's overflow clip edge in CSS pixels from the document's top, and `undefined`
- * for an element that clips nothing ({@link clipsOverflow}).
+ * @returns The element's overflow clip edge in CSS pixels from the document's top, or the
+ * `undefined` value for an element that clips nothing ({@link clipsOverflow}).
  *
  * @remarks
  * An `overflow-y` value of the `hidden` keyword, the `auto` keyword, or the `scroll` keyword stops
- * the content at the padding box, whatever the element's `overflow-clip-margin` value says. A `clip`
- * overflow and a paint containment start the edge from the box the computed `overflow-clip-margin`
- * value names (the `border-box` keyword, the `padding-box` keyword, or the `content-box` keyword,
- * and the padding box where the value names none) and expand it by the length
- * {@link readClipMargin} reads. So a bordered or padded frame with a clip margin ends
- * where the browser stops painting its content, not at its border box plus the margin. The computed
- * value drops the `padding-box` keyword because it is the default, which is why a value carrying no
- * keyword reads from the padding box.
+ * the content at the padding box, whatever the element's `overflow-clip-margin` value says. A
+ * `clip` overflow and a paint containment over a `visible` overflow start the edge from the box the
+ * computed `overflow-clip-margin` value names (the `border-box` keyword, the `padding-box` keyword,
+ * or the `content-box` keyword, and the padding box where the value names none) and expand it by
+ * the length {@link readClipMargin} reads. So a bordered or padded frame whose clip margin names no
+ * box ends at its padding box plus the margin, where the browser stops painting its content, rather
+ * than at its border box plus the margin. The computed value drops the `padding-box` keyword
+ * because it is the default, which is why a value carrying no keyword reads from the padding box.
  *
  * The edge is the bottom one, because that is the edge a reading of the document's height meets.
  *
@@ -2985,15 +2985,15 @@ export function readClipEdge(element: Element): number | undefined {
  *
  * @param element - The element to read.
  * @returns The computed `overflow-clip-margin` length in CSS pixels where the element's computed
- * `overflow-y` value is the `clip` keyword or its clip comes from paint containment alone, and `0`
+ * `overflow-y` value is the `clip` keyword or its clip comes from paint containment alone, and zero
  * for every other element.
  *
  * @remarks
  * The `overflow-clip-margin` property expands the clip edge of a `clip` overflow and of a paint
- * containment and has no effect on an `overflow-y` value of the `hidden` keyword, the `auto`
- * keyword, or the `scroll` keyword, whose content stops at the padding box whatever the property
- * says. The computed value can carry a visual-box keyword
- * beside the length, so the length is read wherever it sits in the value.
+ * containment over a `visible` overflow and has no effect on an `overflow-y` value of the `hidden`
+ * keyword, the `auto` keyword, or the `scroll` keyword, whose content stops at the padding box
+ * whatever the property says. The computed value can carry a visual-box keyword beside the length,
+ * so the length is read wherever it sits in the value.
  *
  * @example
  * ```ts
@@ -3011,16 +3011,18 @@ export function readClipMargin(element: Element): number {
  * Reports whether an element clips its descendants' overflow.
  *
  * @param element - The element to read.
- * @returns `true` for an element whose computed `overflow-y` value is other than the `visible`
- * keyword or whose computed `contain` value carries paint containment (the `paint` keyword, the
- * `content` keyword, or the `strict` keyword).
+ * @returns Whether the element's computed `overflow-y` value is other than the `visible` keyword or
+ * its computed `contain` value carries paint containment (the `paint` keyword, the `content`
+ * keyword, or the `strict` keyword).
  *
  * @remarks
- * A scroll container (`auto` or `scroll`) keeps what overflows inside its own scrollable area, and
- * a clipping one (`hidden` or `clip`) and a paint-contained one discard it, so in every case the
- * rows a descendant lays out past the element's padding edge are no part of the document's
- * content edge. The vertical axis alone decides, because `overflow-x` and `overflow-y` compute
- * independently under `clip` and a horizontal clip ends nothing below the element.
+ * A scroll container (the `auto` keyword or the `scroll` keyword) keeps what overflows inside its
+ * own scrollable area, and a clipping one (the `hidden` keyword or the `clip` keyword) and a
+ * paint-contained one discard it, so in every case the rows a descendant lays out past the
+ * element's clip edge ({@link readClipEdge}) are no part of the document's content edge. The
+ * vertical axis alone decides, because the `overflow-x` property and the `overflow-y` property
+ * compute independently under the `clip` keyword, and a horizontal clip ends nothing below the
+ * element.
  *
  * @example
  * ```ts
@@ -3052,19 +3054,19 @@ export function clipsOverflow(element: Element): boolean {
  *
  * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
  * bottom margin, which sits outside that rectangle, and the largest contribution wins. An ancestor
- * that clips its overflow caps the contribution at that ancestor's clip edge ({@link readClipEdge}),
- * because the rows a descendant lays out past a clipping frame are cut, scrolled, or discarded
- * rather than added to the document: a viewport-height specimen inside a bounded frame ends, for
- * this reading, where the frame ends, so a taller pane does not read back as a taller document. The
- * clip edge is read from the box the frame's `overflow-clip-margin` value selects, the padding box
- * by default, and expanded by that value's length where the clip is the `clip` keyword or a paint
- * containment; a `hidden` or scrolling frame stops at its padding box. The frame's own contribution
- * stays its border-box bottom plus its bottom margin, so a bordered frame still ends the reading
- * under its border. Taking the largest is what handles a collapsed margin without asking whether it
- * collapsed: a child margin that collapses out through its parent is counted once, at the child,
- * and one the parent's padding holds in is counted once, at the parent. The body's and the root's
- * own bottom padding and margin sit under every child rather than beside them, so they are added
- * after the walk.
+ * that clips its overflow caps the contribution at that ancestor's clip edge
+ * ({@link readClipEdge}), because the rows a descendant lays out past a clipping frame are cut,
+ * scrolled, or discarded rather than added to the document: a viewport-height specimen inside a
+ * bounded frame ends, for this reading, where the frame ends, so a taller pane does not read back
+ * as a taller document. The clip edge of a `clip` overflow, and of a paint containment over a
+ * `visible` overflow, is read from the box the frame's `overflow-clip-margin` value selects, the
+ * padding box by default, and expanded by that value's length; a hidden or scrolling frame stops at
+ * its padding box. The frame's own contribution stays its border-box bottom plus its bottom margin,
+ * so a bordered frame still ends the reading under its border. Taking the largest is what handles a
+ * collapsed margin without asking whether it collapsed: a child margin that collapses out through
+ * its parent is counted once, at the child, and one the parent's padding holds in is counted once,
+ * at the parent. The body's and the root's own bottom padding and margin sit under every child
+ * rather than beside them, so they are added after the walk.
  *
  * The sum is rounded up because a box can end part way through a row and a frame cannot hold part
  * of one.
