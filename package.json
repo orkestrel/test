@@ -1,7 +1,7 @@
 {
 	"name": "@orkestrel/test",
 	"version": "0.0.20",
-	"description": "The test helpers the Orkestrel fleet repeats — a call recorder, a real delay, JSON and async collectors, an owned scratch directory with a source-file walker, and a browser journey layer that drives real interfaces by role and accessible name. Part of the @orkestrel line.",
+	"description": "The test helpers the Orkestrel fleet repeats \u2014 a call recorder, a real delay, JSON and async collectors, an owned scratch directory with a source-file walker, and a browser journey layer that drives real interfaces by role and accessible name. Part of the @orkestrel line.",
 	"keywords": [],
 	"homepage": "https://github.com/orkestrel/test#readme",
 	"bugs": "https://github.com/orkestrel/test/issues",
@@ -90,7 +90,7 @@
 		"@microsoft/api-extractor": "^7.59.1",
 		"@orkestrel/guide": "^0.0.20",
 		"@orkestrel/probe": "^0.0.16",
-		"@orkestrel/scaffold": "^0.0.76",
+		"@orkestrel/scaffold": "^0.0.77",
 		"@types/node": "^26.6.2",
 		"@vitest/browser-playwright": "^4.1.11",
 		"oxfmt": "^0.68.0",
