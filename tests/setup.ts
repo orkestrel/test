@@ -110,7 +110,7 @@ export function isSerializableRecord(value: unknown): value is Readonly<Record<s
 	}
 }
 
-/** Lists the `npm` command line `tests/distribution.test.ts` packs and installs a consumer with. */
+/** Lists the `npm` arguments the `tests/distribution.test.ts` suite checks the registry's availability with. */
 export const PING = Object.freeze([
 	'ping',
 	'--fetch-retries=0',
@@ -216,9 +216,9 @@ export const MODULES: Readonly<Record<string, string>> = Object.freeze({
 })
 
 /**
- * Declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
+ * Lists the declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
  *
- * A class that one-class-per-file evicted from its single consumer cannot become a local, so it
+ * A class that one-class-per-file evicted from its owning consumer cannot become a local, so it
  * stays exported without being public. Naming it here is what makes that intentional rather than
  * forgotten — and the assertion in `tests/guides.test.ts` that reads this table fails when a name
  * here stops being stranded, so the list cannot rot.

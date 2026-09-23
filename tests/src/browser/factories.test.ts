@@ -884,10 +884,6 @@ const MIXED_SCENARIOS: ReadonlyArray<
 	requireValue(DISCLOSURE_SCENARIOS[3]),
 ]
 
-const EMPTY_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = []
-
 describe('createHarness', () => {
 	// A harness mounts itself and records nothing, exactly as `mount` does, so a harness a failing
 	// assertion left behind is the next test's ambiguity. This takes back whatever is still there.
@@ -905,7 +901,7 @@ describe('createHarness', () => {
 		expect(
 			captureError(() =>
 				createHarness({
-					scenarios: EMPTY_SCENARIOS,
+					scenarios: [],
 					build: buildDisclosure,
 					state: readDisclosure,
 				}),
