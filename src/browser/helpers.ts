@@ -2941,6 +2941,60 @@ export function readPixels(element: Element, property: string, pseudo?: string):
 }
 
 /**
+ * Measures how far past its own box a clipping element lets its content show.
+ *
+ * @param element - The element to read.
+ * @returns The computed `overflow-clip-margin` length in CSS pixels where the element's computed
+ * `overflow-y` value is the `clip` keyword or its clip comes from paint containment alone, and `0`
+ * for every other element.
+ *
+ * @remarks
+ * The `overflow-clip-margin` property expands the clip edge of a `clip` overflow and of a paint
+ * containment and has no effect on a `hidden`, `auto`, or `scroll` overflow, whose content stops
+ * at the padding box whatever the property says. The computed value can carry a visual-box keyword
+ * beside the length, so the length is read wherever it sits in the value.
+ *
+ * @example
+ * ```ts
+ * readClipMargin(build('div', { attributes: { style: 'overflow: clip; overflow-clip-margin: 20px' } })) // 20
+ * ```
+ */
+export function readClipMargin(element: Element): number {
+	const overflow = readStyle(element, 'overflow-y')
+	if (overflow !== 'clip' && !(overflow === 'visible' && clipsOverflow(element))) return 0
+	const length = /(-?\d*\.?\d+)px/u.exec(readStyle(element, 'overflow-clip-margin'))
+	return length === null ? 0 : Number.parseFloat(length[1] ?? '0')
+}
+
+/**
+ * Reports whether an element clips its descendants' overflow at its own padding box.
+ *
+ * @param element - The element to read.
+ * @returns `true` for an element whose computed `overflow-y` value is other than the `visible`
+ * keyword or whose computed `contain` value carries paint containment (the `paint`, `content`, or
+ * `strict` keyword).
+ *
+ * @remarks
+ * A scroll container (`auto` or `scroll`) keeps what overflows inside its own scrollable area, and
+ * a clipping one (`hidden` or `clip`) and a paint-contained one discard it, so in every case the
+ * rows a descendant lays out past the element's padding edge are no part of the document's
+ * content edge. The vertical axis alone decides, because `overflow-x` and `overflow-y` compute
+ * independently under `clip` and a horizontal clip ends nothing below the element.
+ *
+ * @example
+ * ```ts
+ * clipsOverflow(build('div', { attributes: { style: 'overflow: clip' } })) // true
+ * clipsOverflow(build('div')) // false
+ * ```
+ */
+export function clipsOverflow(element: Element): boolean {
+	return (
+		readStyle(element, 'overflow-y') !== 'visible' ||
+		/\b(?:paint|content|strict)\b/u.test(readStyle(element, 'contain'))
+	)
+}
+
+/**
  * Measures the row the document's own content ends on, in document coordinates.
  *
  * @returns The content edge, rounded up to a whole row.
@@ -2956,7 +3010,15 @@ export function readPixels(element: Element, property: string, pseudo?: string):
  * against the viewport answers what that viewport actually laid out.
  *
  * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
- * bottom margin, which sits outside that rectangle, and the largest contribution wins. Taking the
+ * bottom margin, which sits outside that rectangle, and the largest contribution wins. An ancestor
+ * that clips its overflow ({@link clipsOverflow}) caps the contribution at that ancestor's own
+ * bottom edge, because the rows a descendant lays out past a clipping frame are cut, scrolled, or
+ * discarded rather than added to the document: a viewport-height specimen inside a bounded frame
+ * ends, for this reading, where the frame ends, so a taller pane does not read back as a taller
+ * document. The frame's own edge is its border-box bottom, which the frame itself contributes, so
+ * the cap sits at the same row whether it is read at the padding edge or the border edge; where the
+ * clip is the `clip` keyword or a paint containment, the edge is expanded by the frame's computed
+ * `overflow-clip-margin` length, which is how far past its box such a frame lets its content show. Taking the
  * largest is what handles a collapsed margin without asking whether it collapsed: a child margin
  * that collapses out through its parent is counted once, at the child, and one the parent's padding
  * holds in is counted once, at the parent. The body's and the root's own bottom padding and margin
@@ -2973,8 +3035,17 @@ export function readPixels(element: Element, property: string, pseudo?: string):
 export function measureContent(): number {
 	let edge = 0
 	for (const element of document.body.querySelectorAll('*')) {
-		const bottom =
+		let bottom =
 			element.getBoundingClientRect().bottom + window.scrollY + readPixels(element, 'margin-bottom')
+		for (
+			let frame = element.parentElement;
+			frame !== null && frame !== document.body;
+			frame = frame.parentElement
+		) {
+			if (!clipsOverflow(frame)) continue
+			const limit = frame.getBoundingClientRect().bottom + window.scrollY + readClipMargin(frame)
+			if (limit < bottom) bottom = limit
+		}
 		if (bottom > edge) edge = bottom
 	}
 	return Math.ceil(

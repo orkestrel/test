@@ -45,6 +45,7 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	clipsOverflow,
 	matchesColor,
 	MEDIA_STAGE,
 	measureContent,
@@ -58,6 +59,7 @@ import {
 	readBackdrop,
 	readCascade,
 	readCensus,
+	readClipMargin,
 	readClasses,
 	readContrast,
 	readFocus,
@@ -102,7 +104,13 @@ import { createRecorder, createTeardown, requireValue, waitForCondition } from '
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server, userEvent } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../setup.js'
-import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
+import {
+	buildFixture,
+	buildStylesheet,
+	CLIP_CASES,
+	CLIP_MARGIN_CASES,
+	resetFixtures,
+} from '../../setupBrowser.js'
 
 const VARIANTS: readonly CaptureVariant[] = [
 	{ name: 'light-1440', width: 1440, height: 1000 },
@@ -2898,6 +2906,24 @@ describe('readRing', () => {
 	})
 })
 
+describe('clipsOverflow', () => {
+	it('reports a clipping or scrolling overflow and a paint containment, and nothing else', () => {
+		for (const { style, clips } of CLIP_CASES) {
+			const frame = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
+			expect({ style, clips: clipsOverflow(frame) }).toStrictEqual({ style, clips })
+		}
+	})
+})
+
+describe('readClipMargin', () => {
+	it('reads the clip margin of a clip overflow and of a paint containment, and nothing of the rest', () => {
+		for (const { style, margin } of CLIP_MARGIN_CASES) {
+			const frame = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
+			expect({ style, margin: readClipMargin(frame) }).toStrictEqual({ style, margin })
+		}
+	})
+})
+
 describe('measureContent', () => {
 	// guides/test.md → Patterns → "Measure a document's content edge". A browser fence carries in
 	// this directory because the guides project runs with the browser disabled.
@@ -2933,6 +2959,51 @@ describe('measureContent', () => {
 		// document's own height rather than this helper's opinion of it.
 		expect(short).toStrictEqual([1700, 1700])
 		expect(tall).toBe(1700)
+	})
+
+	it('ends a clipped viewport-height child at its frame under every pane', async () => {
+		// The child is as tall as the pane, so an unclipped reading would follow every staging up and
+		// never settle; the frame clips it, and the reading ends at the frame's own edge, its bottom
+		// border included, whatever the pane.
+		buildFixture(
+			'<div style="height: 400px; overflow: clip; border-bottom: 3px solid"><div style="height: 100vh">Clipped</div></div>',
+		)
+		await stagePane(390, 844)
+		const short = measureContent()
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		expect([short, tall]).toStrictEqual([403, 403])
+	})
+
+	it('ends a child inside a paint-contained frame and inside a scroll container at that frame', async () => {
+		buildFixture(
+			'<div style="height: 300px; contain: paint"><div style="height: 100vh">Contained</div></div><div style="height: 200px; overflow: auto"><div style="height: 100vh">Scrolled</div></div>',
+		)
+		await stagePane(390, 844)
+		const short = measureContent()
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		// The two frames stack: 300 rows of the contained frame and 200 of the scroll container.
+		expect([short, tall]).toStrictEqual([500, 500])
+	})
+
+	it('lets a clip margin show a clipped child past its frame by that margin', async () => {
+		// A clip overflow with a clip margin shows 100 rows of the 600-row child past the 400-row
+		// frame, so the document ends at 500 rather than at the frame's 400 or the child's 600.
+		buildFixture(
+			'<div style="height: 400px; overflow: clip; overflow-clip-margin: 100px"><div style="height: 600px">Margined</div></div>',
+		)
+		await stagePane(390, 844)
+		const short = measureContent()
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		expect([short, tall]).toStrictEqual([500, 500])
 	})
 })
 

@@ -6,6 +6,42 @@ import { render } from '@src/browser'
 const fixtures: Element[] = []
 
 /**
+ * Lists the inline styles a clipping predicate reads and whether each clips a descendant's vertical
+ * overflow: the overflow keywords on each axis and the containment values, the default first.
+ */
+export const CLIP_CASES: ReadonlyArray<{ readonly style: string; readonly clips: boolean }> =
+	Object.freeze([
+		Object.freeze({ style: '', clips: false }),
+		Object.freeze({ style: 'overflow: visible', clips: false }),
+		Object.freeze({ style: 'overflow: clip', clips: true }),
+		Object.freeze({ style: 'overflow: hidden', clips: true }),
+		Object.freeze({ style: 'overflow: auto', clips: true }),
+		Object.freeze({ style: 'overflow: scroll', clips: true }),
+		Object.freeze({ style: 'overflow-x: clip', clips: false }),
+		Object.freeze({ style: 'overflow-y: clip', clips: true }),
+		Object.freeze({ style: 'contain: layout', clips: false }),
+		Object.freeze({ style: 'contain: paint', clips: true }),
+		Object.freeze({ style: 'contain: content', clips: true }),
+		Object.freeze({ style: 'contain: strict', clips: true }),
+	])
+
+/**
+ * Lists the inline styles a clip-margin reader measures and the margin each yields: the `clip`
+ * overflow and the paint containment carry their margin, a keyword beside the length included, and
+ * the other overflows and a bare margin yield nothing.
+ */
+export const CLIP_MARGIN_CASES: ReadonlyArray<{ readonly style: string; readonly margin: number }> =
+	Object.freeze([
+		Object.freeze({ style: 'overflow: clip; overflow-clip-margin: 20px', margin: 20 }),
+		Object.freeze({ style: 'contain: paint; overflow-clip-margin: 20px', margin: 20 }),
+		Object.freeze({ style: 'overflow: clip; overflow-clip-margin: content-box 20px', margin: 20 }),
+		Object.freeze({ style: 'overflow: clip', margin: 0 }),
+		Object.freeze({ style: 'overflow: hidden; overflow-clip-margin: 20px', margin: 0 }),
+		Object.freeze({ style: 'overflow: auto; overflow-clip-margin: 20px', margin: 0 }),
+		Object.freeze({ style: 'overflow-clip-margin: 20px', margin: 0 }),
+	])
+
+/**
  * Renders fixture markup into a recorded container attached to the document.
  *
  * @param markup - The fixture markup to render.
