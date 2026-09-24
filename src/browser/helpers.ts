@@ -650,16 +650,16 @@ export async function holdAccessibleWithin(
  * @param name - The target's name, as the refusals voice it.
  * @returns A promise resolving after the control enters its pressed state.
  * @throws Thrown when a pointer is already held, the resolver refuses, the target stays outside
- * the viewport after scrolling, or the press misses. A missed press that also fails to release
- * carries the release rejection as its cause.
+ * the viewport after scrolling, the frame wait fails, the pressed-state read fails, or the press
+ * misses. A frame wait or pressed-state read that fails releases the pointer before the refusal,
+ * and a failure whose release also fails carries the release rejection as its cause.
  *
  * @remarks
  * This is the one pointer drive every hold verb shares: the held-marker refusal, a scroll that
  * brings a wholly off-viewport target into view and a refusal for one that stays outside, the
  * centre mapped through the tester iframe's painted scale into page coordinates, the trusted move
- * and press, the marker, a frame wait, and the `:active` read-back that releases before refusing a
- * missed press. The refusal precedes resolution, so a double hold is refused before an absent
- * name is.
+ * and press, the marker, and the frame wait and the `:active` read-back that both release before
+ * refusing. The refusal precedes resolution, so a double hold is refused before an absent name is.
  *
  * @example
  * ```ts
@@ -692,14 +692,17 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
 		clickCount: 1,
 	})
 	document.documentElement.setAttribute(POINTER_HOLD, `${String(x)}x${String(y)}`)
-	await waitForFrame()
-	if (!target.matches(':active')) {
+	try {
+		await waitForFrame()
+		if (!target.matches(':active'))
+			throw new Error(`Interactive target "${name}" did not enter the pressed state`)
+	} catch (error) {
 		try {
 			await releasePointer()
 		} catch (cause) {
-			throw new Error(`Interactive target "${name}" did not enter the pressed state`, { cause })
+			throw new Error(error instanceof Error ? error.message : String(error), { cause })
 		}
-		throw new Error(`Interactive target "${name}" did not enter the pressed state`)
+		throw error
 	}
 }
 

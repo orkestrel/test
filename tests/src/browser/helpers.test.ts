@@ -1266,6 +1266,24 @@ describe('driveHold', () => {
 			}, 'Apply'),
 		).rejects.toThrow('resolver reached')
 	})
+
+	it('releases the pointer and rethrows when the pressed-state read fails after the marker is written', async () => {
+		buildStylesheet('.journey-hold { position: fixed; top: 140px; left: 140px }')
+		const container = buildFixture('<button class="journey-hold">Apply</button>')
+		const button = requireValue(container.querySelector('button'))
+		Object.defineProperty(button, 'matches', {
+			value: () => {
+				throw new Error('read refused')
+			},
+		})
+		await expect(driveHold(() => button, 'Apply')).rejects.toThrow('read refused')
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+		const next = buildFixture('<button class="journey-hold">Retry</button>')
+		const nextButton = requireValue(next.querySelector('button'))
+		await driveHold(() => nextButton, 'Retry')
+		expect(nextButton.matches(':active')).toBe(true)
+		await releasePointer()
+	})
 })
 
 describe('traverseAccessible', () => {

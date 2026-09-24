@@ -450,7 +450,9 @@ every step, because a framework may replace the node between resolution and focu
 cap is three times the page's candidate count plus ten, including disabled controls and elements
 with `tabindex="-1"`, so a page whose focus never settles fails instead of hanging.
 `driveTraversal` is that loop over any resolver, and `driveHold` is the one pointer drive every hold
-verb shares; each verb supplies its resolver and the name its refusals voice.
+verb shares, releasing the pointer before refusing when the frame wait or the pressed-state read
+fails, as well as when the press misses; each verb supplies its resolver and the name its refusals
+voice.
 
 `build` and `mount` are the halves of a fixture, and `render` is the pair spelled as one call.
 `build` creates the element and applies its class list, its text, and its attributes, and leaves it
