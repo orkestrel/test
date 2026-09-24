@@ -7,6 +7,7 @@ import type {
 	ContrastFixture,
 	ElementOptions,
 	EscapeFixture,
+	FrameOffset,
 	FrameOptions,
 	FrameReading,
 	MediaOptions,
@@ -707,7 +708,7 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
 }
 
 /**
- * Releases a held pointer and parks it at the page origin, clearing hover.
+ * Releases a held pointer and parks it outside the page, clearing hover.
  *
  * @returns A promise resolving after the released pointer's frame paints.
  * @throws Thrown when the release or the park rejects. If both reject, the aggregate carries the
@@ -716,8 +717,13 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
  * @remarks
  * An idle pointer sends no button release. Calling this after an explicit release is safe in an
  * `afterEach` hook. A rejected release keeps the marker for a later retry. The pointer still moves
- * to the origin in cleanup, and a rejection there joins the aggregate described under `@throws`.
+ * to its park point in cleanup, and a rejection there joins the aggregate described under `@throws`.
  * The provider must expose a DevTools session.
+ *
+ * The park point is (-1, -1) in the runner page's coordinates, one pixel above and to the left of
+ * that page's viewport. The browser hit-tests nothing outside the viewport, so no element takes a
+ * `mouseover` event or hover paint from the parked pointer until the next pointer verb. This holds
+ * even where a staging, scroll, or offset lays content over the park point.
  *
  * @example
  * ```ts
@@ -746,7 +752,7 @@ export async function releasePointer(): Promise<void> {
 	}
 	if (released) document.documentElement.removeAttribute(POINTER_HOLD)
 	try {
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: -1, y: -1 })
 		await waitForFrame()
 	} catch (cause) {
 		if (!released) {
@@ -3227,6 +3233,40 @@ export async function releasePane(): Promise<void> {
 }
 
 /**
+ * Computes how far an element frame moves the tester frame so the element is shot inside the
+ * runner's window.
+ *
+ * @param box - The element's box in the runner window's coordinates, with the tester frame at the
+ * window's origin.
+ * @param width - The runner window's width in CSS pixels.
+ * @param height - The runner window's height in CSS pixels.
+ * @returns The frame's move: zero on both axes where the frame stays at the origin.
+ *
+ * @remarks
+ * The provider paints an element that fits the window only where the window shows it, so an element
+ * that fits and lies past the window's bottom or right edge moves up or left only as far as brings
+ * it inside. Each edge is rounded up to the next whole row or column first, because the shot is
+ * clipped to whole rows and columns, and the move is bounded so the element's opposite edge never
+ * passes the window's start: an element starting half a row down moves by no more than that half
+ * row. An axis whose far edge already lies inside the window, a fractional window edge included,
+ * does not move. An element too large for the window is shot beyond the viewport, so it is not
+ * moved either.
+ *
+ * @example
+ * ```ts
+ * computeOffset(new DOMRectReadOnly(0, 744, 390, 100), 800, 513)
+ * // { top: -331, left: 0 }
+ * ```
+ */
+export function computeOffset(box: DOMRectReadOnly, width: number, height: number): FrameOffset {
+	const fits = box.width <= width && box.height <= height
+	return {
+		top: fits && box.bottom > height ? Math.max(height - Math.ceil(box.bottom), -box.top) : 0,
+		left: fits && box.right > width ? Math.max(width - Math.ceil(box.right), -box.left) : 0,
+	}
+}
+
+/**
  * Stages the tester's print medium, motion preference, and forced colours through the browser
  * provider.
  *
@@ -3394,9 +3434,9 @@ export async function releaseMedia(): Promise<void> {
  *
  * @param options - The path to write, the viewport to shoot at, and the element to shoot.
  * @returns The absolute path of the written frame, after it has been read back and matched.
- * @throws Thrown when the pane cannot be staged, when the document's height never settles under
- * {@link CAPTURE_STAGINGS} restagings, when the provider wrote the frame somewhere else, and when
- * the bytes on disk are not the ones this shot produced.
+ * @throws Thrown when the pane cannot be staged, when the document's height or an element frame's
+ * element height never settles under {@link CAPTURE_STAGINGS} restagings, when the provider wrote
+ * the frame somewhere else, and when the bytes on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
@@ -3406,7 +3446,7 @@ export async function releaseMedia(): Promise<void> {
  * path, so the two are compared by the segments that survive resolving `.` and `..` lexically — the
  * refusal is what a provider resolving that path against a different base would trip.
  *
- * The frame covers the whole document at `options.width`, whatever `options.height` is. The
+ * A page frame covers the whole document at the declared width, whatever the declared height is. The
  * provider shoots the tester's body in the top-level page's own coordinates, so a document taller
  * than the pane is painted for the pane's height and the rows below it are the runner's page rather
  * than the document — a frame that reads as the surface down to the fold and as bare canvas after
@@ -3438,9 +3478,39 @@ export async function releaseMedia(): Promise<void> {
  * `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
  * written at a height that is already wrong.
  *
- * Omit `options.element` to shoot the whole page. The pane is staged for the frame and released
- * before this returns, on the failing path as well as the passing one, which hands the tester back
- * the viewport it had before the first staging.
+ * Omit the `element` option to shoot the whole page. An element frame no taller than the declared
+ * height is shot with the pane at the declared size, so every viewport length resolves against the
+ * declared viewport, whether the element sits in flow above the fold, in flow below it,
+ * or fixed. The re-reading takes the element's own height in place of the content edge, so the pane
+ * grows only for an element taller than the declared height, and then to that element's height,
+ * which is the geometry its viewport lengths resolve against. An element that outgrows every pane
+ * is refused with the same text.
+ *
+ * Where the element's box lies outside the pane, the tester's document is scrolled by the nearest
+ * distance that would bring it inside, and the box is read again. A fixed element past the pane can
+ * take a scroll that does not move it, and that scroll is handed back with the rest. The document is
+ * not scrolled for an element already inside the pane.
+ *
+ * The provider paints an element that fits the runner's window only where that window shows it.
+ * Where such an element lies past the window, the calling tester frame is offset up or left only as
+ * far as brings the element inside, and composited, which keeps a fixed element that starts past the
+ * window's height from being culled. The {@link computeOffset} function computes that move. The
+ * offset is written on that frame's own `style` attribute, where it outranks the placement the
+ * {@link stagePane} function makes, and it depends on that placement's fixed position. The attribute
+ * is restored as soon as the screenshot settles. An element inside the window, or too large for it,
+ * is not offset.
+ *
+ * The capture sends no pointer input. The staging lifts the tester to the window's origin, a scroll
+ * brings an element outside the pane into it, and an offset brings an element past the window
+ * inside; each moves content under a pointer resting on the page. A pointer the case placed on the
+ * element, with the pane already staged at the frame's size, keeps its hover in the frame where the
+ * element lies inside both the pane and the runner window, because the capture then moves nothing.
+ * No hover is promised after the pane is released.
+ *
+ * The pane is staged for the frame and released before this returns, on the failing path as well as
+ * the passing one, which hands the tester back the viewport it had before the first staging. The
+ * tester's scroll position is restored after that release, on every path, a rejected release
+ * included.
  *
  * @example
  * ```ts
@@ -3448,12 +3518,23 @@ export async function releaseMedia(): Promise<void> {
  * ```
  */
 export async function captureFrame(options: FrameOptions): Promise<string> {
+	const element = options.element
+	const scroll = { left: window.scrollX, top: window.scrollY }
 	try {
 		await stagePane(options.width, options.height)
 		let pane = options.height
-		let covered = Math.max(measureContent(), options.height)
+		let covered: number | undefined
 		let growth = 0
-		for (let staging = 0; pane !== covered; staging += 1) {
+		for (let staging = 0; ; staging += 1) {
+			const reading = Math.max(
+				element === undefined
+					? measureContent()
+					: Math.ceil(element.getBoundingClientRect().height),
+				options.height,
+			)
+			if (covered !== undefined) growth = Math.max(0, reading - covered)
+			covered = reading
+			if (pane === covered) break
 			if (staging === CAPTURE_STAGINGS) {
 				throw new Error(
 					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGINGS)} restagings: ${String(covered)} over a ${String(pane)} pane`,
@@ -3461,14 +3542,44 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 			}
 			pane = covered + growth
 			await stagePane(options.width, pane)
-			const reading = Math.max(measureContent(), options.height)
-			growth = Math.max(0, reading - covered)
-			covered = reading
 		}
-		const shot =
-			options.element === undefined
-				? await page.screenshot({ path: options.path, base64: true })
-				: await page.screenshot({ element: options.element, path: options.path, base64: true })
+		let shot: { readonly path: string; readonly base64: string }
+		if (element === undefined) {
+			shot = await page.screenshot({ path: options.path, base64: true })
+		} else {
+			const box = element.getBoundingClientRect()
+			const down = box.top < 0 ? box.top : Math.max(0, box.bottom - window.innerHeight)
+			const across = box.left < 0 ? box.left : Math.max(0, box.right - window.innerWidth)
+			if (down !== 0 || across !== 0) {
+				window.scrollBy({ top: down, left: across, behavior: 'instant' })
+			}
+			// The offset outranks the fixed placement the `stagePane` function writes, because an
+			// inline declaration wins over a stylesheet one of equal importance, and it moves the frame
+			// only because that placement is fixed at the window's origin.
+			const frame = window.frameElement
+			const view = window.top
+			const placed = element.getBoundingClientRect()
+			const move =
+				view === null
+					? { top: 0, left: 0 }
+					: computeOffset(placed, view.innerWidth, view.innerHeight)
+			const style = frame?.getAttribute('style') ?? null
+			const offset = frame !== null && (move.top !== 0 || move.left !== 0)
+			try {
+				if (offset) {
+					frame.setAttribute(
+						'style',
+						`${style ?? ''};top:${String(move.top)}px !important;left:${String(move.left)}px !important;will-change:transform`,
+					)
+					await waitForFrame()
+					await waitForFrame()
+				}
+				shot = await page.screenshot({ element, path: options.path, base64: true })
+			} finally {
+				if (offset && style === null) frame.removeAttribute('style')
+				else if (offset && style !== null) frame.setAttribute('style', style)
+			}
+		}
 		const segments: string[] = []
 		for (const segment of options.path.replaceAll('\\', '/').split('/')) {
 			if (segment === '' || segment === '.') continue
@@ -3485,7 +3596,11 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		}
 		return shot.path
 	} finally {
-		await releasePane()
+		try {
+			await releasePane()
+		} finally {
+			window.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' })
+		}
 	}
 }
 
@@ -3506,6 +3621,11 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
  * against its own root rather than against the calling test file, so a relative path names a file
  * somewhere else.
  *
+ * A file that opens with a PNG header and still does not decode is refused with the size that header
+ * declares, in device pixels:
+ * `Capture frame at <path> is not an image this browser decodes: <w>x<h> device pixels`.
+ * A file with no PNG header is refused without a size.
+ *
  * @example
  * ```ts
  * const reading = await readFrame(written)
@@ -3518,6 +3638,18 @@ export async function readFrame(path: string): Promise<FrameReading> {
 	const image = new Image()
 	image.src = `data:image/png;base64,${encoded}`
 	await image.decode().catch((cause: unknown) => {
+		// The PNG signature and the IHDR chunk's type fill the first 16 bytes, and the chunk opens
+		// with the width and the height as big-endian 32-bit integers.
+		const header = atob(encoded.slice(0, 32))
+		if (header.startsWith('\x89PNG\r\n\x1A\n') && header.slice(12, 16) === 'IHDR') {
+			const view = new DataView(Uint8Array.from(header, (byte) => byte.charCodeAt(0)).buffer)
+			if (view.byteLength >= 24) {
+				throw new Error(
+					`Capture frame at ${path} is not an image this browser decodes: ${String(view.getUint32(16))}x${String(view.getUint32(20))} device pixels`,
+					{ cause },
+				)
+			}
+		}
 		throw new Error(`Capture frame at ${path} is not an image this browser decodes`, { cause })
 	})
 	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')

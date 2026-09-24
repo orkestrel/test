@@ -254,6 +254,7 @@ a union's arms escaped as `\|`.
 | `Color`               | type      | `readonly [red, green, blue, alpha]`                                           | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
 | `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                             | Configures one built element: its class list, its text, and its attributes.                                                                     |
 | `FrameOptions`        | interface | `{ path, width, height, element? }`                                            | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
+| `FrameOffset`         | interface | `{ top, left }`                                                                | Represents how far an element frame moves the tester frame from the runner window's origin for the shot, in CSS pixels.                         |
 | `FrameReading`        | interface | `{ width, height, floor }`                                                     | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
 | `CaptureVariant`      | interface | `JourneyVariant` plus `{ apply? }`                                             | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
 | `PortfolioOptions`    | interface | `{ states, variants, variant, directory, enabled? }`                           | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
@@ -309,7 +310,7 @@ A `Shape` cell holds the constant's declared type.
 | `holdAccessible`           | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                                     | Holds the primary pointer button on one visible, focus-reachable control by its accessible name.                                                                                                                                                                                |
 | `holdAccessibleWithin`     | function | `(region: string, role: string, name: string) => Promise<void>`                                                         | Holds the primary pointer button on one control by role and accessible-name text inside a named region.                                                                                                                                                                         |
 | `driveHold`                | function | `(resolve: () => HTMLElement, name: string) => Promise<void>`                                                           | Holds the primary pointer button on the control a resolver returns, through the browser provider.                                                                                                                                                                               |
-| `releasePointer`           | function | `() => Promise<void>`                                                                                                   | Releases a held pointer and parks it at the page origin, clearing hover.                                                                                                                                                                                                        |
+| `releasePointer`           | function | `() => Promise<void>`                                                                                                   | Releases a held pointer and parks it outside the page, clearing hover.                                                                                                                                                                                                          |
 | `typeAccessible`           | function | `(name: string, text: string) => Promise<void>`                                                                         | Replaces a named field's value through focus, select-all, deletion, and real keystrokes.                                                                                                                                                                                        |
 | `fillAccessible`           | function | `(name: string, text: string) => Promise<void>`                                                                         | Replaces a named field's value in one operation, for text too long to type key by key.                                                                                                                                                                                          |
 | `traverseAccessible`       | function | `(name: string) => Promise<HTMLElement>`                                                                                | Reaches a named control only through natural forward Tab traversal from the current focus.                                                                                                                                                                                      |
@@ -363,6 +364,7 @@ A `Shape` cell holds the constant's declared type.
 | `measureContent`           | function | `() => number`                                                                                                          | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                      | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
 | `releasePane`              | function | `() => Promise<void>`                                                                                                   | Hands the tester pane back to the runner's own layout, at the viewport it had before staging.                                                                                                                                                                                   |
+| `computeOffset`            | function | `(box: DOMRectReadOnly, width: number, height: number) => FrameOffset`                                                  | Computes how far an element frame moves the tester frame so the element is shot inside the runner's window.                                                                                                                                                                     |
 | `stageMedia`               | function | `(options: MediaOptions) => Promise<void>`                                                                              | Stages the tester's print medium, motion preference, and forced colours through the browser provider.                                                                                                                                                                           |
 | `releaseMedia`             | function | `() => Promise<void>`                                                                                                   | Restores the media readings observed before the first stage as explicit emulation. With nothing staged, clears every override and waits for a stable reading, not a proved engine baseline. Checks the budget between polls, so a frame that never paints is not bounded by it. |
 | `captureFrame`             | function | `(options: FrameOptions) => Promise<string>`                                                                            | Shoots one frame at one viewport size and proves the file on disk holds this run's bytes.                                                                                                                                                                                       |
@@ -607,7 +609,7 @@ command and compares it with the shot itself, which is what separates this run's
 earlier run left behind. It releases the pane in a `finally`, so a refusal at any stage hands the
 tester back before it propagates.
 
-The frame covers the whole document at the width it was given, whatever height it was given. The
+A page frame covers the whole document at the width it was given, whatever height it was given. The
 provider shoots the tester's body in the top-level page's own coordinates, so a document taller than
 the pane paints for the pane's height and the rows under it are the runner's page: the frame reads
 as the surface down to the fold and as bare canvas after it. `captureFrame` therefore lays the
@@ -655,13 +657,40 @@ written at a height that is already wrong. That bound is 4: a document holding h
 fixed block settles in two restagings, one whose growth is capped part way settles in three, and
 the fourth is headroom.
 
+An element frame no taller than the declared height is shot in the declared pane, so its viewport
+lengths resolve against the declared viewport whether the element sits above the fold, below it, or
+fixed: a `50vh` element under a 900-row block reads back 422 rows in an 844-row pane. The re-reading
+takes the element's own height, so the pane grows only for an element taller than the declared
+height, and then to that element's height, which is what its viewport lengths resolve against.
+Where the element's box lies outside the pane, the document is scrolled by the nearest distance that
+would bring it inside, and the box is read again. A fixed element past the pane can take a scroll
+that does not move it, and that scroll is handed back with the rest. The document is not scrolled for
+an element already inside the pane.
+
+The provider paints an element that fits the runner's window only where that window shows it. Where
+such an element lies past the window, the `captureFrame` function offsets the calling tester frame up
+or left only as far as brings the element inside, and composites the frame so a fixed element that
+starts past the window's height is not culled. The `computeOffset` function computes that move. The
+offset is written on that frame's own `style` attribute, outranks the placement the `stagePane`
+function makes, and is removed as soon as the screenshot settles. An element inside the window, or
+too large for it, is not offset.
+
+The capture sends no pointer input. The staging lifts the tester to the window's origin, a scroll
+brings an element outside the pane into it, and an offset brings an element past the window inside;
+each moves content under a pointer resting on the page. A pointer the case placed on the element,
+with the pane already staged at the frame's size, keeps its hover in the frame where the element lies
+inside both the pane and the runner window, because the capture then moves nothing. No hover is
+promised after the pane is released.
+
 `readFrame` reads a written frame back: its size in device pixels, and the single color its bottom
 row paints. The reading comes off the file through the browser's own image decoding rather than off
 the document that produced it, which is what makes it evidence about the capture rather than a
 second look at the style that fed it — a clipped frame reports the runner's white canvas as its
 floor while every style in the document still resolves to the document's own background. Pass the
 absolute path `captureFrame` returned: the runner's `readFile` command resolves a relative path
-against its own root rather than against the calling test file.
+against its own root rather than against the calling test file. A file that opens with a PNG header
+and still does not decode is refused with the width and height that header declares, in device
+pixels; a file with no PNG header is refused without a size.
 
 `createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
 naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
@@ -1078,6 +1107,7 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Capture frame at <path> is not the one this run shot`                                   | `captureFrame`            |
 | `Capture frame at <path> could not be read`                                              | `readFrame`               |
 | `Capture frame at <path> is not an image this browser decodes`                           | `readFrame`               |
+| `Capture frame at <path> is not an image this browser decodes: <w>x<h> device pixels`    | `readFrame`               |
 | `Capture frame at <path> cannot be measured without a 2D canvas`                         | `readFrame`               |
 | `Capture variant "<name>" is not registered`                                             | `createPortfolio`         |
 | `Capture state "<state>" is not registered`                                              | `place`                   |
@@ -1126,9 +1156,10 @@ disk disagrees with the bytes the provider handed back — which a provider that
 never produces, so the suite proves that comparison discriminates with a planted file rather than by
 reaching the refusal. `Capture frame at <path> cannot be measured without a 2D canvas` is narrowing
 of the same kind: a canvas allocated for this reading and asked for no other context type hands one
-back. `readFrame`'s other two refusals are driven, by a path holding no file and by a file holding
-no image, and so is `Capture frame at <path> never settled after <n> restagings`, by a fixture whose
-full-height panel grows with every pane the capture stages.
+back. The remaining refusals of the `readFrame` function are driven, by a path holding no file, by a
+file holding no image, and by a PNG header over no image data, and so is
+`Capture frame at <path> never settled after <n> restagings`, by a fixture whose full-height panel
+grows with every pane the capture stages.
 
 The pointer, pseudo-element, and media helpers add the following voices.
 
@@ -1478,19 +1509,25 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     `Tester pane rendered <w>x<h> for a <w>x<h> viewport` rather than writing a wrong frame. The
     coupling therefore fails loudly, and the version this rule names moves with the fix instead of a
     suite shipping thumbnails nobody inspects. The same layout decides what a frame covers: the
-    provider shoots the tester's body in the top-level page's coordinates, so `captureFrame` stages
-    the pane again at the document's own height wherever the document outruns the declared one, and
-    a frame is neither shorter nor taller than the document it photographs. That height is
+    provider shoots the tester's body in the top-level page's coordinates, so the `captureFrame`
+    function stages the pane again at the document's own height wherever the document outruns the
+    declared one, and a page frame is neither shorter nor taller than the document it photographs.
+    That height is
     `measureContent`, the content's own edge rounded up, rather than the body's box: the box is the
     larger of the content and the pane, so a taller pane stretches it and a capture cannot read its
     way back down. The edge is read again after every staging, because a rule bound to the viewport
     height lays the document out taller against the taller pane, and each staging carries the growth
     the one before it produced so a converging document lands on its fixed point rather than
     creeping toward it. The re-reading is bounded by `CAPTURE_STAGINGS`, and a document still
-    growing at that bound is refused rather than photographed at a stale height. What the capture borrows it gives back —
-    `releasePane` returns the tester to the viewport it held before the staging, so the variant a
-    frame was shot at belongs to that frame alone, and a suite that wants a size of its own calls
-    `page.viewport` rather than this pair.
+    growing at that bound is refused rather than photographed at a stale height. An element frame
+    keeps the declared pane unless its element is taller, and offsets the calling tester frame only
+    as far as brings the element inside the runner's window. What
+    the capture borrows it gives back: the `releasePane` function returns the tester to the viewport
+    it held before the staging, the capture then restores the tester's scroll position, even where
+    the release rejects, and it restores the offset frame's
+    `style` attribute as soon as the screenshot settles. So the variant a frame was shot at belongs
+    to that frame alone, and a suite that wants a size of its own calls the `page.viewport` method
+    rather than this pair.
 19. **The statechart harness is test-side, and the markup is its whole contract.** A page cannot
     import this package. `@orkestrel/test` is a development dependency, its browser entry imports
     `vitest/browser` at module scope, and that import throws outside Browser Mode — so an
@@ -1663,12 +1700,16 @@ the helper rather than to the host, and each names what to reach for instead.
   used; it is covered by review. The measured layout is a single accessible, uniformly scaled tester
   iframe. A covered centre or unsupported geometry can refuse even when the resolver accepts the
   target. The verb inherits the resolver's focus reachability conditions.
-- **`releasePointer` parks the pointer at the top-level origin.** It releases at the recorded point
-  first, which can produce a click, then clears hover by moving to the origin. Register it with
-  `afterEach` before a hover or hold. A second release sends no button-up event. Holds must not overlap.
-  A rejected press leaves no marker. A rejected release keeps the marker for a retry and still
-  attempts the move to the origin. If that park also rejects, the park's error surfaces with the
-  release rejection attached in the aggregate's errors; the park rejection is its cause.
+- **`releasePointer` parks the pointer outside the page.** It releases at the recorded point first,
+  which can produce a click. It then clears hover by moving to (-1, -1) in the runner page's
+  coordinates, one pixel above and to the left of that page's viewport. The browser hit-tests
+  nothing outside the viewport, so no element takes a `mouseover` event or hover paint from the
+  parked pointer until the next pointer verb. This holds even where a staging, scroll, or offset
+  lays content over the park point. Register it with `afterEach` before a hover
+  or hold. A second release sends no button-up event. Holds must not overlap. A rejected press
+  leaves no marker. A rejected release keeps the marker for a retry and still attempts the park. If
+  that park also rejects, the park's error surfaces with the release rejection attached in the
+  aggregate's errors; the park rejection is its cause.
 - **`stageMedia` overrides the provider page, and `releaseMedia` restores the first stage's
   readings.** Pin a base with `{ motion: true }` rather than assuming the host prefers motion.
   `motion: false` stages reduced motion; `print: true` stages print, and `print: false` stages
@@ -3665,10 +3706,32 @@ Each entry names the contracts its file proves. The test names carry the cases.
   read — 1322, then 1561 — and its frame lands on 1800, which is the fixed point written out rather
   than read back from the capture that staged it. The same panel uncapped grows with every pane and
   reaches the refusal, whose written-out restaging bound reddens when the source's bound moves and
-  whose pane and viewport are handed back anyway. `readFrame` takes a written frame's size and
-  floor, read a second way through the cascade's own answer for the same canvas, a bottom row split
-  between two colors reported as no floor at all, a path holding no file, and a file holding no
-  image. `readCascade` takes class tokens collected from plain and grouped rules and only real ones;
+  whose pane and viewport are handed back anyway. An element frame takes a fixed `30vh` panel whose
+  top lies past the runner's window, shot from a scrolled tester, whose frame is 30% of the declared
+  height on the panel's own color with the scroll handed back; an element below both the pane and
+  the window, whole on the document's floor with the scroll handed back; a `50vh` element and a
+  `30vh` element below the fold, at the declared pane rather than a grown one; an element taller
+  than the pane, in a pane of its own height; an element that outgrows every pane, refused with the
+  pane and the scroll handed back; a second tester frame the offset leaves in place; and a frame
+  carrying no `style` attribute, handed back without one. After the `releasePointer` function, an
+  element frame takes no `mouseover` event for an element inside the window, which also takes no `scroll` event;
+  for a flush-left element the scroll brings to the top, one the offset brings to the left edge, and
+  one too large for the window; for an element past both window edges, whose frame has the
+  element's size; for an element touching the origin and one filling the window; across a scroll
+  the staging clamps, with the scroll handed back; and for an `svg` element in the shadow tree of a
+  fixed host and a fixed `svg` element under a containing-block ancestor. A hover placed after
+  staging on an element at the tester's top-left corner stays in the frame. The `computeOffset`
+  function takes an element inside the window, one touching the origin or starting above it, one
+  filling the window, an element past the bottom edge, a fractional bottom edge rounded up, a
+  fractional top and a fractional left each moved only as far as the window start, a box already
+  ending inside a fractional window left where it is, an element past the right edge,
+  one past both edges, and an element too large for the window.
+  The `readFrame` function takes a written
+  frame's size and floor, read a second way through the cascade's own answer for the same canvas, a
+  bottom row split between two colors reported as no floor at all, a path holding no file,
+  a file holding no image and refused without a size, and a PNG header over no image data, refused
+  with the size the header declares. The `readCascade` function takes class tokens collected from
+  plain and grouped rules and only real ones;
   `readRows` takes a row joined from its own text nodes rather than from run-together content, and
   an empty list; `extractOrphans` takes a child class rendered outside its container with a nested
   one left alone, nothing reported when every child sits inside one, and, as the control, an element

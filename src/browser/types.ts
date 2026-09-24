@@ -41,6 +41,20 @@ export interface FrameOptions {
 }
 
 /**
+ * Represents how far an element frame moves the tester frame from the runner window's origin for the
+ * shot, in CSS pixels.
+ *
+ * @remarks
+ * Both are zero where the frame stays at the origin.
+ */
+export interface FrameOffset {
+	/** Holds the frame's vertical move, zero or negative; a negative value moves the frame up. */
+	readonly top: number
+	/** Holds the frame's horizontal move, zero or negative; a negative value moves the frame left. */
+	readonly left: number
+}
+
+/**
  * Represents one written frame read back from the file a capture produced: its size in device
  * pixels, and the single color its bottom row paints.
  *

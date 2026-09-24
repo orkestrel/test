@@ -11,6 +11,7 @@ import {
 	CANVAS_COLOR,
 	CAPTURE_PANE,
 	captureFrame,
+	computeOffset,
 	clearStorage,
 	clickAccessible,
 	clickAccessibleWithin,
@@ -3165,6 +3166,521 @@ describe('captureFrame', () => {
 		expect(reading.floor).toBe('rgb(0, 128, 0)')
 	})
 
+	it('shoots a fixed viewport-height panel at the declared pane and hands the scroll back', async () => {
+		// The panel is 30% of whatever pane it sits in, and the document under it is taller than the
+		// declared pane, so a pane staged to the document's height lays the panel out taller. The
+		// declared height is read from the runner's window and is a multiple of 10, so the panel's
+		// 30% and its top at 70% are whole rows, its top lies at least 70 rows past that window, and
+		// the panel itself fits inside the window on any host. The declared width is read from the
+		// window too, so the panel fits across it. The shot then depends on the offset
+		// and on the compositing that keeps a fixed element past the window from being culled.
+		const declared = 10 * Math.ceil((requireValue(window.top).innerHeight + 100) / 7)
+		const across = Math.min(390, requireValue(window.top).innerWidth)
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) }' +
+				' .panel { position: fixed; left: 0; right: 0; bottom: 0; height: 30vh; background: rgb(0, 0, 255) }',
+		)
+		const container = buildFixture(
+			`<div style="height: ${String(declared + 2000)}px">Taller than the pane</div><div class="panel">Panel</div>`,
+		)
+		window.scrollTo({ top: 400, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(400)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/panel.png`,
+			width: across,
+			height: declared,
+			element: requireValue(container.lastElementChild),
+		})
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(across)
+		expect(reading.height).toBe((declared * 3) / 10)
+		// The panel's own color on the bottom row is what separates a shot of the panel from a shot
+		// of the document behind it or of the runner's page.
+		expect(reading.floor).toBe('rgb(0, 0, 255)')
+		expect(window.scrollY).toBe(400)
+	})
+
+	it('shoots an element that ends below the declared pane whole, on the document floor', async () => {
+		// The element starts below the declared pane, and the declared pane is 200 rows taller than
+		// the runner's window, which is read rather than assumed. The scroll brings the element to
+		// the pane's bottom, which still lies past the window, so the shot needs the offset on any
+		// host. The declared width is read from the window too, so the element fits across it. It paints no background of its own, so its bottom row is the document's green where
+		// the shot covers it and the runner's white where it does not.
+		const declared = Math.max(844, requireValue(window.top).innerHeight + 200)
+		const across = Math.min(390, requireValue(window.top).innerWidth)
+		buildStylesheet('html { background: rgb(0, 128, 0) }')
+		const container = buildFixture(
+			`<div style="height: ${String(declared + 400)}px">Above</div><div style="height: 100px">Below</div><div style="height: 400px">After</div>`,
+		)
+		window.scrollTo({ top: 200, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(200)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/below.png`,
+			width: across,
+			height: declared,
+			element: requireValue(container.children[1]),
+		})
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(across)
+		expect(reading.height).toBe(100)
+		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		expect(window.scrollY).toBe(200)
+	})
+
+	it('shoots a viewport-height element below the fold at the declared pane', async () => {
+		// Half of the declared 844 rows is 422. A pane grown to reach the element's bottom edge lays
+		// the element out at half of that taller pane instead.
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } .probe { height: 50vh; background: rgb(0, 0, 255) }',
+		)
+		const container = buildFixture(
+			'<div style="height: 900px">Above</div><div class="probe">Half</div>',
+		)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/half.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.lastElementChild),
+		})
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBe(422)
+		expect(reading.floor).toBe('rgb(0, 0, 255)')
+	})
+
+	it('shoots a 30vh element below the fold at the declared pane under either spacer', async () => {
+		// 30% of the declared 844 rows is 253.2, and the frame holds the part row too. A pane grown
+		// to reach this element's bottom edge chases an edge that moves with every pane, and the
+		// capture is refused instead.
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } .probe { height: 30vh; background: rgb(0, 0, 255) }',
+		)
+		const heights: number[] = []
+		for (const spacer of [900, 1000]) {
+			const container = buildFixture(
+				`<div style="height: ${String(spacer)}px">Above</div><div class="probe">Share</div>`,
+			)
+			const written = await captureFrame({
+				path: `${FRAMES}/share-${String(spacer)}.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.lastElementChild),
+			})
+			heights.push((await readFrame(written)).height)
+			container.remove()
+		}
+		expect(heights).toStrictEqual([254, 254])
+	})
+
+	it('shoots an element taller than the declared pane in a pane of its own height', async () => {
+		// The element is a 1000-row block over a 10vh strip, so its height is 1000 rows plus a
+		// tenth of the pane it sits in. In a pane of its own height that settles at 1000 / 0.9, which
+		// is 1111.1 rows, and the frame holds the part row too. A pane that also reaches the 300
+		// rows above the element lays the strip out taller. The part row is the frame's bottom row,
+		// so the floor is not the strip's own color and the height is the reading.
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } .strip { height: 10vh; background: rgb(0, 0, 255) }',
+		)
+		const container = buildFixture(
+			'<div style="height: 300px">Above</div><div><div style="height: 1000px">Block</div><div class="strip">Strip</div></div><div style="height: 300px">After</div>',
+		)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/tall-element.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.children[1]),
+		})
+		const reading = await readFrame(written)
+		expect(reading.width).toBe(390)
+		expect(reading.height).toBe(1112)
+	})
+
+	it('refuses an element that outgrows every pane, and hands the pane and the scroll back', async () => {
+		// The fixed element is one and a half panes tall, so a pane of its own height is always too
+		// short for it. The document under it is 1400 rows, so the panes the capture stages outgrow
+		// it and clamp the scroll to the top before the refusal.
+		buildStylesheet('.over { position: fixed; top: 0; left: 0; right: 0; height: 150vh }')
+		const container = buildFixture(
+			'<div style="height: 1400px">Document</div><div class="over">Over</div>',
+		)
+		const pane = requireValue(window.frameElement?.parentElement)
+		const before = [window.innerWidth, window.innerHeight]
+		window.scrollTo({ top: 100, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(100)
+
+		await expect(
+			captureFrame({
+				path: `${FRAMES}/over.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.lastElementChild),
+			}),
+		).rejects.toThrow(`Capture frame at ${FRAMES}/over.png never settled after 4 restagings`)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
+		expect(window.scrollY).toBe(100)
+	})
+
+	it('offsets only the calling tester frame, and hands its style back', async () => {
+		// A second frame the staging selector matches stands in for any other `iframe[data-vitest]`
+		// frame. An offset that reached it would move it above the window's origin, where nothing
+		// else puts it. A reading is taken at every change to the runner page, which includes the
+		// change that applies the offset. The declared pane is 200 rows taller than the runner's
+		// window, so the element the scroll brings to the pane's bottom needs the offset on any host.
+		const frame = requireValue(window.frameElement)
+		const owner = frame.ownerDocument
+		const style = frame.getAttribute('style')
+		const other = owner.createElement('iframe')
+		// It carries another value because the provider's locator refuses a second `true` frame.
+		other.setAttribute('data-vitest', 'earlier')
+		owner.body.append(other)
+		const readings: Array<[calling: number, other: number]> = []
+		const observer = new MutationObserver(() => {
+			readings.push([frame.getBoundingClientRect().top, other.getBoundingClientRect().top])
+		})
+		observer.observe(owner, { subtree: true, childList: true, attributes: true })
+		const declared = Math.max(844, requireValue(window.top).innerHeight + 200)
+		const across = Math.min(390, requireValue(window.top).innerWidth)
+		const container = buildFixture(
+			`<div style="height: ${String(declared + 400)}px">Above</div><div style="height: 100px">Below</div>`,
+		)
+		try {
+			await captureFrame({
+				path: `${FRAMES}/scoped.png`,
+				width: across,
+				height: declared,
+				element: requireValue(container.lastElementChild),
+			})
+		} finally {
+			observer.disconnect()
+			other.remove()
+		}
+		// The calling frame moving is the control that a reading was taken under the offset.
+		expect(Math.min(...readings.map(([calling]) => calling))).toBeLessThan(0)
+		expect(readings.map(([, reading]) => reading).filter((reading) => reading < 0)).toStrictEqual(
+			[],
+		)
+		expect(frame.getAttribute('style')).toBe(style)
+	})
+
+	it('hands back a frame that carried no style attribute without one', async () => {
+		// The runner writes an inline style on every tester frame it creates, so this case takes the
+		// attribute off first and puts it back after, to reach the restore that removes the
+		// attribute rather than rewriting it.
+		const frame = requireValue(window.frameElement)
+		const style = frame.getAttribute('style')
+		const declared = Math.max(844, requireValue(window.top).innerHeight + 200)
+		const across = Math.min(390, requireValue(window.top).innerWidth)
+		const container = buildFixture(
+			`<div style="height: ${String(declared + 400)}px">Above</div><div style="height: 100px">Below</div>`,
+		)
+		frame.removeAttribute('style')
+		try {
+			await captureFrame({
+				path: `${FRAMES}/unstyled.png`,
+				width: across,
+				height: declared,
+				element: requireValue(container.lastElementChild),
+			})
+			expect(frame.hasAttribute('style')).toBe(false)
+		} finally {
+			if (style !== null) frame.setAttribute('style', style)
+		}
+	})
+
+	it('takes no mouseover from the parked pointer for a flush-left element the scroll brings to the top', async () => {
+		// The element opens the document and the tester is scrolled past it, so the scroll that
+		// brings it back into the pane puts its corner on the runner page's origin, beside the
+		// pointer parked outside the viewport.
+		await releasePointer()
+		const container = buildFixture(
+			'<div style="height: 100px">Target</div><div style="height: 3000px">After</div>',
+		)
+		window.scrollTo({ top: 1000, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(1000)
+		const element = requireValue(container.firstElementChild)
+		const entered = createRecorder<[event: Event]>()
+		element.addEventListener('mouseover', entered.handler)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/scrolled-corner.png`,
+			width: 390,
+			height: 844,
+			element,
+		})
+		await waitForFrame()
+		expect(entered.count).toBe(0)
+		expect((await readFrame(written)).height).toBe(100)
+	})
+
+	it('takes no mouseover from the parked pointer for an element the offset brings to the left edge', async () => {
+		// The declared pane is twice as wide as the runner's window, which is read rather than
+		// assumed, and the fixed element fills the pane's right half, so the offset that brings it
+		// inside the window puts its corner on the runner page's origin, beside the parked pointer.
+		await releasePointer()
+		const across = requireValue(window.top).innerWidth
+		buildStylesheet(
+			`.edge { position: fixed; top: 0; left: ${String(across)}px; width: ${String(across)}px; height: 100px }`,
+		)
+		const container = buildFixture('<div class="edge">Edge</div>')
+		const element = requireValue(container.firstElementChild)
+		const entered = createRecorder<[event: Event]>()
+		element.addEventListener('mouseover', entered.handler)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/offset-corner.png`,
+			width: across * 2,
+			height: 844,
+			element,
+		})
+		await waitForFrame()
+		expect(entered.count).toBe(0)
+		const reading = await readFrame(written)
+		expect([reading.width, reading.height]).toStrictEqual([across, 100])
+	})
+
+	it('takes no mouseover from the parked pointer for a flush-left element too large for the runner window', async () => {
+		// The element opens the document and is taller than the runner's window, which is read
+		// rather than assumed, so the provider shoots it beyond the viewport without an offset. The
+		// tester is scrolled past the element first, so the scroll that brings it back puts its
+		// corner on the runner page's origin, beside the parked pointer.
+		await releasePointer()
+		const tall = requireValue(window.top).innerHeight + 200
+		const container = buildFixture(
+			`<div style="height: ${String(tall)}px">Tall</div><div style="height: 3000px">After</div>`,
+		)
+		window.scrollTo({ top: 1000, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(1000)
+		const element = requireValue(container.firstElementChild)
+		const entered = createRecorder<[event: Event]>()
+		element.addEventListener('mouseover', entered.handler)
+
+		const written = await captureFrame({
+			path: `${FRAMES}/tall-corner.png`,
+			width: 390,
+			height: 844,
+			element,
+		})
+		await waitForFrame()
+		expect(entered.count).toBe(0)
+		expect((await readFrame(written)).height).toBe(tall)
+	})
+
+	it('takes no mouseover or scroll event for an element inside the runner window', async () => {
+		// An element inside both the pane and the window needs neither a scroll nor an offset, so
+		// the capture moves nothing and the document is not scrolled. The document runs on well past
+		// the pane, so a scroll the capture took would move it and fire an event.
+		await releasePointer()
+		const container = buildFixture(
+			'<div style="height: 100px">Above</div><div style="height: 100px">Resting</div><div style="height: 3000px">After</div>',
+		)
+		const element = requireValue(container.children[1])
+		const entered = createRecorder<[event: Event]>()
+		const scrolled = createRecorder<[event: Event]>()
+		element.addEventListener('mouseover', entered.handler)
+		window.addEventListener('scroll', scrolled.handler)
+		try {
+			await captureFrame({ path: `${FRAMES}/resting.png`, width: 390, height: 844, element })
+			await waitForFrame()
+		} finally {
+			window.removeEventListener('scroll', scrolled.handler)
+		}
+		expect(entered.count).toBe(0)
+		expect(scrolled.count).toBe(0)
+	})
+
+	it('takes no mouseover from the parked pointer for an element past both window edges', async () => {
+		// The declared pane is twice as wide as the runner's window and 200 rows taller, both read
+		// rather than assumed, and the fixed element sits past the window's right and bottom edges.
+		// The offset then moves the frame up and left, so the frame covers the point outside the
+		// runner page's viewport where the pointer is parked.
+		await releasePointer()
+		const view = requireValue(window.top)
+		const declared = Math.max(844, view.innerHeight + 200)
+		buildStylesheet(
+			`.corner { position: fixed; left: ${String(view.innerWidth + 50)}px; top: ${String(declared - 100)}px; width: 100px; height: 100px }`,
+		)
+		const container = buildFixture('<div class="corner">Corner</div>')
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		const frame = requireValue(window.frameElement)
+		const places: DOMRect[] = []
+		const observer = new MutationObserver(() => {
+			places.push(frame.getBoundingClientRect())
+		})
+		observer.observe(frame, { attributes: true, attributeFilter: ['style'] })
+		try {
+			const written = await captureFrame({
+				path: `${FRAMES}/both-edges.png`,
+				width: view.innerWidth * 2,
+				height: declared,
+				element: requireValue(container.firstElementChild),
+			})
+			await waitForFrame()
+			const reading = await readFrame(written)
+			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+		} finally {
+			observer.disconnect()
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		// The frame moving up and left past the viewport's corner is the control that the offset
+		// took the frame over the parked pointer.
+		expect(places.some((place) => place.top < -1 && place.left < -1)).toBe(true)
+		expect(entered.count).toBe(0)
+	})
+
+	it('takes no mouseover from the parked pointer for an element touching the origin', async () => {
+		await releasePointer()
+		const container = buildFixture('<div style="height: 100px">Origin</div>')
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		try {
+			await captureFrame({
+				path: `${FRAMES}/origin.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.firstElementChild),
+			})
+			await waitForFrame()
+		} finally {
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		expect(entered.count).toBe(0)
+	})
+
+	it('takes no mouseover from the parked pointer for an element that fills the runner window', async () => {
+		// The element is as wide and as tall as the runner's window, which is read rather than
+		// assumed, and sits at the tester's top-left corner.
+		await releasePointer()
+		const view = requireValue(window.top)
+		const container = buildFixture(
+			`<div style="width: ${String(view.innerWidth)}px; height: ${String(view.innerHeight)}px">Fill</div>`,
+		)
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		try {
+			const written = await captureFrame({
+				path: `${FRAMES}/fill.png`,
+				width: view.innerWidth,
+				height: Math.max(844, view.innerHeight),
+				element: requireValue(container.firstElementChild),
+			})
+			await waitForFrame()
+			const reading = await readFrame(written)
+			expect([reading.width, reading.height]).toStrictEqual([view.innerWidth, view.innerHeight])
+		} finally {
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		expect(entered.count).toBe(0)
+	})
+
+	it('takes no mouseover from the parked pointer across a scroll the staging clamps', async () => {
+		// The tester starts scrolled to 600 in a 1600-row document, and the 1500-row pane the
+		// capture stages clamps that scroll to 100. The scroll that brings the element back to the
+		// top then runs from the clamped position, and the release hands back 600.
+		await releasePointer()
+		const container = buildFixture(
+			'<div style="height: 100px">Top</div><div style="height: 1500px">After</div>',
+		)
+		window.scrollTo({ top: 600, left: 0, behavior: 'instant' })
+		expect(window.scrollY).toBe(600)
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		try {
+			await captureFrame({
+				path: `${FRAMES}/clamped.png`,
+				width: 390,
+				height: 1500,
+				element: requireValue(container.firstElementChild),
+			})
+			await waitForFrame()
+		} finally {
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		expect(entered.count).toBe(0)
+		expect(window.scrollY).toBe(600)
+	})
+
+	it('takes no mouseover from the parked pointer for an svg in the shadow tree of a fixed host', async () => {
+		await releasePointer()
+		buildStylesheet('.host { position: fixed; top: 800px; left: 0; width: 100px; height: 100px }')
+		const container = buildFixture(
+			'<div style="height: 3000px">Document</div><div class="host"></div>',
+		)
+		const host = requireValue(container.querySelector('.host'))
+		const shadow = host.attachShadow({ mode: 'open' })
+		shadow.innerHTML = '<svg width="100" height="100"><rect width="100" height="100" /></svg>'
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		try {
+			const written = await captureFrame({
+				path: `${FRAMES}/shadow-svg.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(shadow.querySelector('svg')),
+			})
+			await waitForFrame()
+			const reading = await readFrame(written)
+			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+		} finally {
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		expect(entered.count).toBe(0)
+	})
+
+	it('takes no mouseover from the parked pointer for a fixed svg under a containing-block ancestor', async () => {
+		// The transformed ancestor is the fixed svg's containing block, so the document's scroll
+		// moves it, and the scroll brings it into the pane.
+		await releasePointer()
+		buildStylesheet('.fixed-svg { position: fixed; top: 900px; left: 0 }')
+		const container = buildFixture(
+			'<div style="transform: translateX(0)"><div style="height: 3000px">Document</div>' +
+				'<svg class="fixed-svg" width="100" height="100"><rect width="100" height="100" /></svg></div>',
+		)
+		const entered = createRecorder<[event: Event]>()
+		document.addEventListener('mouseover', entered.handler)
+		try {
+			const written = await captureFrame({
+				path: `${FRAMES}/contained-svg.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.querySelector('svg')),
+			})
+			await waitForFrame()
+			const reading = await readFrame(written)
+			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+		} finally {
+			document.removeEventListener('mouseover', entered.handler)
+		}
+		expect(entered.count).toBe(0)
+	})
+
+	it('keeps the hover a resting pointer paints on the element it shoots', async () => {
+		// The pointer is put on the element with the pane already staged at the frame's size, because
+		// the staging itself moves the tester to the window's origin, so the capture's own staging
+		// moves nothing. The element sits at the tester's top-left corner and is one row tall, so a
+		// capture that moved it even one row off the origin would move it out from under the pointer.
+		buildStylesheet(
+			'.hovered { display: block; width: 100px; height: 1px; padding: 0; border: 0; background: rgb(0, 0, 255) }' +
+				' .hovered:hover { background: rgb(255, 0, 0) }',
+		)
+		const container = buildFixture('<button class="hovered" aria-label="Hovered"></button>')
+		await stagePane(390, 844)
+		await hoverAccessible('button', 'Hovered')
+
+		const written = await captureFrame({
+			path: `${FRAMES}/hovered.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.lastElementChild),
+		})
+		expect((await readFrame(written)).floor).toBe('rgb(255, 0, 0)')
+	})
+
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {
 		// Nothing caps this one: the full-height panel grows with every pane the capture stages, so
 		// the document outruns each staged height however many times the capture restages, and each
@@ -3183,6 +3699,101 @@ describe('captureFrame', () => {
 		).rejects.toThrow(`Capture frame at ${FRAMES}/growing.png never settled after 4 restagings`)
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
+	})
+})
+
+describe('computeOffset', () => {
+	// A runner window of 800 by 513 CSS pixels, written out so each case is the same on every host.
+	it('leaves an element inside the window where it is', () => {
+		expect(computeOffset(new DOMRectReadOnly(0, 100, 390, 100), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
+	})
+
+	it('leaves an element touching the origin, or starting above it, where it is', () => {
+		expect(computeOffset(new DOMRectReadOnly(0, 0, 390, 100), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
+		expect(computeOffset(new DOMRectReadOnly(0, -50, 390, 100), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
+	})
+
+	it('leaves an element that fills the window where it is', () => {
+		expect(computeOffset(new DOMRectReadOnly(0, 0, 800, 513), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
+	})
+
+	it('moves the frame up only as far as brings an element past the bottom edge inside', () => {
+		expect(computeOffset(new DOMRectReadOnly(0, 744, 390, 100), 800, 513)).toStrictEqual({
+			top: -331,
+			left: 0,
+		})
+	})
+
+	it('rounds a fractional bottom edge up to the next whole row', () => {
+		// The bottom edge sits at 844.5, so the frame moves 332 rows rather than 331.5, and the
+		// element's last part row lands inside the window rather than half outside it.
+		expect(computeOffset(new DOMRectReadOnly(0, 744.5, 390, 100), 800, 513)).toStrictEqual({
+			top: -332,
+			left: 0,
+		})
+	})
+
+	it('moves a fitting box with a fractional top only as far as the window start', () => {
+		// The bottom edge rounds up to 514, one row past the window, but the box starts half a row
+		// down, so a whole-row move would take its top to -0.5.
+		const box = new DOMRectReadOnly(0, 0.5, 100, 513)
+		const move = computeOffset(box, 800, 513)
+		expect(move).toStrictEqual({ top: -0.5, left: 0 })
+		expect([box.top + move.top, box.bottom + move.top]).toStrictEqual([0, 513])
+	})
+
+	it('moves a fitting box with a fractional left only as far as the window start', () => {
+		const box = new DOMRectReadOnly(0.5, 0, 800, 100)
+		const move = computeOffset(box, 800, 513)
+		expect(move).toStrictEqual({ top: 0, left: -0.5 })
+		expect([box.left + move.left, box.right + move.left]).toStrictEqual([0, 800])
+	})
+
+	it('leaves a box that already ends inside a fractional window where it is', () => {
+		// The box ends exactly on the window's fractional bottom edge, so it is already inside.
+		const box = new DOMRectReadOnly(0, 0, 800, 512.5)
+		const move = computeOffset(box, 800, 512.5)
+		expect(move).toStrictEqual({ top: 0, left: 0 })
+		expect([box.top + move.top, box.bottom + move.top]).toStrictEqual([0, 512.5])
+	})
+
+	it('moves the frame left only as far as brings an element past the right edge inside', () => {
+		expect(computeOffset(new DOMRectReadOnly(800, 0, 800, 100), 800, 513)).toStrictEqual({
+			top: 0,
+			left: -800,
+		})
+	})
+
+	it('moves the frame up and left for an element past both edges', () => {
+		// Both far edges are fractional, 844.5 and 1190.5, so each rounds up to its next whole row
+		// or column before the move is taken.
+		expect(computeOffset(new DOMRectReadOnly(800.5, 744.5, 390, 100), 800, 513)).toStrictEqual({
+			top: -332,
+			left: -391,
+		})
+	})
+
+	it('does not move an element too large for the window', () => {
+		expect(computeOffset(new DOMRectReadOnly(0, 0, 390, 1112), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
+		expect(computeOffset(new DOMRectReadOnly(0, 744, 900, 100), 800, 513)).toStrictEqual({
+			top: 0,
+			left: 0,
+		})
 	})
 })
 
@@ -3224,10 +3835,25 @@ describe('readFrame', () => {
 		const absent = `${server.config.root}/tmp/capture/frame/absent.png`
 		await expect(readFrame(absent)).rejects.toThrow(`Capture frame at ${absent} could not be read`)
 
+		// Bytes carrying no PNG header name no size, so the refusal is the bare sentence.
 		const planted = `${server.config.root}/tmp/capture/frame/planted-read.png`
 		await commands.writeFile(planted, 'not a frame')
-		await expect(readFrame(planted)).rejects.toThrow(
+		await expect(readFrame(planted)).rejects.toHaveProperty(
+			'message',
 			`Capture frame at ${planted} is not an image this browser decodes`,
+		)
+	})
+
+	it('names the size a PNG header declares when the image under it does not decode', async () => {
+		// The PNG signature, then an IHDR chunk declaring a width of 40000 (0x9C40) and a height of
+		// 30000 (0x7530) at 8 bits of RGBA, with no image data after it: the header is readable and
+		// the image is not.
+		const header = '\x89PNG\r\n\x1A\n\0\0\0\rIHDR\0\0\x9C\x40\0\0\x75\x30\x08\x06\0\0\0'
+		const planted = `${server.config.root}/tmp/capture/frame/planted-header.png`
+		await commands.writeFile(planted, btoa(header), 'base64')
+		await expect(readFrame(planted)).rejects.toHaveProperty(
+			'message',
+			`Capture frame at ${planted} is not an image this browser decodes: 40000x30000 device pixels`,
 		)
 	})
 })
