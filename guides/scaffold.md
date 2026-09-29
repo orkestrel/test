@@ -18,9 +18,11 @@ the verbs write and compare.
 `CANON_PATHS` names the instruction canon — the coding and orchestration contracts, the rules, the
 skills, the templates, the transport contracts, the agent roles, the bench configuration, and the
 MCP registrations — which stays in one place and is published for reading. A target carries the
-`AGENTS.md` and `CLAUDE.md` pointers that name where a reader finds it, and the catalog agent file
-the `catalog` verb rewrites. It carries nothing else at a canon path: a file found at one is a
-superseded copy, and `overwrite` deletes it.
+`AGENTS.md` pointer that names where a reader finds it, the catalog agent file the `catalog` verb
+rewrites, and the skill pointer set for each package-facing skill `TARGET_SKILL_NAMES` lists: the
+Claude bridge, the Codex sidecar, and a `SKILL.md` pointer that names the canonical skill. It
+carries nothing else at a canon path: a file found at one is a superseded copy, and `overwrite`
+deletes it.
 `REFERENCE_PATHS` names the `guides` directory — a mirror of every published `@orkestrel` guide
 beside this package's own — which is staged for reading at `dist/host/guides/` and claims nothing in
 a target on its own. The `SEED_GUIDE_PATHS` constant names the mirrors the compiler claims, so
@@ -169,9 +171,11 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `SERVICE_TEST_INCLUDE`            | const | Names the include the live-service project covers, which is a directory rather than one proof.         |
 | `SHOWCASE_CONFIG_PATH`            | const | Names the Vite wrapper whose presence makes a workspace `showcase`.                                    |
 | `SHOWCASE_DEV_DEPENDENCIES`       | const | Names the development dependency used only by the optional single-file showcase build.                 |
+| `SKILLS_CONFIG_PATH`              | const | Names the TypeScript wrapper whose presence makes a workspace `skills`.                                |
 | `SOURCE_BROWSER_DEV_DEPENDENCIES` | const | Lists the development dependencies a published browser `src` environment adds.                         |
 | `SRC_MATRIX`                      | const | Holds the build and export settings each published `src` environment contributes, frozen.              |
 | `TAB_WIDTH`                       | const | Sets the columns one tab occupies when the formatter measures a line, matching `tabWidth`.             |
+| `TARGET_SKILL_NAMES`              | const | Lists the package-facing skills a target receives pointers for, frozen and alphabetical.               |
 | `VERSION_PATTERN`                 | const | Matches the exact `major.minor.patch` version syntax a blueprint declares.                             |
 | `WORKSPACE_DEV_ENGINES`           | const | Holds the `devEngines` record every generated manifest carries.                                        |
 | `WORKSPACE_OWNED_PATHS`           | const | Lists the vendored paths whose present bytes belong to each workspace, frozen.                         |
@@ -243,6 +247,7 @@ Exported from `@orkestrel/scaffold`, and reachable from
 | `matchesRange`              | function | Tests whether a declared range already admits a published version.                                  |
 | `nameToGuide`               | function | Derives the guide mirror path a package name answers for.                                           |
 | `planToSummary`             | function | Projects a plan into its tally by artifact origin.                                                  |
+| `renderSkillPointer`        | function | Renders the `SKILL.md` pointer a target carries in place of a canonical skill.                      |
 | `selectGroups`              | function | Selects the groups a compile covers, in plan order.                                                 |
 | `selectHostPaths`           | function | Selects the host paths a named workspace vendors.                                                   |
 | `serializeTypeScriptString` | function | Serializes one string as a single-quoted TypeScript literal.                                        |
@@ -399,6 +404,7 @@ The inventory contracts carry these data members.
 | `computeDigest`           | function | Computes the SHA-256 digest of text.                                                   |
 | `computeFileDigest`       | function | Computes the SHA-256 digest of one file's exact bytes.                                 |
 | `computeManifestDigest`   | function | Computes the digest of a vendored host's declared membership.                          |
+| `decodeHexText`           | function | Decodes exact bytes stated in hexadecimal as strict UTF-8 text.                        |
 | `filesToHost`             | function | Assembles a whole vendored host from live files and the installed floor.               |
 | `hexToDigest`             | function | Projects exact bytes stated in hexadecimal to their SHA-256 digest.                    |
 | `isExactCaseFile`         | function | Tests whether a path is a physical file with exact on-disk casing.                     |
@@ -597,8 +603,9 @@ answers a read and grant no verb write authority that it did not already have.
 empty. The other structural facts do not need creation flags. Add a root `tests/setup*.test.ts` proof for
 `setup`, `tests/guides.test.ts` for `guides`, `tests/integration.test.ts` for `integration`,
 `tests/conformance.test.ts` for `conformance`, `tests/setupService.ts` for `service`,
-`tests/setupGlobal.ts` for `global`, `configs/app/vite.showcase.config.ts` for `showcase`, and
-`configs/app/vite.journey.config.ts` for `journey`;
+`tests/setupGlobal.ts` for `global`, `configs/app/vite.showcase.config.ts` for `showcase`,
+`configs/app/vite.journey.config.ts` for `journey`, and `configs/agents/tsconfig.skills.json` for
+`skills`;
 reading verbs detect each exact-case file and register its fixed machinery. An explicitly supplied
 plan with `vendors` owns and protects the birth-owned `scripts/service.sh` inventory skeleton.
 Reading verbs do not infer its vendor list from edited text and cannot preserve an arbitrary present
@@ -611,16 +618,17 @@ Limits states what makes that one proof generable when the others are not.
 ### Reading a target
 
 `audit`, `repair`, `catalog`, and `overwrite` derive the blueprint from the target itself. The name
-and the declared `@orkestrel/*` packages come from `package.json`. The environment axes come
-from the directories the target actually ships, because a directory is the fact and a declaration
-beside it could disagree. The remaining facts come from exact-case files: `src/bin/main.ts` selects
-`bin`, each root `tests/setup*.test.ts` match selects `setup`, `tests/guides.test.ts` selects
-`guides`, `tests/integration.test.ts` selects `integration`, `tests/conformance.test.ts` selects
+and the declared `@orkestrel/*` packages come from `package.json`. The environment axes come from
+the directories the target actually ships, because a directory is the fact and a declaration beside
+it could disagree. The remaining facts come from exact-case files: `src/bin/main.ts` selects `bin`,
+each root `tests/setup*.test.ts` match selects `setup`, `tests/guides.test.ts` selects `guides`,
+`tests/integration.test.ts` selects `integration`, `tests/conformance.test.ts` selects
 `conformance`, `tests/setupService.ts` selects `service`, `tests/setupGlobal.ts` selects `global`,
-`configs/app/vite.showcase.config.ts` selects `showcase`, and
-`configs/app/vite.journey.config.ts` selects `journey`. A containing directory does not select
-the fact by itself. `tests/distribution.test.ts` selects nothing: the published `src` axis the
-target ships already decides the `distribution` project, and the file is planned from that.
+`configs/app/vite.showcase.config.ts` selects `showcase`, `configs/app/vite.journey.config.ts`
+selects `journey`, and `configs/agents/tsconfig.skills.json` selects `skills`. A containing
+directory does not select the fact by itself. `tests/distribution.test.ts` selects nothing: the
+published `src` axis the target ships already decides the `distribution` project, and the file is
+planned from that.
 
 `vendors` is not reconstructed. Its artifact, `scripts/service.sh`, is a birth-owned inventory
 skeleton rather than a working installer, so edited script text is not a trustworthy declaration of
@@ -640,6 +648,12 @@ fresh workspace therefore carries no guides project or script. When a developer 
 `audit` reports the exact `test:guides` script until `repair` or `overwrite` appends it through the
 writable script region. That region accepts the prior generated Vitest-only value and preserves a
 customized command. The rest of the manifest remains birth-owned.
+
+The `skills` fact follows the same rule. The exact-case `configs/agents/tsconfig.skills.json`
+wrapper selects it; the root configuration then defines and registers the `skills` project over
+`tests/agents/**/*.test.ts`, and the manifest gains `test:skills` in the `test` chain and
+`check:skills` in the `check` chain. The scaffold checkout carries that wrapper because it ships the
+skill scripts under `.agents/skills/*/scripts/` with their mirrored proofs.
 
 The plan-reading verbs compare the Vitest project set named by the target manifest with the
 project set the planned root configuration registers. Every planned proof project must also be
@@ -906,7 +920,7 @@ because the shape is chosen once and read afterwards: `new` refuses the advisory
 caller creating a workspace holds the same refusal, and the Compile section states it.
 
 `bin`, `setup`, `guides`, `integration`, `conformance`, `service`, `vendors`, `global`, `showcase`,
-and `journey` are structural facts. Reading verbs set each only when the workspace physically ships the directory
+`journey`, and `skills` are structural facts. Reading verbs set each only when the workspace physically ships the directory
 or exact-case file that defines it, never because of the workspace's name and never because a
 sibling fact is set.
 
@@ -1065,24 +1079,26 @@ than a silent no-op.
 A plan selects over the following groups, and a compile that names none covers all of them. Their
 order is the order a plan lists its artifacts in.
 
-| Group           | Holds                                                                      |
-| --------------- | -------------------------------------------------------------------------- |
-| `manifest`      | `package.json`                                                             |
-| `configs`       | The root and per-target build configuration, and the root dotfiles         |
-| `source`        | The selected environment barrels and entries                               |
-| `tests`         | The shared setup modules, the entry tests, and the policy sweep            |
-| `guides`        | The guide index and the vendored guide mirrors                             |
-| `docs`          | `README.md` beside the `AGENTS.md` and `CLAUDE.md` pointers                |
-| `orchestration` | The harness permission file, the bench scripts, and the catalog agent file |
+| Group           | Holds                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `manifest`      | `package.json`                                                                                    |
+| `configs`       | The root and per-target build configuration, and the root dotfiles                                |
+| `source`        | The selected environment barrels and entries                                                      |
+| `tests`         | The shared setup modules, the entry tests, and the policy sweep                                   |
+| `guides`        | The guide index and the vendored guide mirrors                                                    |
+| `docs`          | `README.md` beside the `AGENTS.md` pointer                                                        |
+| `orchestration` | The harness permission file, the bench scripts, the catalog agent file, and the skill pointer set |
 
 The plan claims paths inside the instruction canon deliberately, and each has a reason. The `docs`
-group carries the `AGENTS.md` and `CLAUDE.md` pointers that name where each contract is read,
-planned at those canon destinations as this package's own template content. The `orchestration`
-group carries `CATALOG_AGENT_PATH`, the host-origin artifact at a canon path, because the `catalog`
-verb refuses a target that lacks the file. Every other canon path is staged for reading, so no group
-selection copies a contract into a target, and a copy a target holds at one of them is foreign drift
-in the group `inferGroup` gives it. A scoped audit reads the canon through that same selection, so a
-run excluding a group reports nothing there.
+group carries the `AGENTS.md` pointer that names where each contract is read, planned at those canon
+destinations as this package's own template content. The `orchestration` group carries
+`CATALOG_AGENT_PATH`, a host-origin artifact at a canon path, because the `catalog` verb refuses a
+target that lacks the file. It also carries the skill pointer set, three host-origin artifacts for
+each name in `TARGET_SKILL_NAMES`, so every harness in a target discovers the package-facing skills
+while their bodies, references, and scripts stay in the installed package. Every other canon path is
+staged for reading, so no group selection copies a contract into a target, and a copy a target holds
+at one of them is foreign drift in the group `inferGroup` gives it. A scoped audit reads the canon
+through that same selection, so a run excluding a group reports nothing there.
 
 ## Ownership and drift
 
@@ -1121,11 +1137,18 @@ turns each path scaffold owns the bytes of into a content-owned artifact, leavin
 workspace-owned paths and the mirror pointers the preceding rows name. What a verb claims at a
 vendored path is the hydrated ownership, and `HostArtifact` carries the same narrowing on the type.
 
-The `AGENTS.md` and `CLAUDE.md` pointers sit outside that row. Their bytes come from a frozen
-template rather than from the data root, so the pure core face already claims them content-owned and
-hydration leaves them alone. `repair` and `overwrite` restore a missing pointer and replace a drifted
-one, in every face, which is what keeps a target's resolution instructions in agreement with the
-release it installed.
+The `AGENTS.md` pointer sits outside that row. Its bytes come from a frozen template rather than
+from the data root, so the pure core face already claims them content-owned and hydration leaves
+them alone. `repair` and `overwrite` restore a missing pointer and replace a drifted one, in every
+face, which is what keeps a target's resolution instructions in agreement with the release it
+installed.
+
+A skill pointer takes the other route. Its `HostArtifact` sets `pointer`, so hydration reads the
+staged canonical `SKILL.md` and derives the target's bytes with `renderSkillPointer` rather than
+copying them, and the hydrated artifact is computed, content-owned text. `repair` and `overwrite`
+restore a missing pointer and replace a hand-edited one with the derived bytes. A staged canonical
+skill that does not open with a frontmatter block is a broken host, and hydration refuses it with a
+`TARGET` error naming the staged file and the pointer path.
 
 Birth ownership is what makes a generated workspace the consumer's. `materialize` writes a
 birth-owned path into a vacant target. A later `repair` or `overwrite` call treats that path as
@@ -1490,18 +1513,23 @@ succeed without making requests; remote hooks run setup. Claude Code Cloud conti
 `scripts/ollama.sh`.
 
 `CANON_PATHS` is the instruction canon, staged for reading instead: the `AGENTS.md` coding contract,
-the `CLAUDE.md` harness bridge, the `.agents/orchestration.md` agent-operation contract, the rules
-under `.claude/rules/` and `.cursor/rules/`, the skills under `.agents/skills/` and `.claude/skills/`,
-the templates under `.agents/templates/`, the transport contracts under `.agents/transports/`, the
-agent roles under `.claude/agents/` and `.codex/agents/`, the `.codex/config.toml` bench
-configuration, and the `.mcp.json` and `.cursor/mcp.json` server registrations. A release stages
-every one of them, and a target receives a copy only where the plan claims the path. At the
-`AGENTS.md` and `CLAUDE.md` destinations it receives the pointers: different content at the same
-paths, planned as this package's own template content. At `CATALOG_AGENT_PATH` it receives the staged
-bytes themselves, because the `catalog` verb refuses a target that lacks the file. Everywhere else in
-the canon a target holds nothing, and a reader reaches the contracts from a scaffold checkout sitting
-beside the repository, or from the `node_modules/@orkestrel/scaffold/dist/host/` root inside the
-installed package, which is what the `AGENTS.md` pointer scaffold plans into a target names.
+the `.claude/AGENTS.md` Claude Code bridge, the `.agents/orchestration.md` agent-operation contract,
+the rules under `.claude/rules/` and `.cursor/rules/`, the skills under `.agents/skills/` and
+`.claude/skills/`, the templates under `.agents/templates/`, the transport contracts under
+`.agents/transports/`, the agent roles under `.claude/agents/` and `.codex/agents/`, the
+`.codex/config.toml` bench configuration, and the `.mcp.json` and `.cursor/mcp.json` server
+registrations. A release stages every one of them, and a target receives a copy only where the plan
+claims the path. At the `AGENTS.md` destination it receives the pointer: different content at the
+same path, planned as this package's own template content. At `CATALOG_AGENT_PATH` it receives the
+staged bytes themselves, because the `catalog` verb refuses a target that lacks the file. For each
+name in `TARGET_SKILL_NAMES` it receives the skill pointer set: the `.claude/skills/<name>/SKILL.md`
+bridge and the `.agents/skills/<name>/agents/openai.yaml` sidecar as staged bytes, and at
+`.agents/skills/<name>/SKILL.md` a pointer that hydration derives from the staged canonical skill. A
+blueprint carrying the `skills` fact ships its own skill canon and receives no pointer set.
+Everywhere else in the canon a target holds nothing, and a reader reaches the contracts from a
+scaffold checkout sitting beside the repository, or from the
+`node_modules/@orkestrel/scaffold/dist/host/` root inside the installed package, which is what the
+`AGENTS.md` pointer scaffold plans into a target names.
 
 `REFERENCE_PATHS` is the fleet's guides, staged for reading like the canon and owned like neither
 of the other lists. It holds the `guides` directory, so a release stages this repository's mirror of
@@ -1561,12 +1589,12 @@ a commit is a property of the content host. Scaffold neither creates that lag no
 response as fresher than the host served it.
 
 A canon destination costs no request. The fetch list drops every canon destination and `filesToHost`
-keeps the installed floor bytes for each one, claimed or not. The rule covers the destinations a plan
-does claim as well: the `AGENTS.md` and `CLAUDE.md` pointers are written from this package's own
-templates, and the catalog agent file is claimed by presence, so no byte a target holds is taken from
-a fetched canon path. A fill carrying no row for a canon path is complete rather than spoiled, which
-is what lets one `Host` carry live bytes beside floor bytes without mixing baselines within a
-surface.
+keeps the installed floor bytes for each one, claimed or not. The rule covers the destinations a
+plan does claim as well: the `AGENTS.md` pointer is written from this package's own templates, the
+catalog agent file is claimed by presence, and the skill pointer set reads the installed floor
+bytes, so no byte a target holds is taken from a fetched canon path. A fill carrying no row for a
+canon path is complete rather than spoiled, which is what lets one `Host` carry live bytes beside
+floor bytes without mixing baselines within a surface.
 
 `.claude/settings.json` is in that set, and the artifact planned for it is content-owned. `repair`
 and `overwrite` restore its bytes, so an edit made to it inside a target is reverted at the next
@@ -1700,14 +1728,23 @@ except the manifest.
   `configs/browsers.ts` resolution, serves the bundle over a loopback server, and drives it in
   Playwright Chromium.
 - One template artifact each for `README.md` and `guides/README.md`.
-- One template artifact each for `AGENTS.md` and `CLAUDE.md`. They are pointers rather than contracts:
-  `AGENTS.md` names the coding contract, the orchestration contract, the rules, and the skills, and
-  resolves each against a sibling scaffold checkout or the installed package; `CLAUDE.md` names the
-  `AGENTS.md` file beside it and imports nothing, because an `@path` import inlines the imported file
-  into every context that loads it. Scaffold owns their bytes, so a release that moves the wording
-  moves every target's copy at its next `repair`.
+- One template artifact for `AGENTS.md`. It is a pointer rather than a contract:
+  `AGENTS.md` names the coding contract, the orchestration contract, the rules, the skills, and the
+  `.claude/AGENTS.md` Claude Code bridge, and resolves each against a sibling scaffold checkout or
+  the installed package. It imports nothing, because an `@path` import inlines the imported file
+  into every context that loads it. No `CLAUDE.md` is planned: Claude Code reads `AGENTS.md`
+  directly, and a `CLAUDE.md` beside it stops that reading, so the path stays canon with no
+  claimant, a copy a target still holds reports `foreign`, and `overwrite` deletes it. Scaffold
+  owns the pointer's bytes, so a release that moves the wording moves every target's copy at its
+  next `repair`.
 - One host artifact per vendored path the workspace selects. A vendored directory is one planned
   path that expands into the files the data root stores beneath it.
+- Three host artifacts for each name in `TARGET_SKILL_NAMES`, unless the blueprint carries the
+  `skills` fact: the Claude bridge and the Codex sidecar as copies of the staged bytes, and the
+  `SKILL.md` pointer, which carries the canonical frontmatter over a body that names the canonical
+  skill and how to run its scripts from the installed package. A script runs from its built `.js`
+  twin under `node_modules/@orkestrel/scaffold/dist/agents/skills/<skill>/scripts/`, because Node
+  refuses to strip types for a file under `node_modules`.
 
 Every generated manifest declares the toolchain it is gated on. The `engines.node` field carries
 the blueprint's `engines` value, which defaults to the `>=22.18.0` range. The
@@ -1925,17 +1962,22 @@ tree carrying no uncommitted work. An untracked copy is left standing, and a git
 outside the dirty reading as well, so a target can carry its own file at a canon path through every
 visit. The audit reads canon membership by path, so such a copy stays a `foreign` finding and that
 target exits `1` on every run. `repair` never closes it either: that verb writes the planned paths a
-target is missing or has let drift and deletes nothing, so it restores the `AGENTS.md` and
-`CLAUDE.md` pointers and leaves every other copy where it is. A maintainer who wants a local MCP
-server registration keeps it outside the repository, in the harness's own local or user scope, rather
-than at `.mcp.json`, where the file is drift whoever wrote it.
+target is missing or has let drift and deletes nothing, so it restores the `AGENTS.md` pointer and
+the skill pointer set and leaves every other copy where it is; a `CLAUDE.md` a target still holds is
+a `foreign` finding the same way, and `overwrite` deletes it. A maintainer who wants a local MCP
+server registration keeps it outside the repository, in the harness's own local or user scope,
+rather than at `.mcp.json`, where the file is drift whoever wrote it.
 
-**A target holds no dispatchable role beyond the catalog agent.** The canon is staged for reading, so
-a target receives the `AGENTS.md` and `CLAUDE.md` pointers and `.claude/agents/orkestrel.md`, and
-nothing else a harness reads: no other agent role, no bench configuration, and no MCP registration. A
-harness running in a target loads none of those from `node_modules` either, so a role, a bench, or a
-server that target needs is defined in the harness's own local or user scope — the seam the preceding
-registration entry already names. Fleet targets are not orchestration hosts. A session that
+**A target holds no dispatchable role beyond the catalog agent.** The canon is staged for reading,
+so a target receives the `AGENTS.md` pointer, `.claude/agents/orkestrel.md`, and the skill pointer
+set for each package-facing skill `TARGET_SKILL_NAMES` lists: the Claude bridge, the Codex sidecar,
+and a pointer that names the canonical skill, all content-owned and restored by `repair`. It
+receives no other agent role, no bench configuration, and no MCP registration. A harness running in
+a target loads none of those from `node_modules` either, so a role, a bench, or a server that target
+needs is defined in the harness's own local or user scope — the seam the preceding registration
+entry already names. Fleet targets are not orchestration hosts: `TARGET_SKILL_NAMES` leaves out the
+dispatch, publish, scout, and align skills, which run from a scaffold checkout, and a blueprint
+carrying the `skills` fact ships its own skill canon and receives no pointer set. A session that
 dispatches roles starts on scaffold, where `.agents/orchestration.md` and the role files sit, and
 attaches the target it is working on.
 
@@ -2115,6 +2157,10 @@ you for asking for the generated proof back.
 The generated distribution proof takes its release contract from the outside. The generated
 `prepublishOnly` invokes it as `npm run test:distribution -- --mode release`, and the proof reads
 `import.meta.env.MODE === 'release'` and **fails** on an unreachable registry rather than skipping.
+The project factories the root configuration registers receive the invocation record, and each of
+their projects runs in the invocation's mode. Vitest runs a project whose factory returns no mode in
+Vitest's own `test` mode, where the proof skips. A journey project is such a project: its
+birth-owned wrapper drops the record, so it runs in `test` whatever mode the run names.
 An ordinary local run skips that case, because a developer offline is not a defect; a release run
 does not, because skipping there passes the publish gate without ever proving the artifact installs.
 A workspace that replaces the generated proof takes that contract with it: presence ownership leaves

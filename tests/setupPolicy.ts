@@ -220,6 +220,9 @@ export const SKILL_FAMILY_ROOT = '.agents/skills'
 /** Names the directory whose immediate child directories form the Claude skill bridge family. */
 export const SKILL_BRIDGE_ROOT = '.claude/skills'
 
+/** Names the directory whose tree mirrors `.agents/skills/<skill>/scripts/*.ts` as `*.test.ts` proofs. */
+export const SKILL_PROOF_ROOT = 'tests/agents/skills'
+
 /** Holds the minimal valid skill text for physical family controls. */
 export const SKILL_POLICY_TEXT =
 	'---\nname: sample\ndescription: Use this skill for a policy fixture.\n---\n\n# Skill\n'
@@ -829,6 +832,65 @@ export function readSkillReferences(root: string, name: string): readonly string
 		.filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
 		.map((entry) => `references/${entry.name}`)
 		.sort()
+}
+
+/**
+ * Lists the TypeScript scripts a canonical skill directory holds.
+ *
+ * @param root - The workspace root to inspect.
+ * @param name - The skill directory name.
+ * @returns Each `scripts/*.ts` path relative to the skill directory, sorted.
+ */
+export function readSkillScripts(root: string, name: string): readonly string[] {
+	const directory = resolvePolicyDirectory(root, `${SKILL_FAMILY_ROOT}/${name}/scripts`)
+	if (directory === undefined) return []
+	return readdirSync(directory, { withFileTypes: true })
+		.filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+		.map((entry) => `scripts/${entry.name}`)
+		.sort()
+}
+
+/**
+ * Extracts every `scripts/*.ts` path a skill document names as its own.
+ *
+ * @remarks
+ * A path written under another skill's directory, such as
+ * `.agents/skills/orkestrel-dispatch/scripts/cite.ts` inside a different skill's document, names
+ * that skill's script and is skipped here; the owning skill's own sweep requires it.
+ *
+ * @param content - The raw SKILL.md text.
+ * @param name - The directory name of the skill whose document `content` is.
+ * @returns The distinct script paths, relative to the skill directory, in first-mention order.
+ */
+export function extractSkillScripts(content: string, name: string): readonly string[] {
+	const found: string[] = []
+	for (const match of content.matchAll(
+		/(?:\.agents\/skills\/([A-Za-z0-9-]+)\/)?(scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts)/gu,
+	)) {
+		const owner = match[1]
+		const script = match[2]
+		if (script === undefined || (owner !== undefined && owner !== name)) continue
+		if (!found.includes(script)) found.push(script)
+	}
+	return found
+}
+
+/**
+ * Extracts every script path a skill document names under another skill's directory.
+ *
+ * @param content - The raw SKILL.md text.
+ * @param name - The directory name of the skill whose document `content` is.
+ * @returns The distinct `.agents/skills/<other>/scripts/*.ts` paths, in first-mention order.
+ */
+export function extractForeignSkillScripts(content: string, name: string): readonly string[] {
+	const found: string[] = []
+	for (const match of content.matchAll(
+		/\.agents\/skills\/([A-Za-z0-9-]+)\/scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.ts/gu,
+	)) {
+		if (match[1] === name || found.includes(match[0])) continue
+		found.push(match[0])
+	}
+	return found
 }
 
 /**
@@ -1493,6 +1555,46 @@ export function inspectSkill(
 			)
 		}
 	}
+	const scripts = content === undefined ? [] : extractSkillScripts(content, name)
+	for (const script of scripts) {
+		if (!isPolicyFile(root, `${base}/${script}`)) {
+			violations.push(
+				createPolicyViolation(
+					'skill',
+					`${base}/${script}`,
+					`SKILL.md script resolves to an exact-case regular file: ${script}`,
+				),
+			)
+		}
+	}
+	for (const script of readSkillScripts(root, name)) {
+		if (!scripts.includes(script)) {
+			violations.push(
+				createPolicyViolation(
+					'skill',
+					`${base}/${script}`,
+					`scripts TypeScript file is named by SKILL.md: ${script}`,
+				),
+			)
+		}
+		const proof = `${SKILL_PROOF_ROOT}/${name}/${script.replace(/\.ts$/u, '.test.ts')}`
+		if (!isPolicyFile(root, proof)) {
+			violations.push(
+				createPolicyViolation('skill', proof, `skill script has a mirrored proof: ${proof}`),
+			)
+		}
+	}
+	for (const script of content === undefined ? [] : extractForeignSkillScripts(content, name)) {
+		if (!isPolicyFile(root, script)) {
+			violations.push(
+				createPolicyViolation(
+					'skill',
+					script,
+					`SKILL.md names another skill's script that resolves to an exact-case regular file: ${script}`,
+				),
+			)
+		}
+	}
 	const references = resolvePolicyDirectory(root, `${base}/references`)
 	if (references !== undefined) {
 		for (const entry of readdirSync(references, { withFileTypes: true })) {
@@ -1514,6 +1616,7 @@ export function inspectSkill(
 				if (
 					path === 'agents' ||
 					path === 'references' ||
+					path === 'scripts' ||
 					path.startsWith('references/') ||
 					(!hasSkill && path.toLowerCase() === 'skill.md') ||
 					(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml')
@@ -1524,7 +1627,7 @@ export function inspectSkill(
 					createPolicyViolation(
 						'skill',
 						`${base}/${path}`,
-						'skill directory contains only agents/ and references/ directories',
+						'skill directory contains only agents/, references/, and scripts/ directories',
 					),
 				)
 				continue
@@ -1545,6 +1648,7 @@ export function inspectSkill(
 				path === 'SKILL.md' ||
 				path === 'agents/openai.yaml' ||
 				/^references\/[^/]+\.md$/u.test(path) ||
+				/^scripts\/[^/]+\.ts$/u.test(path) ||
 				(!hasSkill &&
 					(path.toLowerCase() === 'skill.md' || path.toLowerCase().startsWith('skill.md/'))) ||
 				(!hasMetadata && path.toLowerCase() === 'agents/openai.yaml') ||
@@ -1556,7 +1660,7 @@ export function inspectSkill(
 				createPolicyViolation(
 					'skill',
 					`${base}/${path}`,
-					'skill directory contains only SKILL.md, agents/openai.yaml, and references/*.md',
+					'skill directory contains only SKILL.md, agents/openai.yaml, references/*.md, and scripts/*.ts',
 				),
 			)
 		}
@@ -2575,6 +2679,76 @@ export const POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 /** Lists the physical in-family controls for every skill-family assertion class. */
 export const SKILL_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 	{
+		label: 'rejects a named script of another skill that does not exist',
+		membership: 'script paths qualified with another skill directory in canonical skill documents',
+		rule: 'skill',
+		files: [
+			{
+				path: '.agents/skills/sample/SKILL.md',
+				content: SKILL_POLICY_TEXT + '\nRun `node .agents/skills/other/scripts/gone.ts` first.\n',
+			},
+			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
+		],
+		violations: [
+			{
+				rule: 'skill',
+				path: '.agents/skills/other/scripts/gone.ts',
+				message:
+					"SKILL.md names another skill's script that resolves to an exact-case regular file: .agents/skills/other/scripts/gone.ts",
+			},
+		],
+	},
+	{
+		label: 'accepts a named script of another skill that exists',
+		membership: 'script paths qualified with another skill directory in canonical skill documents',
+		rule: 'skill',
+		files: [
+			{
+				path: '.agents/skills/sample/SKILL.md',
+				content:
+					SKILL_POLICY_TEXT + '\nRun `node .agents/skills/other/scripts/present.ts` first.\n',
+			},
+			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
+			{
+				path: '.agents/skills/other/SKILL.md',
+				content:
+					SKILL_POLICY_TEXT.replace('name: sample', 'name: other') +
+					'\nRun `scripts/present.ts`.\n',
+			},
+			{ path: '.agents/skills/other/agents/openai.yaml', content: createSkillMetadata('other') },
+			{
+				path: '.agents/skills/other/scripts/present.ts',
+				content: '// Usage: node .agents/skills/other/scripts/present.ts\n',
+			},
+			{ path: 'tests/agents/skills/other/scripts/present.test.ts', content: '' },
+		],
+		violations: [],
+	},
+	{
+		label: 'rejects a skill script with no mirrored proof',
+		membership: 'skill scripts against tests/agents/skills/<skill>/scripts/*.test.ts',
+		rule: 'skill',
+		files: [
+			{
+				path: '.agents/skills/sample/SKILL.md',
+				content: SKILL_POLICY_TEXT + '\nRun `scripts/lone.ts`.\n',
+			},
+			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
+			{
+				path: '.agents/skills/sample/scripts/lone.ts',
+				content: '// Usage: node .agents/skills/sample/scripts/lone.ts\n',
+			},
+		],
+		violations: [
+			{
+				rule: 'skill',
+				path: 'tests/agents/skills/sample/scripts/lone.test.ts',
+				message:
+					'skill script has a mirrored proof: tests/agents/skills/sample/scripts/lone.test.ts',
+			},
+		],
+	},
+	{
 		label: 'rejects an unexported value binding in a skill fence',
 		membership: 'named value imports in canonical skill fences',
 		rule: 'skill',
@@ -2911,7 +3085,8 @@ export const SKILL_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 		label: 'rejects a non-contract file in a skill directory',
 		membership: 'regular files at any depth inside a discovered skill directory',
 		rule: 'skill',
-		message: 'skill directory contains only SKILL.md, agents/openai.yaml, and references/*.md',
+		message:
+			'skill directory contains only SKILL.md, agents/openai.yaml, references/*.md, and scripts/*.ts',
 		files: [
 			{ path: '.agents/skills/sample/SKILL.md', content: SKILL_POLICY_TEXT },
 			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },
@@ -2922,7 +3097,7 @@ export const SKILL_POLICY_CONTROLS: readonly PolicyControl[] = Object.freeze([
 		label: 'rejects an empty non-contract directory in a skill directory',
 		membership: 'directories at any depth inside a discovered skill directory',
 		rule: 'skill',
-		message: 'skill directory contains only agents/ and references/ directories',
+		message: 'skill directory contains only agents/, references/, and scripts/ directories',
 		files: [
 			{ path: '.agents/skills/sample/SKILL.md', content: SKILL_POLICY_TEXT },
 			{ path: '.agents/skills/sample/agents/openai.yaml', content: createSkillMetadata('sample') },

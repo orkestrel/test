@@ -186,6 +186,14 @@ describe('root configuration', () => {
 				setup: ['./tests/setup.ts', './tests/setupServer.ts'],
 			})
 		}
+		// The `configs/agents/tsconfig.skills.json` wrapper selects the `skills` blueprint fact, and the
+		// project it registers runs the mirrored proofs under `tests/agents/`.
+		if (existsSync(resolve(root, 'configs/agents/tsconfig.skills.json'))) {
+			expected.set('skills', {
+				include: 'tests/agents/**/*.test.ts',
+				setup: ['./tests/setup.ts'],
+			})
+		}
 		for (const label of [
 			'policy',
 			'config',
@@ -220,8 +228,8 @@ describe('root configuration', () => {
 			})
 		}
 		expected.set('probe', {
-			benchmark: ['tmp/probe/**/*.test.ts', 'tests/**/*.test.ts'],
-			include: 'tmp/probe/**/*.test.ts',
+			benchmark: ['tmp/probes/**/*.test.ts', 'tests/**/*.test.ts'],
+			include: 'tmp/probes/**/*.test.ts',
 			parallel: false,
 			pool: 'threads',
 			setup: ['./tests/setup.ts'],
@@ -370,63 +378,77 @@ describe('root configuration', () => {
 		}).toThrow(/strictly equal/u)
 	})
 
-	it('emits every project as a factory so the release mode reaches its proof', () => {
+	it('returns the invocation mode and no other invocation field from every registered project factory', () => {
 		const projects = configuration.test?.projects
 		if (!Array.isArray(projects)) throw new Error('The root configuration carries no projects')
 		if (projects.length === 0) throw new Error('The root configuration registers no project')
-		// Measured: with `--mode release` on the command line, `import.meta.env.MODE` reads
-		// `release` inside a project Vitest calls and `test` inside an inline project
-		// configuration. `prepublishOnly` runs the distribution proof with `--mode release`, and
-		// that proof fails rather than skips only when it reads `release`, so converting these
-		// entries to inline configurations turns the publish gate into a skip while every suite
-		// stays green. The control is that conversion applied to one entry.
-		const inline = {
-			test: {
-				name: { label: 'inline' },
-				include: ['tests/inline.test.ts'],
-				setupFiles: ['./tests/setup.ts'],
-			},
-		}
-		const callable = projects.concat(inline).filter((entry) => typeof entry === 'function')
-		for (const entry of projects) expect(callable).toContain(entry)
-		expect(callable).not.toContain(inline)
-	})
-
-	it('keeps Vitest invocation fields out of project configurations', () => {
-		const projects = configuration.test?.projects
-		if (!Array.isArray(projects)) throw new Error('The root configuration carries no projects')
-		const factories = projects.filter((row) => typeof row === 'function')
-		if (factories.length === 0)
-			throw new Error('The root configuration registers no project factory')
-		const sentinel = {
-			command: 'sentinel-command',
+		// Vitest calls each registered factory with its invocation record, whose `mode` is the
+		// `--mode` value, and runs a project that declares no `mode` in its own run mode, `test`.
+		// `prepublishOnly` runs the distribution proof with `--mode release`, and that proof fails
+		// rather than skips only when it reads `release`, so every project returns the record's
+		// `mode` and none of the record's other fields. The sentinel mode is a value no factory
+		// declares, so only a forwarded mode reads it. The controls are the ways a row misses
+		// that: a factory that ignores the record, one that spreads it whole, and an inline
+		// entry, which Vitest never calls.
+		const invocation = {
+			command: 'serve',
 			isPreview: true,
 			isSsrBuild: true,
 			mode: 'sentinel-mode',
 			sentinel: true,
 		}
-		for (const factory of factories) {
-			const project: unknown = Reflect.apply(factory, undefined, [sentinel])
+		const test = { name: { label: 'control' }, include: ['tests/control.test.ts'] }
+		const ignoring = Object.defineProperty(() => ({ test }), 'name', { value: 'ignoring' })
+		const spreading = Object.defineProperty((record: object) => ({ ...record, test }), 'name', {
+			value: 'spreading',
+		})
+		const entries: readonly unknown[] = [...projects, ignoring, spreading, { test }]
+		const readings = entries.map((entry) => {
+			if (typeof entry !== 'function') {
+				return { name: undefined, callable: false, mode: undefined, leaked: [] }
+			}
+			const project: unknown = Reflect.apply(entry, undefined, [invocation])
 			if (typeof project !== 'object' || project === null) {
-				throw new Error('A project factory returned no configuration')
+				throw new Error(`The project factory ${entry.name} returned no configuration`)
 			}
-			for (const field of Object.keys(sentinel)) {
-				expect(Object.getOwnPropertyDescriptor(project, field)?.value).toBeUndefined()
+			return {
+				name: entry.name,
+				callable: true,
+				mode: Object.getOwnPropertyDescriptor(project, 'mode')?.value,
+				leaked: Object.keys(invocation).filter(
+					(field) => field !== 'mode' && Object.hasOwn(project, field),
+				),
 			}
+		})
+		const forwarded = { callable: true, mode: 'sentinel-mode', leaked: [] }
+		expect(readings.slice(0, projects.length)).toStrictEqual(
+			projects.map((entry) => ({
+				name: typeof entry === 'function' ? entry.name : undefined,
+				...forwarded,
+			})),
+		)
+		expect(readings.slice(projects.length)).toStrictEqual([
+			{ name: 'ignoring', callable: true, mode: undefined, leaked: [] },
+			{
+				name: 'spreading',
+				callable: true,
+				mode: 'sentinel-mode',
+				leaked: ['command', 'isPreview', 'isSsrBuild', 'sentinel'],
+			},
+			{ name: undefined, callable: false, mode: undefined, leaked: [] },
+		])
+		for (const reading of readings.slice(projects.length)) {
+			expect({ ...reading, name: undefined }).not.toStrictEqual({ name: undefined, ...forwarded })
 		}
 
-		const control = Object.defineProperty(() => ({ ...sentinel }), 'name', { value: 'control' })
-		expect(() => {
-			for (const factory of factories.concat(control)) {
-				const project: unknown = Reflect.apply(factory, undefined, [sentinel])
-				if (typeof project !== 'object' || project === null) {
-					throw new Error('A project factory returned no configuration')
-				}
-				for (const field of Object.keys(sentinel)) {
-					expect(Object.getOwnPropertyDescriptor(project, field)?.value).toBeUndefined()
-				}
-			}
-		}).toThrow(/expected/u)
+		// A record that carries no string `mode` is refused rather than forwarded as a project
+		// with no mode, which would run in `test` again.
+		for (const entry of projects) {
+			if (typeof entry !== 'function') continue
+			expect(() => Reflect.apply(entry, undefined, [{ ...invocation, mode: undefined }])).toThrow(
+				'The project invocation carries no string mode',
+			)
+		}
 	})
 
 	it('requires and validates every selected target wrapper', async () => {
