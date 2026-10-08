@@ -101,6 +101,40 @@ export function readIdentity(status: Stats): ScratchIdentity {
 }
 
 /**
+ * Reports whether a contained entry exists under a scratch directory without following its final link.
+ *
+ * @param root - The absolute scratch directory path.
+ * @param target - The relative or absolute contained entry to inspect.
+ * @returns True if the root directory and entry exist; false otherwise.
+ * @throws Thrown when the target escapes the root, the root is a symbolic link or not a directory,
+ * or the host refuses to inspect either path.
+ * @remarks Checks containment before inspecting the root. Intermediate links are followed; a
+ * dangling final link counts as present. The root's allocation identity is not checked.
+ *
+ * @example
+ * ```ts
+ * import { createScratch, hasScratchPath } from '@orkestrel/test/server'
+ *
+ * const scratch = createScratch({ files: { 'entry.txt': 'present' } })
+ * try {
+ * 	hasScratchPath(scratch.path, 'entry.txt') // true
+ * 	hasScratchPath(scratch.path, 'missing.txt') // false
+ * } finally {
+ * 	scratch.destroy()
+ * }
+ * ```
+ */
+export function hasScratchPath(root: string, target: string): boolean {
+	const candidate = requireContained(root, target)
+	const rootStatus = lstatSync(root, { throwIfNoEntry: false })
+	if (rootStatus === undefined) return false
+	if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
+	if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
+
+	return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined
+}
+
+/**
  * Reads the `code` an unknown thrown value carries.
  *
  * @param error - The thrown value to read.

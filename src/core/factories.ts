@@ -213,13 +213,13 @@ export function createSignal(): SignalInterface {
 			}
 			const once = typeof options === 'object' && options?.once === true
 			const cleanup = scope === undefined ? undefined : new AbortController()
-			const installed: EventListenerObject = {
-				handleEvent(event) {
-					if (once) dropRegistration(registrations, installed)
+			const installed: EventListenerObject = Object.freeze({
+				handleEvent(this: EventListenerObject, event: Event) {
+					if (once) dropRegistration(registrations, this)
 					if (typeof listener === 'function') listener.call(signal, event)
 					else listener.handleEvent(event)
 				},
-			}
+			})
 			add(
 				type,
 				installed,

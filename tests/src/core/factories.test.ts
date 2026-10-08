@@ -175,6 +175,31 @@ describe('createRecorders', () => {
 })
 
 describe('createSignal', () => {
+	it('delivers in order with the listener receivers and one-shot cleanup already applied', () => {
+		const instrument = createSignal()
+		const lifetime = createSignal()
+		const heard = createRecorder<readonly [receiver: unknown, count: number, scopes: number]>()
+		instrument.signal.addEventListener(
+			'abort',
+			function (this: AbortSignal) {
+				heard.handler(this, instrument.count, lifetime.count)
+			},
+			{ once: true, signal: lifetime.signal },
+		)
+		const listener: EventListenerObject = {
+			handleEvent() {
+				heard.handler(this, instrument.count, lifetime.count)
+			},
+		}
+		instrument.signal.addEventListener('abort', listener, { once: true })
+		instrument.controller.abort()
+		expect(heard.calls[0]).toEqual([instrument.signal, 1, 0])
+		expect(heard.calls[1]?.[0]).toBe(listener)
+		expect(heard.calls[1]?.slice(1)).toEqual([0, 0])
+		expect(heard.count).toBe(2)
+		expect(instrument.count).toBe(0)
+	})
+
 	it('tracks listener addition and removal by original callback', () => {
 		const fixture = createSignal()
 		const recorder = createRecorder<readonly [event: Event]>()

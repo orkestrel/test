@@ -17,7 +17,7 @@ import {
 import { createServer as createHTTPServer } from 'node:http'
 import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { captureError, createRecorder, requireValue, waitForCondition } from '@src/core'
 import {
@@ -25,6 +25,7 @@ import {
 	createLoopback,
 	createScratch,
 	destroyScratch,
+	hasScratchPath,
 	isExcluded,
 	isRunning,
 	matchesIdentity,
@@ -189,6 +190,68 @@ describe('requireContained', () => {
 			)
 		} finally {
 			rmSync(root, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('hasScratchPath', () => {
+	it('reads contained relative and absolute entries and missing paths', () => {
+		const scratch = createScratch({ files: { 'nested/entry.txt': 'present' } })
+		try {
+			expect(hasScratchPath(scratch.path, 'nested/entry.txt')).toBe(true)
+			expect(hasScratchPath(scratch.path, join(scratch.path, 'nested/entry.txt'))).toBe(true)
+			expect(hasScratchPath(scratch.path, '')).toBe(true)
+			expect(hasScratchPath(scratch.path, '.')).toBe(true)
+			expect(hasScratchPath(scratch.path, 'missing')).toBe(false)
+		} finally {
+			scratch.destroy()
+		}
+		expect(hasScratchPath(scratch.path, '.')).toBe(false)
+		expect(hasScratchPath(scratch.path, 'nested/entry.txt')).toBe(false)
+	})
+
+	it('refuses escapes before inspecting a missing root', () => {
+		const scratch = createScratch()
+		scratch.destroy()
+		expect(() => hasScratchPath(scratch.path, '../escape')).toThrow(
+			'Path outside scratch directory: ../escape',
+		)
+		const outside = dirname(scratch.path)
+		expect(() => hasScratchPath(scratch.path, outside)).toThrow(
+			`Path outside scratch directory: ${outside}`,
+		)
+	})
+
+	it('refuses a file root', () => {
+		const scratch = createScratch({ files: { 'entry.txt': 'present' } })
+		try {
+			expect(() => hasScratchPath(join(scratch.path, 'entry.txt'), '.')).toThrow(
+				'Scratch path is not a directory',
+			)
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it.runIf(DIRECTORY_LINKS)('follows intermediate links and refuses a symbolic-link root', () => {
+		const scratch = createScratch({ files: { 'nested/entry.txt': 'present' } })
+		try {
+			const gate = scratch.link('gate', join(scratch.path, 'nested'))
+			expect(hasScratchPath(scratch.path, 'gate/entry.txt')).toBe(true)
+			expect(() => hasScratchPath(gate, '.')).toThrow('Scratch directory is a symbolic link')
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it.runIf(FILE_LINKS)('counts a dangling final link as present', () => {
+		const scratch = createScratch()
+		try {
+			scratch.link('dangling', 'missing')
+			expect(hasScratchPath(scratch.path, 'dangling')).toBe(true)
+			expect(existsSync(join(scratch.path, 'dangling'))).toBe(false)
+		} finally {
+			scratch.destroy()
 		}
 	})
 })

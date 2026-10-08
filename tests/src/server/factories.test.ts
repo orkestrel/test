@@ -29,6 +29,36 @@ import {
 } from '../../setupServer.js'
 
 describe('createScratch', () => {
+	it('keeps detached file operations and destruction bound to their allocation', () => {
+		const scratch = createScratch()
+		const { write, read, has, names, ensure, remove, destroy } = scratch
+		try {
+			expect(write('nested/entry.txt', 'present')).toBe(join(scratch.path, 'nested/entry.txt'))
+			expect(read('nested/entry.txt')).toBe('present')
+			expect(has('nested/entry.txt')).toBe(true)
+			expect(ensure('empty')).toBe(join(scratch.path, 'empty'))
+			expect(names()).toEqual(['empty', 'nested'])
+			remove('nested')
+			expect(has('nested')).toBe(false)
+			destroy()
+			expect(has('.')).toBe(false)
+			expect(() => write('refused.txt', '')).toThrow('Scratch directory does not exist')
+		} finally {
+			destroy()
+		}
+	})
+
+	it.runIf(DIRECTORY_LINKS)('keeps detached link creation bound to its allocation', () => {
+		const scratch = createScratch({ files: { 'nested/entry.txt': 'present' } })
+		const { link } = scratch
+		try {
+			expect(link('gate', join(scratch.path, 'nested'))).toBe(join(scratch.path, 'gate'))
+			expect(scratch.read('gate/entry.txt')).toBe('present')
+		} finally {
+			scratch.destroy()
+		}
+	})
+
 	it.runIf(POSIX_MODE)('allocates its directory with mode 0700', () => {
 		const scratch = createScratch()
 		try {

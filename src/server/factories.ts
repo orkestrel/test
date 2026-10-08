@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
 import {
 	createLink,
+	hasScratchPath,
 	matchesIdentity,
 	readIdentity,
 	removeTree,
@@ -123,11 +124,11 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		throw error
 	}
 
-	const scratch: ScratchInterface = {
+	return {
 		path,
 		write(target, text) {
 			const candidate = requireContained(path, target)
-			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			writeFileSync(candidate, text)
@@ -135,7 +136,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		},
 		read(target) {
 			const candidate = requireContained(path, target)
-			if (!scratch.has(target)) return undefined
+			if (!hasScratchPath(path, target)) return undefined
 			const status = statSync(candidate, { throwIfNoEntry: false })
 			if (status === undefined) return undefined
 			if (status.isDirectory()) {
@@ -143,18 +144,10 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			}
 			return readFileSync(candidate, 'utf8')
 		},
-		has(target) {
-			const candidate = requireContained(path, target)
-			const rootStatus = lstatSync(path, { throwIfNoEntry: false })
-			if (rootStatus === undefined) return false
-			if (rootStatus.isSymbolicLink()) throw new Error('Scratch directory is a symbolic link')
-			if (!rootStatus.isDirectory()) throw new Error('Scratch path is not a directory')
-
-			return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined
-		},
+		has: hasScratchPath.bind(undefined, path),
 		names(target = '.') {
 			const candidate = requireContained(path, target)
-			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
 			const status = statSync(candidate, { throwIfNoEntry: false })
 			if (status === undefined) throw new Error(`Scratch path does not exist: ${target}`)
@@ -163,7 +156,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		},
 		ensure(target) {
 			const candidate = requireContained(path, target)
-			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
 			const status = statSync(candidate, { throwIfNoEntry: false })
 			if (status !== undefined && !status.isDirectory()) {
@@ -174,7 +167,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		},
 		link(target, source) {
 			const candidate = requireContained(path, target)
-			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
 			mkdirSync(dirname(candidate), { recursive: true })
 			createLink(candidate, source)
@@ -183,7 +176,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 		remove(target) {
 			const candidate = requireContained(path, target)
 			if (candidate === path) throw new Error(`${unremovable}: ${target}`)
-			if (!scratch.has('.')) throw new Error('Scratch directory does not exist')
+			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
 			const status = lstatSync(candidate, { throwIfNoEntry: false })
 			if (status !== undefined && matchesIdentity(readIdentity(status), allocation)) {
@@ -198,7 +191,6 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			removeTree(path)
 		},
 	}
-	return scratch
 }
 
 /**
