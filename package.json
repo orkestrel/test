@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/test",
-	"version": "0.0.25",
+	"version": "0.0.26",
 	"description": "The test helpers the Orkestrel fleet repeats — a call recorder, a real delay, JSON and async collectors, an owned scratch directory with a source-file walker, and a browser journey layer that drives real interfaces by role and accessible name. Part of the @orkestrel line.",
 	"keywords": [],
 	"homepage": "https://github.com/orkestrel/test#readme",
@@ -91,14 +91,14 @@
 		"@orkestrel/browser": "^0.0.28",
 		"@orkestrel/guide": "^0.0.24",
 		"@orkestrel/probe": "^0.0.23",
-		"@orkestrel/scaffold": "^0.0.97",
-		"@types/node": "^26.6.4",
+		"@orkestrel/scaffold": "^0.0.100",
+		"@types/node": "^26.6.5",
 		"@vitest/browser-playwright": "^4.1.11",
 		"oxfmt": "^0.72.0",
 		"oxlint": "^1.87.0",
 		"playwright": "^1.64.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.3.3",
+		"vite": "^8.3.4",
 		"vitest": "^4.1.11"
 	},
 	"peerDependencies": {
