@@ -657,20 +657,21 @@ written at a height that is already wrong. That bound is 4: a document holding h
 fixed block settles in two restagings, one whose growth is capped part way settles in three, and
 the fourth is headroom.
 
-An element frame no taller than the declared height is shot in the declared pane, so its viewport
-lengths resolve against the declared viewport whether the element sits above the fold, below it, or
-fixed: a `50vh` element under a 900-row block reads back 422 rows in an 844-row pane. The re-reading
-takes the element's own height for these short frames. For a taller element, native start alignment
-resolves the document's scroll clearance, and the pane reserves the element's height plus the space
-above its aligned top. This honors authored scroll padding, including computed lengths, without
+An element that fits with its native scroll clearance is shot in the declared pane, so its viewport
+lengths resolve against the declared viewport: a `50vh` element under a 900-row block reads back 422
+rows in an 844-row pane. A short fixed panel that native alignment cannot move keeps that pane too.
+For an element whose height plus clearance exceeds the declared height, native start alignment
+resolves the clearance, and the pane reserves the element's height plus the space above its aligned
+top. This includes an element shorter than the declared pane. It honors authored root scroll padding
+and target scroll margins, including computed lengths, without
 parsing CSS or hiding a sticky header. The captured image still contains only the element's box.
 An overlay without authored clearance remains visible in the image; the instrument detects no
 arbitrary occlusion. Viewport-dependent clearance participates in the same bounded settling loop,
 so a frame whose geometry has not settled within that bound is refused.
 Where the element's box lies outside the pane, the document is scrolled by the nearest distance that
 would bring it inside, and the box is read again. A fixed element past the pane can take a scroll
-that does not move it, and that scroll is handed back with the rest. The document is not scrolled for
-a short element already inside the pane.
+that does not move it, and that scroll is handed back with the rest. A short element that needs no
+additional room keeps its nearest native alignment.
 
 The provider paints an element that fits the runner's window only where that window shows it. Where
 such an element lies past the window, the `captureFrame` function offsets the calling tester frame up
@@ -1531,7 +1532,8 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     the one before it produced so a converging document lands on its fixed point rather than
     creeping toward it. The re-reading is bounded by `CAPTURE_STAGINGS`, and a document still
     growing at that bound is refused rather than photographed at a stale height. An element frame
-    keeps the declared pane unless its element is taller, and offsets the calling tester frame only
+    keeps the declared pane unless its element needs more room with its native scroll clearance,
+    and offsets the calling tester frame only
     as far as brings the element inside the runner's window. What
     the capture borrows it gives back: the `releasePane` function returns the tester to the viewport
     it held before the staging, the capture then restores the tester's scroll position, even where
@@ -3722,7 +3724,10 @@ Each entry names the contracts its file proves. The test names carry the cases.
   height on the panel's own color with the scroll handed back; an element below both the pane and
   the window, whole on the document's floor with the scroll handed back; a `50vh` element and a
   `30vh` element below the fold, at the declared pane rather than a grown one; an element taller
-  than the pane, in a pane of its own height; an element that outgrows every pane, refused with the
+  than the pane, in a pane of its own height; tall and near-viewport elements below authored native
+  clearance, with decoded heading pixels distinguishing them from an undeclared sticky obstruction;
+  a fixed element beyond a padded viewport that keeps its declared viewport height;
+  an element that outgrows every pane, refused with the
   pane and the scroll handed back; a second tester frame the offset leaves in place; and a frame
   carrying no `style` attribute, handed back without one. After the `releasePointer` function, an
   element frame takes no `mouseover` event for an element inside the window, which also takes no `scroll` event;

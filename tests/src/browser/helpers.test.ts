@@ -3005,13 +3005,20 @@ describe('stagePane', () => {
 })
 
 describe('captureFrame', () => {
-	it.each(['0px', 'calc(80px + 5.25px)'])(
-		'keeps a tall element below native scroll clearance %s in the written frame',
-		async (clearance) => {
+	it.each([
+		{ height: 1600, clearance: '0px', margin: '0px' },
+		{ height: 1600, clearance: 'calc(80px + 5.25px)', margin: '0px' },
+		{ height: 843, clearance: '0px', margin: '0px' },
+		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '0px' },
+		{ height: 843, clearance: '0px', margin: 'calc(80px + 5.25px)' },
+		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '25px' },
+	])(
+		'keeps a $height-pixel element below native scroll clearance $clearance and margin $margin in the written frame',
+		async ({ height: extent, clearance, margin }) => {
 			buildStylesheet(
 				`html { scroll-padding-top: ${clearance} }` +
 					' .cover { position: sticky; top: 0; height: 80px; background: rgb(255, 0, 0); z-index: 1 }' +
-					' .subject { height: 1600px; background: rgb(0, 128, 0) } .subject h2 { margin: 0 }',
+					` .subject { height: ${String(extent)}px; scroll-margin-top: ${margin}; background: rgb(0, 128, 0) } .subject h2 { margin: 0 }`,
 			)
 			const container = buildFixture(
 				'<div class="cover">Header</div><div style="height: 300px">Above</div>' +
@@ -3021,14 +3028,14 @@ describe('captureFrame', () => {
 			window.scrollTo({ top: 200, behavior: 'instant' })
 			const before = [window.innerWidth, window.innerHeight, window.scrollY]
 			const written = await captureFrame({
-				path: `${FRAMES}/clearance-${String(clearance.length)}.png`,
+				path: `${FRAMES}/clearance-${String(extent)}-${String(clearance.length)}-${String(margin.length)}.png`,
 				width: 390,
 				height: 844,
 				element,
 			})
 			expect(await readFrame(written)).toStrictEqual({
 				width: 390,
-				height: 1600,
+				height: extent,
 				floor: 'rgb(0, 128, 0)',
 			})
 			const image = new Image()
@@ -3039,7 +3046,7 @@ describe('captureFrame', () => {
 			// Read away from the heading's glyphs. With no authored clearance the sticky red
 			// header remains in the shot: the camera must not hide or restyle an overlay.
 			expect([...canvas.getImageData(380, 5, 1, 1).data]).toStrictEqual(
-				clearance === '0px' ? [255, 0, 0, 255] : [0, 128, 0, 255],
+				clearance === '0px' && margin === '0px' ? [255, 0, 0, 255] : [0, 128, 0, 255],
 			)
 			expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual(before)
 		},
@@ -3068,6 +3075,26 @@ describe('captureFrame', () => {
 		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual(before)
 		expect(frame.getAttribute('style')).toBe(style)
 		expect(requireValue(frame.parentElement).hasAttribute(CAPTURE_PANE)).toBe(false)
+	})
+
+	it('keeps a fixed element beyond a padded viewport at the declared viewport height', async () => {
+		buildStylesheet(
+			'html { scroll-padding-top: 85.25px }' +
+				' .panel { position: fixed; top: 900px; left: 0; width: 100px; height: 10vh; background: rgb(0, 0, 255) }',
+		)
+		const container = buildFixture(
+			'<div style="height: 3000px">Document</div><div class="panel">Fixed</div>',
+		)
+		window.scrollTo({ top: 200, behavior: 'instant' })
+		const written = await captureFrame({
+			path: `${FRAMES}/clearance-fixed.png`,
+			width: 390,
+			height: 844,
+			element: requireValue(container.lastElementChild),
+		})
+		const reading = await readFrame(written)
+		expect([reading.width, reading.height]).toStrictEqual([100, 85])
+		expect(window.scrollY).toBe(200)
 	})
 
 	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
@@ -3231,40 +3258,43 @@ describe('captureFrame', () => {
 		expect(reading.floor).toBe('rgb(0, 128, 0)')
 	})
 
-	it('shoots a fixed viewport-height panel at the declared pane and hands the scroll back', async () => {
-		// The panel is 30% of whatever pane it sits in, and the document under it is taller than the
-		// declared pane, so a pane staged to the document's height lays the panel out taller. The
-		// declared height is read from the runner's window and is a multiple of 10, so the panel's
-		// 30% and its top at 70% are whole rows, its top lies at least 70 rows past that window, and
-		// the panel itself fits inside the window on any host. The declared width is read from the
-		// window too, so the panel fits across it. The shot then depends on the offset
-		// and on the compositing that keeps a fixed element past the window from being culled.
-		const declared = 10 * Math.ceil((requireValue(window.top).innerHeight + 100) / 7)
-		const across = Math.min(390, requireValue(window.top).innerWidth)
-		buildStylesheet(
-			'html { background: rgb(0, 128, 0) }' +
-				' .panel { position: fixed; left: 0; right: 0; bottom: 0; height: 30vh; background: rgb(0, 0, 255) }',
-		)
-		const container = buildFixture(
-			`<div style="height: ${String(declared + 2000)}px">Taller than the pane</div><div class="panel">Panel</div>`,
-		)
-		window.scrollTo({ top: 400, left: 0, behavior: 'instant' })
-		expect(window.scrollY).toBe(400)
+	it.each(['0px', 'calc(80px + 5.25px)'])(
+		'shoots a fixed viewport-height panel at the declared pane under clearance %s and hands the scroll back',
+		async (clearance) => {
+			// The panel is 30% of whatever pane it sits in, and the document under it is taller than the
+			// declared pane, so a pane staged to the document's height lays the panel out taller. The
+			// declared height is read from the runner's window and is a multiple of 10, so the panel's
+			// 30% and its top at 70% are whole rows, its top lies at least 70 rows past that window, and
+			// the panel itself fits inside the window on any host. The declared width is read from the
+			// window too, so the panel fits across it. The shot then depends on the offset
+			// and on the compositing that keeps a fixed element past the window from being culled.
+			const declared = 10 * Math.ceil((requireValue(window.top).innerHeight + 100) / 7)
+			const across = Math.min(390, requireValue(window.top).innerWidth)
+			buildStylesheet(
+				`html { background: rgb(0, 128, 0); scroll-padding-top: ${clearance} }` +
+					' .panel { position: fixed; left: 0; right: 0; bottom: 0; height: 30vh; background: rgb(0, 0, 255) }',
+			)
+			const container = buildFixture(
+				`<div style="height: ${String(declared + 2000)}px">Taller than the pane</div><div class="panel">Panel</div>`,
+			)
+			window.scrollTo({ top: 400, left: 0, behavior: 'instant' })
+			expect(window.scrollY).toBe(400)
 
-		const written = await captureFrame({
-			path: `${FRAMES}/panel.png`,
-			width: across,
-			height: declared,
-			element: requireValue(container.lastElementChild),
-		})
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(across)
-		expect(reading.height).toBe((declared * 3) / 10)
-		// The panel's own color on the bottom row is what separates a shot of the panel from a shot
-		// of the document behind it or of the runner's page.
-		expect(reading.floor).toBe('rgb(0, 0, 255)')
-		expect(window.scrollY).toBe(400)
-	})
+			const written = await captureFrame({
+				path: `${FRAMES}/panel.png`,
+				width: across,
+				height: declared,
+				element: requireValue(container.lastElementChild),
+			})
+			const reading = await readFrame(written)
+			expect(reading.width).toBe(across)
+			expect(reading.height).toBe((declared * 3) / 10)
+			// The panel's own color on the bottom row is what separates a shot of the panel from a shot
+			// of the document behind it or of the runner's page.
+			expect(reading.floor).toBe('rgb(0, 0, 255)')
+			expect(window.scrollY).toBe(400)
+		},
+	)
 
 	it('shoots an element that ends below the declared pane whole, on the document floor', async () => {
 		// The element starts below the declared pane, and the declared pane is 200 rows taller than
@@ -3294,27 +3324,30 @@ describe('captureFrame', () => {
 		expect(window.scrollY).toBe(200)
 	})
 
-	it('shoots a viewport-height element below the fold at the declared pane', async () => {
-		// Half of the declared 844 rows is 422. A pane grown to reach the element's bottom edge lays
-		// the element out at half of that taller pane instead.
-		buildStylesheet(
-			'html { background: rgb(0, 128, 0) } .probe { height: 50vh; background: rgb(0, 0, 255) }',
-		)
-		const container = buildFixture(
-			'<div style="height: 900px">Above</div><div class="probe">Half</div>',
-		)
+	it.each(['0px', 'calc(80px + 5.25px)'])(
+		'shoots a viewport-height element below the fold at the declared pane under clearance %s',
+		async (clearance) => {
+			// Half of the declared 844 rows is 422. A pane grown to reach the element's bottom edge lays
+			// the element out at half of that taller pane instead.
+			buildStylesheet(
+				`html { background: rgb(0, 128, 0); scroll-padding-top: ${clearance} } .probe { height: 50vh; background: rgb(0, 0, 255) }`,
+			)
+			const container = buildFixture(
+				'<div style="height: 900px">Above</div><div class="probe">Half</div>',
+			)
 
-		const written = await captureFrame({
-			path: `${FRAMES}/half.png`,
-			width: 390,
-			height: 844,
-			element: requireValue(container.lastElementChild),
-		})
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBe(422)
-		expect(reading.floor).toBe('rgb(0, 0, 255)')
-	})
+			const written = await captureFrame({
+				path: `${FRAMES}/half.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.lastElementChild),
+			})
+			const reading = await readFrame(written)
+			expect(reading.width).toBe(390)
+			expect(reading.height).toBe(422)
+			expect(reading.floor).toBe('rgb(0, 0, 255)')
+		},
+	)
 
 	it('shoots a 30vh element below the fold at the declared pane under either spacer', async () => {
 		// 30% of the declared 844 rows is 253.2, and the frame holds the part row too. A pane grown
@@ -3535,28 +3568,32 @@ describe('captureFrame', () => {
 		expect((await readFrame(written)).height).toBe(tall)
 	})
 
-	it('takes no mouseover or scroll event for an element inside the runner window', async () => {
-		// An element inside both the pane and the window needs neither a scroll nor an offset, so
-		// the capture moves nothing and the document is not scrolled. The document runs on well past
-		// the pane, so a scroll the capture took would move it and fire an event.
-		await releasePointer()
-		const container = buildFixture(
-			'<div style="height: 100px">Above</div><div style="height: 100px">Resting</div><div style="height: 3000px">After</div>',
-		)
-		const element = requireValue(container.children[1])
-		const entered = createRecorder<[event: Event]>()
-		const scrolled = createRecorder<[event: Event]>()
-		element.addEventListener('mouseover', entered.handler)
-		window.addEventListener('scroll', scrolled.handler)
-		try {
-			await captureFrame({ path: `${FRAMES}/resting.png`, width: 390, height: 844, element })
-			await waitForFrame()
-		} finally {
-			window.removeEventListener('scroll', scrolled.handler)
-		}
-		expect(entered.count).toBe(0)
-		expect(scrolled.count).toBe(0)
-	})
+	it.each(['0px', 'calc(80px + 5.25px)'])(
+		'takes no mouseover or scroll event for an element inside the runner window under clearance %s',
+		async (clearance) => {
+			// An element inside both the pane and the window needs neither a scroll nor an offset, so
+			// the capture moves nothing and the document is not scrolled. The document runs on well past
+			// the pane, so a scroll the capture took would move it and fire an event.
+			await releasePointer()
+			buildStylesheet(`html { scroll-padding-top: ${clearance} }`)
+			const container = buildFixture(
+				'<div style="height: 100px">Above</div><div style="height: 100px">Resting</div><div style="height: 3000px">After</div>',
+			)
+			const element = requireValue(container.children[1])
+			const entered = createRecorder<[event: Event]>()
+			const scrolled = createRecorder<[event: Event]>()
+			element.addEventListener('mouseover', entered.handler)
+			window.addEventListener('scroll', scrolled.handler)
+			try {
+				await captureFrame({ path: `${FRAMES}/resting.png`, width: 390, height: 844, element })
+				await waitForFrame()
+			} finally {
+				window.removeEventListener('scroll', scrolled.handler)
+			}
+			expect(entered.count).toBe(0)
+			expect(scrolled.count).toBe(0)
+		},
+	)
 
 	it('takes no mouseover from the parked pointer for an element past both window edges', async () => {
 		// The declared pane is twice as wide as the runner's window and 200 rows taller, both read
