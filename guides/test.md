@@ -660,12 +660,17 @@ the fourth is headroom.
 An element frame no taller than the declared height is shot in the declared pane, so its viewport
 lengths resolve against the declared viewport whether the element sits above the fold, below it, or
 fixed: a `50vh` element under a 900-row block reads back 422 rows in an 844-row pane. The re-reading
-takes the element's own height, so the pane grows only for an element taller than the declared
-height, and then to that element's height, which is what its viewport lengths resolve against.
+takes the element's own height for these short frames. For a taller element, native start alignment
+resolves the document's scroll clearance, and the pane reserves the element's height plus the space
+above its aligned top. This honors authored scroll padding, including computed lengths, without
+parsing CSS or hiding a sticky header. The captured image still contains only the element's box.
+An overlay without authored clearance remains visible in the image; the instrument detects no
+arbitrary occlusion. Viewport-dependent clearance participates in the same bounded settling loop,
+so a frame whose geometry has not settled within that bound is refused.
 Where the element's box lies outside the pane, the document is scrolled by the nearest distance that
 would bring it inside, and the box is read again. A fixed element past the pane can take a scroll
 that does not move it, and that scroll is handed back with the rest. The document is not scrolled for
-an element already inside the pane.
+a short element already inside the pane.
 
 The provider paints an element that fits the runner's window only where that window shows it. Where
 such an element lies past the window, the `captureFrame` function offsets the calling tester frame up

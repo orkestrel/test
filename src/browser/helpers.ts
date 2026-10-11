@@ -3481,15 +3481,16 @@ export async function releaseMedia(): Promise<void> {
  * Omit the `element` option to shoot the whole page. An element frame no taller than the declared
  * height is shot with the pane at the declared size, so every viewport length resolves against the
  * declared viewport, whether the element sits in flow above the fold, in flow below it,
- * or fixed. The re-reading takes the element's own height in place of the content edge, so the pane
- * grows only for an element taller than the declared height, and then to that element's height,
- * which is the geometry its viewport lengths resolve against. An element that outgrows every pane
- * is refused with the same text.
+ * or fixed. For a taller element, native start alignment resolves the document's scroll clearance
+ * before the re-reading takes its height plus the space above its aligned top. The pane therefore
+ * reserves room below authored scroll padding without interpreting CSS lengths or hiding overlays.
+ * Clearance that changes with the viewport participates in the same bounded settling loop; a
+ * frame that has not settled within that bound is refused with the same text.
  *
  * Where the element's box lies outside the pane, the tester's document is scrolled by the nearest
  * distance that would bring it inside, and the box is read again. A fixed element past the pane can
  * take a scroll that does not move it, and that scroll is handed back with the rest. The document is
- * not scrolled for an element already inside the pane.
+ * not scrolled for a short element already inside the pane.
  *
  * The provider paints an element that fits the runner's window only where that window shows it.
  * Where such an element lies past the window, the calling tester frame is offset up or left only as
@@ -3526,10 +3527,16 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		let covered: number | undefined
 		let growth = 0
 		for (let staging = 0; ; staging += 1) {
+			let height = element?.getBoundingClientRect().height
+			if (element !== undefined && height !== undefined && height > options.height) {
+				// Native alignment resolves the document's scroll clearance, including computed
+				// lengths, before the pane reserves room for the whole tall element below it.
+				element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
+				const aligned = element.getBoundingClientRect()
+				height = aligned.height + Math.max(0, aligned.top)
+			}
 			const reading = Math.max(
-				element === undefined
-					? measureContent()
-					: Math.ceil(element.getBoundingClientRect().height),
+				height === undefined ? measureContent() : Math.ceil(height),
 				options.height,
 			)
 			if (covered !== undefined) growth = Math.max(0, reading - covered)

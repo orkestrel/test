@@ -3005,6 +3005,71 @@ describe('stagePane', () => {
 })
 
 describe('captureFrame', () => {
+	it.each(['0px', 'calc(80px + 5.25px)'])(
+		'keeps a tall element below native scroll clearance %s in the written frame',
+		async (clearance) => {
+			buildStylesheet(
+				`html { scroll-padding-top: ${clearance} }` +
+					' .cover { position: sticky; top: 0; height: 80px; background: rgb(255, 0, 0); z-index: 1 }' +
+					' .subject { height: 1600px; background: rgb(0, 128, 0) } .subject h2 { margin: 0 }',
+			)
+			const container = buildFixture(
+				'<div class="cover">Header</div><div style="height: 300px">Above</div>' +
+					'<div class="subject"><h2>Heading</h2></div><div style="height: 2000px">After</div>',
+			)
+			const element = requireValue(container.querySelector('.subject'))
+			window.scrollTo({ top: 200, behavior: 'instant' })
+			const before = [window.innerWidth, window.innerHeight, window.scrollY]
+			const written = await captureFrame({
+				path: `${FRAMES}/clearance-${String(clearance.length)}.png`,
+				width: 390,
+				height: 844,
+				element,
+			})
+			expect(await readFrame(written)).toStrictEqual({
+				width: 390,
+				height: 1600,
+				floor: 'rgb(0, 128, 0)',
+			})
+			const image = new Image()
+			image.src = `data:image/png;base64,${await commands.readFile(written, 'base64')}`
+			await image.decode()
+			const canvas = requireValue(new OffscreenCanvas(image.width, image.height).getContext('2d'))
+			canvas.drawImage(image, 0, 0)
+			// Read away from the heading's glyphs. With no authored clearance the sticky red
+			// header remains in the shot: the camera must not hide or restyle an overlay.
+			expect([...canvas.getImageData(380, 5, 1, 1).data]).toStrictEqual(
+				clearance === '0px' ? [255, 0, 0, 255] : [0, 128, 0, 255],
+			)
+			expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual(before)
+		},
+	)
+
+	it('refuses native clearance that has not settled within the staging bound and restores the scroll', async () => {
+		buildStylesheet('html { scroll-padding-top: 10% }')
+		const container = buildFixture(
+			'<div style="height: 400px">Above</div><div style="height: 1600px">Subject</div>' +
+				'<div style="height: 2000px">After</div>',
+		)
+		window.scrollTo({ top: 200, behavior: 'instant' })
+		const before = [window.innerWidth, window.innerHeight, window.scrollY]
+		const frame = requireValue(window.frameElement)
+		const style = frame.getAttribute('style')
+		await expect(
+			captureFrame({
+				path: `${FRAMES}/clearance-growing.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(container.children[1]),
+			}),
+		).rejects.toThrow(
+			`Capture frame at ${FRAMES}/clearance-growing.png never settled after 4 restagings`,
+		)
+		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual(before)
+		expect(frame.getAttribute('style')).toBe(style)
+		expect(requireValue(frame.parentElement).hasAttribute(CAPTURE_PANE)).toBe(false)
+	})
+
 	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
 		const written = await captureFrame({ path: `${FRAMES}/page.png`, width: 390, height: 844 })
 		// The provider returns the written path in its host's own separator, and the runner reports
