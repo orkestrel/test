@@ -3005,20 +3005,72 @@ describe('stagePane', () => {
 })
 
 describe('captureFrame', () => {
+	it('keeps a viewport-bound sticky panel at its fitted native alignment', async () => {
+		buildStylesheet(
+			'html { scroll-padding-top: 55px }' +
+				' .header { position: sticky; top: 0; height: 47px; background: rgb(255, 0, 0); z-index: 1 }' +
+				' .layout { display: grid; grid-template-columns: 240px 1fr; padding-top: 24px }' +
+				' .panel { position: sticky; top: 47px; max-height: calc(100dvh - 47px); overflow: auto; background: rgb(0, 128, 0) }' +
+				' .panel h2 { margin: 0 }',
+		)
+		const container = buildFixture(
+			'<div class="header">Header</div><div class="layout"><aside><div class="panel">' +
+				'<div style="height: 1600px"><h2>Contents</h2></div></div></aside>' +
+				'<main style="height: 3000px">Document</main></div>',
+		)
+		const element = requireValue(container.querySelector('.panel'))
+		const before = [window.innerWidth, window.innerHeight, window.scrollY]
+		await stagePane(1280, 800)
+		element.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+		const nearest = element.getBoundingClientRect()
+		element.scrollIntoView({ block: 'start', behavior: 'instant' })
+		const aligned = element.getBoundingClientRect()
+		element.scrollIntoView({ block: 'end', behavior: 'instant' })
+		const end = element.getBoundingClientRect()
+		await releasePane()
+		window.scrollTo({ top: 0, behavior: 'instant' })
+		expect([
+			nearest.top,
+			nearest.bottom,
+			aligned.top,
+			aligned.bottom,
+			end.top,
+			end.bottom,
+		]).toStrictEqual([55, 808, 55, 808, 47, 800])
+		const written = await captureFrame({
+			path: `${FRAMES}/clearance-sticky.png`,
+			width: 1280,
+			height: 800,
+			element,
+		})
+		const reading = await readFrame(written)
+		expect([reading.width, reading.height]).toStrictEqual([240, 753])
+		const image = new Image()
+		image.src = `data:image/png;base64,${await commands.readFile(written, 'base64')}`
+		await image.decode()
+		const canvas = requireValue(new OffscreenCanvas(image.width, image.height).getContext('2d'))
+		canvas.drawImage(image, 0, 0)
+		expect([...canvas.getImageData(200, 5, 1, 1).data]).toStrictEqual([0, 128, 0, 255])
+		expect([...canvas.getImageData(200, 751, 1, 1).data]).toStrictEqual([0, 128, 0, 255])
+		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual(before)
+	})
+
 	it.each([
-		{ height: 1600, clearance: '0px', margin: '0px' },
-		{ height: 1600, clearance: 'calc(80px + 5.25px)', margin: '0px' },
-		{ height: 843, clearance: '0px', margin: '0px' },
-		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '0px' },
-		{ height: 843, clearance: '0px', margin: 'calc(80px + 5.25px)' },
-		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '25px' },
+		{ height: 1600, clearance: '0px', margin: '0px', position: 'static' },
+		{ height: 1600, clearance: 'calc(80px + 5.25px)', margin: '0px', position: 'static' },
+		{ height: 843, clearance: '0px', margin: '0px', position: 'static' },
+		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '0px', position: 'static' },
+		{ height: 843, clearance: '0px', margin: 'calc(80px + 5.25px)', position: 'static' },
+		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '25px', position: 'static' },
+		{ height: 843, clearance: 'calc(80px + 5.25px)', margin: '0px', position: 'sticky' },
 	])(
-		'keeps a $height-pixel element below native scroll clearance $clearance and margin $margin in the written frame',
-		async ({ height: extent, clearance, margin }) => {
+		'keeps a $height-pixel $position element below native scroll clearance $clearance and margin $margin in the written frame',
+		async ({ height: extent, clearance, margin, position }) => {
 			buildStylesheet(
 				`html { scroll-padding-top: ${clearance} }` +
 					' .cover { position: sticky; top: 0; height: 80px; background: rgb(255, 0, 0); z-index: 1 }' +
-					` .subject { height: ${String(extent)}px; scroll-margin-top: ${margin}; background: rgb(0, 128, 0) } .subject h2 { margin: 0 }`,
+					` .subject { position: ${position}; height: ${String(extent)}px; scroll-margin-top: ${margin}; background: rgb(0, 128, 0) }` +
+					' .subject h2 { position: sticky; top: 0; margin: 0 }',
 			)
 			const container = buildFixture(
 				'<div class="cover">Header</div><div style="height: 300px">Above</div>' +
@@ -3028,7 +3080,7 @@ describe('captureFrame', () => {
 			window.scrollTo({ top: 200, behavior: 'instant' })
 			const before = [window.innerWidth, window.innerHeight, window.scrollY]
 			const written = await captureFrame({
-				path: `${FRAMES}/clearance-${String(extent)}-${String(clearance.length)}-${String(margin.length)}.png`,
+				path: `${FRAMES}/clearance-${String(extent)}-${String(clearance.length)}-${String(margin.length)}-${position}.png`,
 				width: 390,
 				height: 844,
 				element,

@@ -3480,7 +3480,9 @@ export async function releaseMedia(): Promise<void> {
  *
  * Omit the `element` option to shoot the whole page. An element that fits with its native scroll
  * clearance is shot in the declared pane, as is a short fixed panel that native alignment cannot
- * move. Their viewport lengths resolve against the declared viewport. Otherwise native start
+ * move. A sticky subject with a vertical start inset also keeps that pane when native end alignment
+ * fits its box inside it; adding the start clearance would instead grow its viewport constraint.
+ * These subjects' viewport lengths resolve against the declared viewport. Otherwise native start
  * alignment resolves the document's scroll clearance before the re-reading takes the element's
  * height plus the space above its aligned top. This includes an element shorter than the declared
  * pane whose height plus clearance exceeds it. The pane reserves room below authored scroll
@@ -3490,8 +3492,8 @@ export async function releaseMedia(): Promise<void> {
  *
  * Where the element's box lies outside the pane, the tester's document is scrolled by the nearest
  * distance that would bring it inside, and the box is read again. A fixed element past the pane can
- * take a scroll that does not move it, and that scroll is handed back with the rest. A short element
- * keeps its nearest native alignment when it needs no additional room.
+ * take a scroll that does not move it, and that scroll is handed back with the rest. Other short
+ * elements keep their nearest native alignment when they need no additional room.
  *
  * The provider paints an element that fits the runner's window only where that window shows it.
  * Where such an element lies past the window, the calling tester frame is offset up or left only as
@@ -3541,19 +3543,29 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 				if ((padding !== 'auto' && padding !== '0px') || margin !== '0px') {
 					element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
 					if (element.getBoundingClientRect().bottom >= options.height) {
-						const nearest = { left: window.scrollX, top: window.scrollY }
+						let placement = { left: window.scrollX, top: window.scrollY }
 						element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
 						const aligned = element.getBoundingClientRect()
 						if (aligned.bottom > options.height) {
 							// A fixed panel that native alignment cannot move retains its declared
 							// viewport. A movable element needs room for its start clearance too.
 							element.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' })
-							if (pane > options.height || element.getBoundingClientRect().top !== aligned.top) {
+							const end = element.getBoundingClientRect()
+							// A sticky subject can fit at its own inset while start clearance moves
+							// it past the fold. Keep the fitted placement rather than growing a
+							// viewport constraint. In-flow subjects retain their clearance below.
+							const sticky =
+								readStyle(element, 'position') === 'sticky' &&
+								readStyle(element, 'top') !== 'auto' &&
+								end.top >= 0 &&
+								end.bottom <= pane
+							if (sticky) placement = { left: window.scrollX, top: window.scrollY }
+							if (!sticky && (pane > options.height || end.top !== aligned.top)) {
 								height = aligned.height + Math.max(0, aligned.top)
 								element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
 							}
 						}
-						if (height <= options.height) window.scrollTo({ ...nearest, behavior: 'instant' })
+						if (height <= options.height) window.scrollTo({ ...placement, behavior: 'instant' })
 					}
 				}
 			}

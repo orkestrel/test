@@ -660,6 +660,12 @@ the fourth is headroom.
 An element that fits with its native scroll clearance is shot in the declared pane, so its viewport
 lengths resolve against the declared viewport: a `50vh` element under a 900-row block reads back 422
 rows in an 844-row pane. A short fixed panel that native alignment cannot move keeps that pane too.
+A captured sticky element with a vertical start inset keeps the declared pane when native end
+alignment places its box fully inside it. Its own inset determines that fitted placement; adding
+the document's start-clearance gap can otherwise grow a viewport-bound height on every restaging.
+This exception belongs to the captured sticky element, not to in-flow content it contains or a
+region containing sticky children. A sticky declaration without a vertical start inset retains
+the ordinary clearance behavior.
 For an element whose height plus clearance exceeds the declared height, native start alignment
 resolves the clearance, and the pane reserves the element's height plus the space above its aligned
 top. This includes an element shorter than the declared pane. It honors authored root scroll padding
@@ -670,8 +676,8 @@ arbitrary occlusion. Viewport-dependent clearance participates in the same bound
 so a frame whose geometry has not settled within that bound is refused.
 Where the element's box lies outside the pane, the document is scrolled by the nearest distance that
 would bring it inside, and the box is read again. A fixed element past the pane can take a scroll
-that does not move it, and that scroll is handed back with the rest. A short element that needs no
-additional room keeps its nearest native alignment.
+that does not move it, and that scroll is handed back with the rest. Other short elements that need no
+additional room keep their nearest native alignment.
 
 The provider paints an element that fits the runner's window only where that window shows it. Where
 such an element lies past the window, the `captureFrame` function offsets the calling tester frame up
