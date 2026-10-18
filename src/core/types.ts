@@ -324,3 +324,28 @@ export interface StateScenario<TState extends string, TEvent extends string, TCo
 	 */
 	assert(context: TContext, state: TState): Promise<void> | void
 }
+/** Represents one fixture file as a name, media type, and immutable bytes. */
+export interface FixtureFile {
+	/** Holds the fixture filename presented to the input. */
+	readonly name: string
+	/** Holds the fixture media type. */
+	readonly mime: string
+	/** Holds bytes as integers from 0 through 255. */
+	readonly bytes: readonly number[]
+}
+
+/** Configures native file-picker activation and its bounded provider wait. */
+export interface ChoiceOptions {
+	/** Selects real Tab traversal and Enter activation when true; pointer activation when false. Default: false. */
+	readonly keyboard?: boolean
+	/** Limits each provider wait in positive milliseconds. Default: 1000. */
+	readonly budget?: number
+}
+
+/** Carries a resolved file-input selector and fixture selection to the browser provider. */
+export interface ChooserRequest extends ChoiceOptions {
+	/** Holds the provider selector for the input the browser journey resolved. */
+	readonly selector: string
+	/** Holds the fixture selection; an empty collection clears the input. */
+	readonly files: readonly FixtureFile[]
+}

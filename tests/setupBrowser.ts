@@ -1,6 +1,55 @@
 import type { CaptureVariant } from '@src/browser'
 import { render } from '@src/browser'
 
+/** Lists native file-input arrangements that a journey must refuse before activation. */
+export const FILE_REFUSALS = Object.freeze([
+	{
+		name: 'hidden',
+		markup: '<label hidden>Attachments<input type="file"></label>',
+		message: 'Native file target "Attachments" is not visible and focus-reachable',
+	},
+	{
+		name: 'disabled',
+		markup: '<label>Attachments<input type="file" disabled></label>',
+		message: 'Native file target "Attachments" is not visible and focus-reachable',
+	},
+	{
+		name: 'duplicate',
+		markup:
+			'<label>Attachments<input type="file"></label><label>Attachments<input type="file"></label>',
+		message: 'Native file target "Attachments" is ambiguous across 2 elements',
+	},
+	{
+		name: 'inactive modal',
+		markup:
+			'<label>Attachments<input type="file"></label><section role="dialog" aria-modal="true"><button>Close</button></section>',
+		message: 'Native file target "Attachments" is not visible and focus-reachable',
+	},
+	{
+		name: 'not focusable',
+		markup: '<label>Attachments<input type="file" tabindex="-1"></label>',
+		message: 'Native file target "Attachments" is not visible and focus-reachable',
+	},
+	{
+		name: 'wrong control',
+		markup: '<label>Attachments<input type="text"></label>',
+		message: 'No native file input has the accessible name "Attachments"',
+	},
+])
+
+/** Builds labeled native file inputs for chooser proofs and records their cleanup. */
+export function buildFileFixture(): {
+	readonly input: HTMLInputElement
+	readonly other: HTMLInputElement
+} {
+	const container = buildFixture(
+		'<label>Attachments<input type="file" multiple></label><label>Other files<input type="file"></label>',
+	)
+	const [input, other] = container.querySelectorAll('input')
+	if (input === undefined || other === undefined) throw new Error('Missing file fixture inputs')
+	return { input, other }
+}
+
 // Every fixture a test builds is recorded here so one call takes them all back out of the document.
 // A browser test file shares one page, so a container left behind is a resolver ambiguity in the
 // next test rather than a leak nobody notices.

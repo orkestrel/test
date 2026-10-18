@@ -13,11 +13,34 @@ import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
 	CASE_SENSITIVE_FS,
+	createChooserFixture,
+	readChooserListeners,
 	DIRECTORY_LINKS,
 	FILE_LINKS,
 	POSIX_MODE,
 	RAW_BYTE_NAMES,
 } from './setupServer.js'
+import { createRecorder } from '@src/core'
+
+describe('createChooserFixture', () => {
+	it('provides a real tester frame with a unique input selector and a duplicate control', async () => {
+		const fixture = await createChooserFixture()
+		try {
+			const recorder = createRecorder()
+			const baseline = readChooserListeners(fixture.page, 'filechooser')
+			fixture.page.on('filechooser', recorder.handler)
+			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(baseline + 1)
+			fixture.page.off('filechooser', recorder.handler)
+			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(baseline)
+			expect(await fixture.iframe.locator(fixture.selector).count()).toBe(1)
+			expect(await fixture.iframe.locator(fixture.duplicate).count()).toBe(2)
+			expect(await fixture.iframe.getByLabel('Attachments').getAttribute('type')).toBe('file')
+		} finally {
+			await fixture.browser.close()
+		}
+		expect(fixture.browser.isConnected()).toBe(false)
+	})
+})
 
 // Each constant here is computed once, at import time, by calling the matching `supports*` probe
 // from `@src/server` — proved against real fixtures in tests/src/server/helpers.test.ts. This

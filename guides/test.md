@@ -137,6 +137,14 @@ Each interface's call-signature members are listed under [Methods](#methods). `R
 and `Failure` come from `@orkestrel/contract` (mirrored at [`contract.md`](contract.md)) and are not
 re-exported; `retryUntil` reads `Result` internally.
 
+The chooser wire contract is shared by the browser journey and its server command.
+
+| Type             | Kind      | Shape                                      | Summary                                                                               |
+| ---------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `FixtureFile`    | interface | `{ name, mime, bytes }`                    | Represents one fixture file as a name, media type, and immutable bytes.               |
+| `ChoiceOptions`  | interface | `{ keyboard?, budget? }`                   | Configures native file-picker activation and its bounded provider wait.               |
+| `ChooserRequest` | interface | `ChoiceOptions` plus `{ selector, files }` | Carries a resolved file-input selector and fixture selection to the browser provider. |
+
 #### Constants
 
 A `Shape` cell holds the constant's declared type.
@@ -220,10 +228,29 @@ because both of them call it rather than because a consumer was expected to. Rea
 
 ### Browser
 
-Imported from `@orkestrel/test/browser`. Every journey verb here resolves its own target from a
-role and an accessible name and drives it through the installed Vitest provider, and none of them
+Imported from `@orkestrel/test/browser`. Every journey verb here resolves its own target from an
+accessible name and, where the platform supplies one, a role, and drives it through the installed Vitest provider. None of them
 takes an element, a component instance, or a selector for the thing it acts on. That is what keeps
 a journey a description of what a person does rather than of what the markup happens to be.
+
+Native file inputs carry no ARIA role. Their journey uses the label resolver and the same visibility,
+enabled-state, focus-order, uniqueness, and active-modal checks as the other controls.
+
+| API                | Kind     | Signature                                                                                 | Summary                                                                                     |
+| ------------------ | -------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `resolveFileInput` | function | `(name: string) => HTMLInputElement`                                                      | Resolves one visible, enabled, focus-reachable native file input by its exact label.        |
+| `chooseAccessible` | function | `(name: string, files: readonly FixtureFile[], options?: ChoiceOptions) => Promise<void>` | Activates a labeled native file input and fulfills its observed chooser with fixture bytes. |
+
+Register the server entry's `chooseFiles` function under the same key in Vitest's
+`test.browser.commands`, in the authored browser-project wrapper. Pass fixture filenames, media
+types, and byte arrays to `chooseAccessible`; `keyboard: true` reaches the input through Tab before
+pressing Enter, and the default activates it with a native pointer click. Run selections sequentially
+on a page. The server arms its chooser observer before activation, checks the event's input identity,
+and supplies the bytes through the real Playwright chooser. A missing or wrong chooser rejects.
+Observers and input handles are released after success, activation failure, timeout, and page closure.
+Each provider wait defaults to a positive 1000 ms budget. An empty fixture selection clears the input;
+it does not prove a manual OS Cancel gesture. This proves browser-native chooser activation and
+fixture selection in Chromium, not manual OS dialog interaction, OS drag, or network upload.
 
 The fixture builders, the readers, and the field writers do take an element, and none of them is a
 journey verb. `build` creates a node, `mount` attaches one, and `render` does both from
@@ -732,6 +759,16 @@ collision refusal before writing.
 ### Server
 
 Imported from `@orkestrel/test/server`.
+
+The provider command consumes the browser journey's resolved selector inside Vitest's tester frame.
+
+| API           | Kind     | Signature                                                             | Summary                                                                                                  |
+| ------------- | -------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `chooseFiles` | function | `(context: ChooserContext, request: ChooserRequest) => Promise<void>` | Observes a native chooser before activating its input and supplies the verified chooser's fixture bytes. |
+
+| Type             | Kind      | Shape              | Summary                                                                         |
+| ---------------- | --------- | ------------------ | ------------------------------------------------------------------------------- |
+| `ChooserContext` | interface | `{ page, iframe }` | Supplies the real Playwright page and tester frame to a native chooser command. |
 
 #### Types
 

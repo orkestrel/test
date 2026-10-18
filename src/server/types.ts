@@ -1,4 +1,13 @@
 import type { WaitOptions } from '@src/core'
+import type { FrameLocator, Page } from 'playwright'
+
+/** Supplies the real Playwright page and tester frame to a native chooser command. */
+export interface ChooserContext {
+	/** Holds the Playwright page that emits the native chooser event. */
+	readonly page: Page
+	/** Holds the tester frame that contains the resolved input. */
+	readonly iframe: FrameLocator
+}
 
 /** Holds a temporary directory a test owns, writes into, reads back, and removes when it is done. */
 export interface ScratchInterface {

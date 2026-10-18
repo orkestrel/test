@@ -14,6 +14,8 @@ import {
 	computeOffset,
 	clearStorage,
 	clickAccessible,
+	chooseAccessible,
+	resolveFileInput,
 	clickAccessibleWithin,
 	clickDisclosure,
 	commitInput,
@@ -108,6 +110,8 @@ import { commands, page, server, userEvent } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../setup.js'
 import {
 	buildFixture,
+	buildFileFixture,
+	FILE_REFUSALS,
 	buildStylesheet,
 	CLIP_CASES,
 	CLIP_EDGE_CASES,
@@ -147,6 +151,90 @@ afterAll(async () => {
 afterEach(resetFixtures)
 afterEach(releasePointer)
 afterEach(releaseMedia)
+
+describe('native file choice', () => {
+	it('resolves the labeled native input without inventing an ARIA role', () => {
+		const { input } = buildFileFixture()
+		expect(resolveFileInput('Attachments')).toBe(input)
+		expect(readRole(input)).toBeUndefined()
+		expect(() => resolveFileInput('Missing')).toThrow(
+			'No native file input has the accessible name "Missing"',
+		)
+	})
+
+	it('activates the native chooser with a trusted pointer and selects fixture bytes', async () => {
+		const { input, other } = buildFileFixture()
+		const clicks = createRecorder<readonly [MouseEvent]>()
+		input.addEventListener('click', clicks.handler)
+		await chooseAccessible('Attachments', [
+			{ name: 'note.txt', mime: 'text/plain', bytes: [72, 105] },
+		])
+		expect(clicks.count).toBe(1)
+		expect(clicks.calls[0]?.[0].isTrusted).toBe(true)
+		expect(input.files?.[0]?.name).toBe('note.txt')
+		expect(input.files?.[0]?.type).toBe('text/plain')
+		expect(await input.files?.[0]?.text()).toBe('Hi')
+		expect(other.files?.length).toBe(0)
+	})
+
+	it('reaches the input by Tab and opens its chooser with a trusted Enter key', async () => {
+		const { input } = buildFileFixture()
+		const keys = createRecorder<readonly [KeyboardEvent]>()
+		input.addEventListener('keydown', keys.handler)
+		await chooseAccessible('Attachments', [{ name: 'keys.txt', mime: 'text/plain', bytes: [75] }], {
+			keyboard: true,
+		})
+		expect(keys.calls.some(([event]) => event.key === 'Enter' && event.isTrusted)).toBe(true)
+		expect(document.activeElement).toBe(input)
+		expect(input.files?.[0]?.name).toBe('keys.txt')
+	})
+
+	it('opens a chooser for same-file reselection and fixture-driven empty selection', async () => {
+		const { input } = buildFileFixture()
+		const clicks = createRecorder<readonly [MouseEvent]>()
+		input.addEventListener('click', clicks.handler)
+		const files = [{ name: 'same.txt', mime: 'text/plain', bytes: [83] }]
+		await chooseAccessible('Attachments', files)
+		await chooseAccessible('Attachments', files)
+		expect(input.files?.[0]?.name).toBe('same.txt')
+		await chooseAccessible('Attachments', [])
+		expect(clicks.count).toBe(3)
+		expect(input.files?.length).toBe(0)
+	})
+
+	it.each(FILE_REFUSALS)('refuses $name inputs', async ({ markup, message }) => {
+		buildFixture(markup)
+		await expect(chooseAccessible('Attachments', [])).rejects.toThrow(message)
+	})
+
+	it('refuses a missing chooser even when a trusted click reaches the input', async () => {
+		const { input } = buildFileFixture()
+		const clicks = createRecorder<readonly [MouseEvent]>()
+		input.addEventListener('click', clicks.handler)
+		input.addEventListener('click', (event) => event.preventDefault(), { once: true })
+		await expect(chooseAccessible('Attachments', [], { budget: 150 })).rejects.toThrow(
+			'native file chooser',
+		)
+		expect(clicks.calls[0]?.[0].isTrusted).toBe(true)
+		await chooseAccessible('Attachments', [])
+	})
+
+	it('rejects a chooser opened by a different native input', async () => {
+		const { input, other } = buildFileFixture()
+		input.addEventListener(
+			'click',
+			(event) => {
+				event.preventDefault()
+				other.showPicker()
+			},
+			{ once: true },
+		)
+		await expect(chooseAccessible('Attachments', [])).rejects.toThrow(
+			'belongs to a different input',
+		)
+		await chooseAccessible('Attachments', [])
+	})
+})
 
 describe('computeNamePattern', () => {
 	it('admits a glyph run at either edge and nothing a reader would hear', () => {

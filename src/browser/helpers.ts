@@ -1,4 +1,4 @@
-import type { WaitOptions } from '@src/core'
+import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@src/core'
 import type {
 	CaptureVariant,
 	CensusFixture,
@@ -401,6 +401,69 @@ export async function clickAccessible(role: string, name: string): Promise<void>
 export async function clickAccessible(first: string, second?: string): Promise<void> {
 	const target = resolveRendered(first, second)
 	await userEvent.click(target)
+}
+
+/**
+ * Resolves one visible, enabled, focus-reachable native file input by its exact label.
+ *
+ * @param name - The input's accessible label.
+ * @returns The unique reachable native file input.
+ * @throws When the label is absent, ambiguous, hidden, disabled, or outside the active modal.
+ * @example
+ * ```ts
+ * resolveFileInput('Attachments')
+ * ```
+ */
+export function resolveFileInput(name: string): HTMLInputElement {
+	const matches = page
+		.getByLabelText(name, { exact: true })
+		.elements()
+		.filter(
+			(element): element is HTMLInputElement =>
+				element instanceof HTMLInputElement && element.type === 'file',
+		)
+	if (matches.length === 0)
+		throw new Error(`No native file input has the accessible name "${name}"`)
+	const reachable = matches.filter((element) => isRendered(element) && isReachable(element))
+	if (reachable.length === 0)
+		throw new Error(`Native file target "${name}" is not visible and focus-reachable`)
+	if (reachable.length > 1)
+		throw new Error(`Native file target "${name}" is ambiguous across ${reachable.length} elements`)
+	const [target] = reachable
+	if (target === undefined) throw new Error(`Native file target "${name}" could not be resolved`)
+	return target
+}
+
+/**
+ * Activates a labeled native file input and fulfills its observed chooser with fixture bytes.
+ *
+ * @param name - The input's exact accessible label.
+ * @param files - The fixture selection; an empty collection clears the selection, not an OS Cancel gesture.
+ * @param options - The activation method and provider wait budget.
+ * @returns A promise resolving after the correct native chooser receives the fixture selection.
+ * @throws When the input is refused, the provider command is unregistered, or the expected chooser does not open.
+ * @remarks Register the server entry's `chooseFiles` command in `test.browser.commands`.
+ * @example
+ * ```ts
+ * await chooseAccessible('Attachments', [{ name: 'note.txt', mime: 'text/plain', bytes: [72, 105] }])
+ * ```
+ */
+export async function chooseAccessible(
+	name: string,
+	files: readonly FixtureFile[],
+	options?: ChoiceOptions,
+): Promise<void> {
+	if (options?.keyboard) await driveTraversal(() => resolveFileInput(name), name)
+	const target = resolveFileInput(name)
+	const command = readProperty<unknown>(commands, 'chooseFiles')
+	if (typeof command !== 'function')
+		throw new Error('Register the chooseFiles browser command before choosing files')
+	const request: ChooserRequest = {
+		selector: page.elementLocator(target).selector,
+		files,
+		...options,
+	}
+	await invokeUnchecked<Promise<void>>(commands, command, [request])
 }
 
 /**

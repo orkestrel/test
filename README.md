@@ -107,7 +107,8 @@ const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['
 Object.keys(sources)
 // ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts', 'src/core/validators.ts', 'src/server/constants.ts',
-//  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts', 'src/server/types.ts']
+//  'src/server/factories.ts', 'src/server/handlers.ts', 'src/server/helpers.ts',
+//  'src/server/index.ts', 'src/server/types.ts']
 
 // The keys are paths; the values are the file contents.
 sources['src/core/index.ts']
@@ -163,7 +164,7 @@ who can create hard links where the test process already writes.
 The browser face is the journey layer: an accessible-name resolver with exact failure voices,
 region and disclosure targeting, input and traversal verbs, perception readers, a WCAG contrast
 instrument that composites translucent layers, and the capture portfolio. Every acting verb
-resolves its own target from a role and an accessible name — none takes an element, a component
+resolves its own target from an accessible name and, where the platform supplies one, a role — none takes an element, a component
 instance, or a selector — and the whole environment imports `vitest/browser`, DOM globals, this
 package's own core, and the `@orkestrel/contract` guards it narrows with, with `vitest` declared as
 a peer dependency. Beside the journey verbs are the

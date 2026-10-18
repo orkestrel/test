@@ -1,3 +1,7 @@
+import type { Browser, FrameLocator, Page } from 'playwright'
+import { chromium } from 'playwright'
+import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
+import { invokeUnchecked, readProperty } from '@src/core'
 import {
 	supportsBytes,
 	supportsCase,
@@ -5,6 +9,47 @@ import {
 	supportsFileLinks,
 	supportsMode,
 } from '@src/server'
+
+/** Reads the installed Playwright page's native event-emitter listener count for chooser cleanup proofs. */
+export function readChooserListeners(page: Page, event: 'filechooser' | 'close'): number {
+	const count = invokeUnchecked<unknown>(page, readProperty(page, 'listenerCount'), [event])
+	if (typeof count !== 'number') throw new Error('Provider listener count is not a number')
+	return count
+}
+
+/** Creates a real browser page with the tester-frame boundary a chooser command receives. */
+export async function createChooserFixture(): Promise<{
+	readonly browser: Browser
+	readonly page: Page
+	readonly iframe: FrameLocator
+	readonly selector: string
+	readonly duplicate: string
+}> {
+	const options = resolveBrowser(resolvePinnedBrowser(), process.platform, process.env)
+	const browser =
+		options.connectOptions === undefined
+			? await chromium.launch({ headless: true, ...options.launchOptions })
+			: await chromium.connect(options.connectOptions)
+	try {
+		const page = await browser.newPage()
+		await page.setContent('<iframe title="Chooser fixture"></iframe>')
+		const frame = page.frames()[1]
+		if (frame === undefined) throw new Error('Missing chooser fixture frame')
+		await frame.setContent(
+			'<label>Attachments<input type="file" multiple></label><label>Other<input type="file"></label>',
+		)
+		return {
+			browser,
+			page,
+			iframe: page.frameLocator('iframe'),
+			selector: 'input[type=file] >> nth=0',
+			duplicate: 'input[type=file]',
+		}
+	} catch (error) {
+		await browser.close()
+		throw error
+	}
+}
 
 // The package ships one probe per host capability, and each is proved against real fixtures in
 // tests/src/server/helpers.test.ts. Reading them here makes the suites consumers of the shipped

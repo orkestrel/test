@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { buildFixture, buildStylesheet, resetFixtures } from './setupBrowser.js'
+import { buildFileFixture, buildFixture, buildStylesheet, resetFixtures } from './setupBrowser.js'
+
+describe('buildFileFixture', () => {
+	it('builds two labeled native inputs and removes both with fixture cleanup', () => {
+		const { input, other } = buildFileFixture()
+		expect(input.type).toBe('file')
+		expect(input.multiple).toBe(true)
+		expect(other.type).toBe('file')
+		expect(input.labels?.[0]?.textContent).toBe('Attachments')
+		expect(other.labels?.[0]?.textContent).toBe('Other files')
+		resetFixtures()
+		expect(input.isConnected).toBe(false)
+		expect(other.isConnected).toBe(false)
+	})
+})
 
 // This proof runs in the `setup:browser` project, a browser project where a real DOM exists, so
 // every case here drives that DOM directly rather than proving a Node fallback.
