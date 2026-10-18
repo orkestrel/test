@@ -88,7 +88,7 @@ export function createDragEvent(name: string, options?: DragEventInit): DragEven
 }
 
 /**
- * Creates the capture portfolio one run places its screenshots through.
+ * Creates the capture portfolio one run places its screenshots through; a disabled run still refuses.
  *
  * @param options - The state registry, the variant matrix, the variant this run renders, the
  * directory it writes into, and whether it writes at all.
