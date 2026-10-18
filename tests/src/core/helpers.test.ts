@@ -1113,7 +1113,7 @@ const REFUSED_SCENARIO: StateScenario<DisclosureState, DisclosureEvent, Disclosu
 }
 
 // T3-C12. One spelling of a refused build, reached by the bare runner here and by the browser
-// harness in `tests/src/browser/factories.test.ts`.
+// harness in `tests/src/browser/journeys/factories.test.ts`.
 describe('buildRefusal', () => {
 	it('opens the message with the row name and carries the refusal by identity', () => {
 		const cause = new Error('no fixture')

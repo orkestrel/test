@@ -704,7 +704,7 @@ await new GuideCommand({
 
 		// guides/test.md → Patterns → "Drive a statechart table". The worked table and the harness
 		// fences beside it drive a real disclosure in a browser, and this project runs with the
-		// browser disabled, so their values are pinned in `tests/src/browser/factories.test.ts`. The
+		// browser disabled, so their values are pinned in `tests/src/browser/journeys/factories.test.ts`. The
 		// attribute and status fence is this environment's own, and it carries here.
 		it('publishes the attribute names and the run order a gate outside the page reads', () => {
 			expect(STATECHART_ATTRIBUTES.status).toBe('data-statechart-status')
@@ -769,14 +769,12 @@ await new GuideCommand({
 
 			expect(
 				Object.keys(
-					readInventory(workspace, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }),
+					readInventory(workspace, ['src'], {
+						extensions: ['.ts'],
+						exclude: ['src/server', 'src/browser'],
+					}),
 				),
 			).toStrictEqual([
-				'src/browser/constants.ts',
-				'src/browser/factories.ts',
-				'src/browser/helpers.ts',
-				'src/browser/index.ts',
-				'src/browser/types.ts',
 				'src/core/constants.ts',
 				'src/core/factories.ts',
 				'src/core/helpers.ts',
@@ -1082,7 +1080,10 @@ await new GuideCommand({
 				normalizeComments(
 					renderKeys(
 						Object.keys(
-							readInventory(workspace, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }),
+							readInventory(workspace, ['src'], {
+								extensions: ['.ts'],
+								exclude: ['src/server', 'src/browser'],
+							}),
 						),
 					),
 				),

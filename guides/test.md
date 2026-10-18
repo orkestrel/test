@@ -2326,7 +2326,7 @@ browser suite runs. It is a native disclosure with two doors: the summary toggle
 button closes it and does nothing when it is already closed. That second door is what gives the
 table a row whose event leaves the state where it found it, which a lone `<details>` cannot have —
 its one event always flips. Every value these fences claim is pinned in
-`tests/src/browser/factories.test.ts`, because the fences drive a browser and the `guides` project
+`tests/src/browser/journeys/factories.test.ts`, because the fences drive a browser and the `guides` project
 runs with the browser disabled.
 
 The phases are module functions the whole table shares, which is the shape a table of any size
@@ -2600,11 +2600,11 @@ Object.keys(
 //  'src/core/types.ts', 'src/core/validators.ts']
 
 // A directory key takes every key below it.
-Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
-// ['src/browser/constants.ts', 'src/browser/factories.ts', 'src/browser/helpers.ts',
-//  'src/browser/index.ts', 'src/browser/types.ts', 'src/core/constants.ts',
-//  'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
-//  'src/core/validators.ts']
+Object.keys(
+	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
+)
+// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+//  'src/core/types.ts', 'src/core/validators.ts']
 
 // An exclusion also applies to a target you name, so naming one file below an excluded directory
 // does not reinstate it.
@@ -3642,8 +3642,12 @@ Each entry names the contracts its file proves. The test names carry the cases.
   that is called empty and called twice. `createHostileValues` proves a naive-reader failure for
   every member, frozen and fresh membership, and one total guard's benign and hostile answers with
   loop-index attribution.
-- [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts) — the journey-layer,
-  role-map, and announced-half-and-clickable-half contracts across the layer, in real Chromium
+- [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts),
+  [`tests/src/browser/journeys/helpers.test.ts`](../tests/src/browser/journeys/helpers.test.ts),
+  [`tests/src/browser/captures/helpers.test.ts`](../tests/src/browser/captures/helpers.test.ts),
+  [`tests/src/browser/colors/helpers.test.ts`](../tests/src/browser/colors/helpers.test.ts), and
+  [`tests/src/browser/sheets/helpers.test.ts`](../tests/src/browser/sheets/helpers.test.ts) — the
+  journey-layer, role-map, and announced-half-and-clickable-half contracts across the layer, in real Chromium
   against constructed markup. The resolver takes a bare name, a
   role that disambiguates a tab from its own panel, a name no element carries, a name carried only by
   a role outside `ACCESSIBLE_ROLES`, and the disabled, hidden, and inert matches that are present but
@@ -3808,7 +3812,9 @@ Each entry names the contracts its file proves. The test names carry the cases.
   element carrying an inline attribute reported once, a whitespace-only attribute read past, a
   fragment root, and — as the control — markup whose classes and `data-*` attributes leave it with
   nothing to report.
-- [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts) — the journal
+- [`tests/src/browser/factories.test.ts`](../tests/src/browser/factories.test.ts),
+  [`tests/src/browser/journeys/factories.test.ts`](../tests/src/browser/journeys/factories.test.ts), and
+  [`tests/src/browser/captures/factories.test.ts`](../tests/src/browser/captures/factories.test.ts) — the journal
   contract, and the portfolio's refusals, its disabled gate, and its writes. Creation refuses an
   unregistered variant name; the registry expands across every variant whether or not the run
   writes; a run

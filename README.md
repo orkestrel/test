@@ -128,11 +128,11 @@ Object.keys(
 //  'src/core/validators.ts']
 
 // A directory key prunes its whole subtree.
-Object.keys(readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server'] }))
-// ['src/browser/constants.ts', 'src/browser/factories.ts', 'src/browser/helpers.ts',
-//  'src/browser/index.ts', 'src/browser/types.ts', 'src/core/constants.ts',
-//  'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts',
-//  'src/core/validators.ts']
+Object.keys(
+	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
+)
+// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+//  'src/core/types.ts', 'src/core/validators.ts']
 ```
 
 Keys are root-relative and `/`-separated whatever the host separator is. The suite gates that proof

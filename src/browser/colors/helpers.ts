@@ -1,0 +1,796 @@
+import type { Color, ContrastFixture } from './types.js'
+import { build, mount, readStyle } from '../helpers.js'
+import { CANVAS_COLOR } from './constants.js'
+
+/**
+ * Converts normalized encoded sRGB channels to the clipped paint scale.
+ *
+ * @param red - The encoded red channel, with `1` representing full intensity.
+ * @param green - The encoded green channel.
+ * @param blue - The encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @example
+ * ```ts
+ * convertSRGB(1.2, -0.1, 0.5) // [255, 0, 127.5, 1]
+ * ```
+ */
+export function convertSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	return Object.freeze([
+		Math.min(255, Math.max(0, red * 255)),
+		Math.min(255, Math.max(0, green * 255)),
+		Math.min(255, Math.max(0, blue * 255)),
+		Math.min(1, Math.max(0, alpha)),
+	])
+}
+
+/**
+ * Converts linear sRGB channels to encoded, clipped paint channels.
+ *
+ * @param red - The linear red channel on the normalized scale.
+ * @param green - The linear green channel.
+ * @param blue - The linear blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Applies the CSS Color 4 extended sRGB transfer function before clipping.
+ *
+ * @example
+ * ```ts
+ * convertLinearSRGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertLinearSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [encodedRed = 0, encodedGreen = 0, encodedBlue = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 0.0031308
+			? 12.92 * channel
+			: Math.sign(channel) * (1.055 * Math.abs(channel) ** (1 / 2.4) - 0.055),
+	)
+	return convertSRGB(encodedRed, encodedGreen, encodedBlue, alpha)
+}
+
+/**
+ * Converts D65 XYZ coordinates to clipped sRGB paint channels.
+ *
+ * @param x - The normalized X coordinate.
+ * @param y - The normalized Y coordinate.
+ * @param z - The normalized Z coordinate.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Uses the CSS Color 4 XYZ D65 to linear sRGB matrix, then the sRGB transfer function.
+ *
+ * @example
+ * ```ts
+ * convertXYZD65(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertXYZD65(x: number, y: number, z: number, alpha = 1): Color {
+	return convertLinearSRGB(
+		(12831 / 3959) * x - (329 / 214) * y - (1974 / 3959) * z,
+		(-851781 / 878810) * x + (1648619 / 878810) * y + (36519 / 878810) * z,
+		(705 / 12673) * x - (2585 / 12673) * y + (705 / 667) * z,
+		alpha,
+	)
+}
+
+/**
+ * Converts D50 XYZ coordinates to clipped sRGB paint channels.
+ *
+ * @param x - The normalized X coordinate relative to D50.
+ * @param y - The normalized Y coordinate relative to D50.
+ * @param z - The normalized Z coordinate relative to D50.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Applies the CSS Color 4 Bradford adaptation from D50 to D65 before converting to sRGB.
+ *
+ * @example
+ * ```ts
+ * convertXYZD50(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertXYZD50(x: number, y: number, z: number, alpha = 1): Color {
+	return convertXYZD65(
+		0.955473421488075 * x - 0.02309845494876471 * y + 0.06325924320057072 * z,
+		-0.0283697093338637 * x + 1.0099953980813041 * y + 0.021041441191917323 * z,
+		0.012314014864481998 * x - 0.020507649298898964 * y + 1.330365926242124 * z,
+		alpha,
+	)
+}
+
+/**
+ * Converts OKLab coordinates to clipped sRGB paint channels.
+ *
+ * @param lightness - The OKLab lightness on the 0–1 scale.
+ * @param a - The signed green-to-red axis.
+ * @param b - The signed blue-to-yellow axis.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Cubes the transformed cone responses before applying the linear sRGB matrix.
+ *
+ * @example
+ * ```ts
+ * convertOKLab(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertOKLab(lightness: number, a: number, b: number, alpha = 1): Color {
+	const long = (lightness + 0.3963377773761749 * a + 0.2158037573099136 * b) ** 3
+	const medium = (lightness - 0.1055613458156586 * a - 0.0638541728258133 * b) ** 3
+	const short = (lightness - 0.0894841775298119 * a - 1.2914855480194092 * b) ** 3
+	return convertLinearSRGB(
+		4.076741661347994 * long - 3.307711590408193 * medium + 0.230969929060199 * short,
+		-1.2684380040921763 * long + 2.6097574006633715 * medium - 0.3413193965711952 * short,
+		-0.0041960865418371 * long - 0.7034186144594493 * medium + 1.7076147010012863 * short,
+		alpha,
+	)
+}
+
+/**
+ * Converts CIE Lab coordinates relative to D50 to clipped sRGB paint channels.
+ *
+ * @param lightness - The CIE lightness on the 0–100 scale.
+ * @param a - The signed green-to-red axis.
+ * @param b - The signed blue-to-yellow axis.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Resolves the CSS Color 4 Lab curve against the D50 white point before adapting to D65.
+ *
+ * @example
+ * ```ts
+ * convertLab(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertLab(lightness: number, a: number, b: number, alpha = 1): Color {
+	const luminance = (lightness + 16) / 116
+	const [x = 0, y = 0, z = 0] = [luminance + a / 500, luminance, luminance - b / 200].map(
+		(channel) => (channel ** 3 > 216 / 24389 ? channel ** 3 : (116 * channel - 16) / (24389 / 27)),
+	)
+	return convertXYZD50(x * (0.3457 / 0.3585), y, z * ((1 - 0.3457 - 0.3585) / 0.3585), alpha)
+}
+
+/**
+ * Converts encoded Display P3 channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the extended sRGB transfer curve and uses the CSS Color 4 P3 to XYZ D65 matrix.
+ *
+ * @example
+ * ```ts
+ * convertDisplayP3(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertDisplayP3(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 0.04045
+			? channel / 12.92
+			: Math.sign(channel) * ((Math.abs(channel) + 0.055) / 1.055) ** 2.4,
+	)
+	return convertXYZD65(
+		(608311 / 1250200) * r + (189793 / 714400) * g + (198249 / 1000160) * b,
+		(35783 / 156275) * r + (247089 / 357200) * g + (198249 / 2500400) * b,
+		(32229 / 714400) * g + (5220557 / 5000800) * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded A98 RGB channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the signed 563/256 power curve and uses the CSS Color 4 A98 RGB to XYZ D65 matrix.
+ *
+ * @example
+ * ```ts
+ * convertA98RGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertA98RGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map(
+		(channel) => Math.sign(channel) * Math.abs(channel) ** (563 / 256),
+	)
+	return convertXYZD65(
+		(573536 / 994567) * r + (263643 / 1420810) * g + (187206 / 994567) * b,
+		(591459 / 1989134) * r + (6239551 / 9945670) * g + (374412 / 4972835) * b,
+		(53769 / 1989134) * r + (351524 / 4972835) * g + (4929758 / 4972835) * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded ProPhoto RGB channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Decodes the signed ProPhoto curve, converts to XYZ D50, and adapts to D65 before clipping.
+ *
+ * @example
+ * ```ts
+ * convertProPhotoRGB(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertProPhotoRGB(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) <= 16 / 512 ? channel / 16 : Math.sign(channel) * Math.abs(channel) ** 1.8,
+	)
+	return convertXYZD50(
+		0.7977666449006423 * r + 0.13518129740053308 * g + 0.0313477341283922 * b,
+		0.2880748288194013 * r + 0.711835234241873 * g + 0.00008993693872564 * b,
+		0.8251046025104602 * b,
+		alpha,
+	)
+}
+
+/**
+ * Converts encoded Rec. 2020 channels to clipped sRGB paint channels.
+ *
+ * @param red - The normalized encoded red channel.
+ * @param green - The normalized encoded green channel.
+ * @param blue - The normalized encoded blue channel.
+ * @param alpha - The opacity. Default: `1`.
+ * @returns Frozen straight sRGB channels clipped to 0–255, with alpha clipped to 0–1.
+ *
+ * @remarks
+ * Uses the piecewise Rec. 2020 transfer curve Chromium computes and the CSS Color 4 XYZ matrix.
+ *
+ * @example
+ * ```ts
+ * convertRec2020(0, 0, 0) // [0, 0, 0, 1]
+ * ```
+ */
+export function convertRec2020(red: number, green: number, blue: number, alpha = 1): Color {
+	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
+		Math.abs(channel) < 0.018053968510807 * 4.5
+			? channel / 4.5
+			: Math.sign(channel) *
+				((Math.abs(channel) + 1.09929682680944 - 1) / 1.09929682680944) ** (1 / 0.45),
+	)
+	return convertXYZD65(
+		(63426534 / 99577255) * r + (20160776 / 139408157) * g + (47086771 / 278816314) * b,
+		(26158966 / 99577255) * r + (472592308 / 697040785) * g + (8267143 / 139408157) * b,
+		(19567812 / 697040785) * g + (295819943 / 278816314) * b,
+		alpha,
+	)
+}
+
+/**
+ * Parses computed CSS Color 4 values into clipped straight sRGB channels.
+ *
+ * @param value - A computed `rgb()`, `rgba()`, `oklab()`, `oklch()`, `lab()`, `lch()`, or `color()` value.
+ * @returns Frozen channels, or `undefined` for an unsupported syntax or non-finite channel.
+ *
+ * @remarks
+ * Reads signed channels, scientific notation, percentage lightness, degree hues, and `none` as
+ * zero. The `color()` spaces are `srgb`, `srgb-linear`, `display-p3`, `a98-rgb`, `prophoto-rgb`,
+ * `rec2020`, `xyz`, `xyz-d50`, and `xyz-d65`. Conversion uses the CSS Color 4 matrices and white
+ * point adaptation, then clips each encoded sRGB channel to 0–255 rather than gamut-mapping it.
+ * Alpha is clipped to 0–1. Keywords, hex colors, unresolved expressions, and non-finite calculations
+ * such as `color(srgb calc(infinity) 0 0)` remain unreadable; use {@link parseCSSColor} to resolve
+ * ordinary authored expressions through the cascade.
+ *
+ * @example
+ * ```ts
+ * parseColor('rgba(255, 255, 255, 0.5)') // [255, 255, 255, 0.5]
+ * parseColor('rebeccapurple') // undefined
+ * ```
+ */
+export function parseColor(value: string): Color | undefined {
+	const match = /^(?<syntax>rgba?|oklab|oklch|lab|lch|color)\((?<body>[^()]*)\)$/u.exec(value)
+	if (match?.groups === undefined) return undefined
+	const { syntax, body = '' } = match.groups
+	const legacy = syntax === 'rgb' || syntax === 'rgba'
+	const polar = syntax === 'oklch' || syntax === 'lch'
+	const perceptual =
+		syntax === 'oklab' || syntax === 'oklch' || syntax === 'lab' || syntax === 'lch'
+	const tokens = body.trim().split(legacy && body.includes(',') ? /\s*,\s*/u : /\s*\/\s*|\s+/u)
+	const space = syntax === 'color' ? tokens.shift() : syntax
+	if (tokens.length !== 3 && tokens.length !== 4) return undefined
+	if (!legacy && body.includes(',')) return undefined
+	if (body.split('/').length > 2) return undefined
+	if (body.includes('/') && (tokens.length !== 4 || !/\/\s*[^\s/]+\s*$/u.test(body)))
+		return undefined
+	if (!(legacy && body.includes(',')) && tokens.length === 4 && !body.includes('/'))
+		return undefined
+	const parts = tokens.map((token, index) => {
+		if (token === 'none') return 0
+		const part = /^(?<number>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?<unit>%|deg)?$/u.exec(
+			token,
+		)
+		if (part?.groups === undefined) return Number.NaN
+		const number = Number(part.groups.number)
+		const unit = part.groups.unit
+		if (unit === 'deg') return polar && index === 2 ? number : Number.NaN
+		if (unit !== '%') return number
+		if (index === 3 || syntax === 'color') return number / 100
+		if (legacy) return (number * 255) / 100
+		if (index === 0) return syntax === 'oklab' || syntax === 'oklch' ? number / 100 : number
+		return Number.NaN
+	})
+	const [first, second, third, alpha = 1] = parts
+	if (first === undefined || second === undefined || third === undefined) return undefined
+	if (!parts.every((part) => Number.isFinite(part))) return undefined
+	if (legacy) return convertSRGB(first / 255, second / 255, third / 255, alpha)
+	if (perceptual) {
+		const lightness = Math.max(
+			0,
+			Math.min(syntax === 'oklab' || syntax === 'oklch' ? 1 : 100, first),
+		)
+		const a = polar ? Math.max(0, second) * Math.cos((third * Math.PI) / 180) : second
+		const b = polar ? Math.max(0, second) * Math.sin((third * Math.PI) / 180) : third
+		return syntax === 'oklab' || syntax === 'oklch'
+			? convertOKLab(lightness, a, b, alpha)
+			: convertLab(lightness, a, b, alpha)
+	}
+	switch (space) {
+		case 'srgb':
+			return convertSRGB(first, second, third, alpha)
+		case 'srgb-linear':
+			return convertLinearSRGB(first, second, third, alpha)
+		case 'display-p3':
+			return convertDisplayP3(first, second, third, alpha)
+		case 'a98-rgb':
+			return convertA98RGB(first, second, third, alpha)
+		case 'prophoto-rgb':
+			return convertProPhotoRGB(first, second, third, alpha)
+		case 'rec2020':
+			return convertRec2020(first, second, third, alpha)
+		case 'xyz':
+		case 'xyz-d65':
+			return convertXYZD65(first, second, third, alpha)
+		case 'xyz-d50':
+			return convertXYZD50(first, second, third, alpha)
+		default:
+			return undefined
+	}
+}
+
+/**
+ * Resolves any CSS color expression to straight sRGB channels, by asking the browser.
+ *
+ * @param value - Any value the `color` property accepts: a keyword, a hex triple, a `var()`
+ * reference, a `color-mix()`, or a computed CSS Color 4 value.
+ * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value or the
+ * computed result names no color {@link parseColor} speaks.
+ *
+ * @remarks
+ * This is the live half of the pair {@link parseColor} opens. `parseColor` reads text and speaks
+ * only the computed syntaxes a cascade hands back; this stages a probe element, hands it to the real
+ * cascade, and reads back what the engine computed — which is the only way a keyword, a hex triple,
+ * or a `var()` reference becomes channels at all. The read itself goes through `parseColor`, so both
+ * halves agree on what a computed value means.
+ * Modern perceptual and predefined RGB/XYZ spaces resolve through that parser's conversions;
+ * out-of-gamut sRGB channels are clipped to 0–255 after conversion.
+ *
+ * The probe is mounted, because an unmounted element inherits nothing and a `var()` reference to a
+ * token declared on `:root` would resolve to the initial value instead. It is removed in a `finally`,
+ * so a value that throws on the way through leaves no node behind.
+ *
+ * Refusal is the CSSOM's: an expression it will not parse leaves the probe's inline `color` empty
+ * and this returns `undefined`. A `var()` naming an undeclared custom property is not refused,
+ * because the cascade accepts it and computes the inherited color, so a test that means to catch a
+ * missing token asserts on {@link readToken} rather than on this.
+ *
+ * @example
+ * ```ts
+ * parseCSSColor('rebeccapurple') // [102, 51, 153, 1]
+ * parseCSSColor('not-a-color') // undefined
+ * ```
+ */
+export function parseCSSColor(value: string): Color | undefined {
+	const probe = mount(build('span'))
+	try {
+		probe.style.color = value
+		if (probe.style.color === '') return undefined
+		return parseColor(readStyle(probe, 'color'))
+	} finally {
+		probe.remove()
+	}
+}
+
+/**
+ * Determines whether two colors render the same, within the rounding a browser does.
+ *
+ * @param first - A CSS color expression or an already-parsed color.
+ * @param second - A CSS color expression or an already-parsed color.
+ * @returns True if every channel and the alpha agree within the tolerance; false otherwise,
+ * including when either side names no readable color.
+ *
+ * @remarks
+ * Each string side is resolved through {@link parseCSSColor}, so a keyword, a token reference, and the
+ * `rgb()` the engine computes for either of them compare equal without a test converting anything
+ * first. A side that resolves to nothing makes the answer `false` rather than a throw, because this
+ * is a predicate.
+ *
+ * The tolerance is half a channel step on the 0–255 scale, and the alpha is scaled onto that same
+ * range before it is compared, so one number covers both. Half a step is what a composite of
+ * translucent layers and a `color-mix()` round trip actually drift by; anything a reader could see
+ * is further than that and reports unequal.
+ *
+ * @example
+ * ```ts
+ * matchesColor('rebeccapurple', 'rgb(102, 51, 153)') // true
+ * matchesColor('red', [0, 0, 255, 1]) // false
+ * ```
+ */
+export function matchesColor(first: string | Color, second: string | Color): boolean {
+	const left = typeof first === 'string' ? parseCSSColor(first) : first
+	const right = typeof second === 'string' ? parseCSSColor(second) : second
+	if (left === undefined || right === undefined) return false
+	const tolerance = 0.5
+	const [leftRed, leftGreen, leftBlue, leftAlpha] = left
+	const [rightRed, rightGreen, rightBlue, rightAlpha] = right
+	return (
+		Math.abs(leftRed - rightRed) <= tolerance &&
+		Math.abs(leftGreen - rightGreen) <= tolerance &&
+		Math.abs(leftBlue - rightBlue) <= tolerance &&
+		Math.abs(leftAlpha - rightAlpha) * 255 <= tolerance
+	)
+}
+
+/**
+ * Composites one color over another.
+ *
+ * @param front - The color painted on top.
+ * @param back - The color already on the surface.
+ * @returns The opaque result a reader sees, its alpha always `1`.
+ *
+ * @example
+ * ```ts
+ * blendColor([255, 255, 255, 0.5], [0, 0, 0, 1]) // [127.5, 127.5, 127.5, 1]
+ * ```
+ */
+export function blendColor(front: Color, back: Color): Color {
+	const [red, green, blue, alpha] = front
+	const [under, over, beneath] = back
+	return Object.freeze([
+		red * alpha + under * (1 - alpha),
+		green * alpha + over * (1 - alpha),
+		blue * alpha + beneath * (1 - alpha),
+		1,
+	])
+}
+
+/**
+ * Measures one opaque color's WCAG relative luminance.
+ *
+ * @param color - The color to weigh. Its alpha is ignored, so composite before calling.
+ * @returns The relative luminance, from `0` for black to `1` for white.
+ *
+ * @example
+ * ```ts
+ * measureLuminance([255, 255, 255, 1]) // 1
+ * ```
+ */
+export function measureLuminance(color: Color): number {
+	const [red, green, blue] = color
+	const [first = 0, second = 0, third = 0] = [red, green, blue].map((channel) => {
+		const part = channel / 255
+		return part <= 0.040_45 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4
+	})
+	return 0.2126 * first + 0.7152 * second + 0.0722 * third
+}
+
+/**
+ * Measures the WCAG 2.x contrast ratio between two opaque colors.
+ *
+ * @param front - The foreground color, already composited.
+ * @param back - The opaque backdrop.
+ * @returns The ratio, from `1` for two identical colors to `21` for black against white.
+ *
+ * @remarks
+ * The ratio is symmetric: the brighter of the two luminances is always the numerator, so swapping
+ * the arguments returns the same number.
+ *
+ * @example
+ * ```ts
+ * measureContrast([0, 0, 0, 1], [255, 255, 255, 1]) // 21
+ * ```
+ */
+export function measureContrast(front: Color, back: Color): number {
+	const bright = Math.max(measureLuminance(front), measureLuminance(back))
+	const dark = Math.min(measureLuminance(front), measureLuminance(back))
+	return (bright + 0.05) / (dark + 0.05)
+}
+
+/**
+ * Collects readable background color layers and refuses an unreadable painted layer.
+ *
+ * @param element - The element to walk up from.
+ * @returns Every layer the walk paints, the element's own first and the deepest last.
+ * @throws Thrown when a painted background color is unreadable; the error names the element and
+ * its computed value.
+ *
+ * @remarks
+ * A surface token paints one ancestor while every element between it and the text paints nothing,
+ * so a backdrop is found by walking up rather than by reading the element's own `background-color`,
+ * which is almost always transparent. A fully transparent layer paints nothing and is left out, and
+ * the walk stops at the first fully opaque layer, because nothing above that layer is visible.
+ * Legacy and modern CSS Color 4 values resolve through {@link parseColor}, with sRGB channels
+ * clipped after conversion. Non-finite calculations such as `color(srgb calc(infinity) 0 0)` are
+ * deliberately unreadable. An unreadable value with an explicit zero alpha paints nothing and is
+ * skipped. An empty detached-element reading paints nothing too. Background images remain outside
+ * this color reader.
+ *
+ * The stack is what tells a resolved backdrop from an assumed one: the walk reached an opaque
+ * surface exactly when its last layer's alpha is `1`. {@link readContrast} refuses on that reading,
+ * which no comparison of composited colors can replace — 64 half-transparent layers composite to
+ * the same channels over opposite floors, because the floor's remaining share falls below the last
+ * bit a channel carries.
+ *
+ * @example
+ * ```ts
+ * readLayers(requireValue(container.querySelector('p')))
+ * ```
+ */
+export function readLayers(element: Element): readonly Color[] {
+	const layers: Color[] = []
+	for (let node: Element | null = element; node !== null; node = node.parentElement) {
+		const computed = getComputedStyle(node).backgroundColor
+		if (computed === '') continue
+		const layer = parseColor(computed)
+		if (layer === undefined) {
+			if (/\/\s*(?:0(?:\.0*)?|none)\s*\)$/u.test(computed)) continue
+			throw new Error(
+				`Computed background color is unreadable on ${node.localName}${node.id === '' ? '' : `#${node.id}`}: ${computed}`,
+			)
+		}
+		if (layer[3] === 0) continue
+		layers.push(layer)
+		if (layer[3] >= 1) break
+	}
+	return Object.freeze(layers)
+}
+
+/**
+ * Resolves the opaque color standing behind one element.
+ *
+ * @param element - The element whose backdrop to resolve.
+ * @param floor - The opaque color the walk ends on when nothing above it paints.
+ * @returns The composited color a reader sees behind the element.
+ * @throws Thrown when the backdrop contains an unreadable painted color layer.
+ *
+ * @remarks
+ * The layers {@link readLayers} collects composite top-over-bottom onto the floor, so a 3% surface
+ * tint reads as a tint over what shows through it rather than as a full-strength paint.
+ * Those layers include the modern CSS Color 4 spaces, converted and clipped to sRGB by
+ * {@link parseColor}; an unreadable painted layer refuses the entire reading.
+ *
+ * The floor is required, because this leaf never guesses what a document sits on. Pass
+ * {@link CANVAS_COLOR} for the page a browser paints behind an unstyled document, or the color of
+ * the surface a fragment is really rendered into. When no layer paints, the floor is returned by
+ * identity.
+ *
+ * The composite alone never says whether the floor is part of the answer. A caller that must know
+ * reads the stack instead.
+ *
+ * @example
+ * ```ts
+ * readBackdrop(requireValue(container.querySelector('p')), CANVAS_COLOR)
+ * ```
+ */
+export function readBackdrop(element: Element, floor: Color): Color {
+	return readLayers(element).reduceRight((back, front) => blendColor(front, back), floor)
+}
+
+/**
+ * Measures the WCAG 2.x contrast ratio between an element's computed text and background colors.
+ *
+ * @param element - The element whose rendered text contrast to measure.
+ * @param floor - The opaque color the backdrop walk ends on. Omit it to refuse a stack the floor
+ * would show through instead of assuming one.
+ * @returns The relative-luminance contrast ratio.
+ * @throws Thrown when the element exposes no computed foreground color, and — with `floor` omitted
+ * — when the walk from the element upwards reaches no opaque layer. An unreadable painted
+ * background layer throws even when a floor is supplied.
+ *
+ * @remarks
+ * A transparent or translucent background resolves through the element's ancestors: every painted
+ * layer from the element up to the first opaque one composites top-over-bottom onto that opaque
+ * base, so a 3% surface tint reads as a tint over what shows through it rather than as a
+ * full-strength paint. A translucent foreground then resolves against that effective background
+ * before luminance is measured.
+ * Text and background colors can use the modern CSS Color 4 spaces {@link parseColor} reads;
+ * each is converted to sRGB and clipped before composition and luminance measurement.
+ *
+ * With `floor` omitted, the walk from the target upwards must reach a fully opaque layer: the
+ * measurement throws rather than assuming a white canvas wherever that canvas would still be part
+ * of the answer. The refusal reads the alpha of the deepest layer {@link readLayers} collected, so
+ * a chain that declares no background color at all, a chain painting only translucent layers, and a
+ * chain deep enough for its composite to round to the canvas's own channels are refused alike,
+ * because the number any of them produces is as much a report of the assumption as of the page.
+ * Supply a floor wherever the caller knows what the stack sits on — a fragment mounted into a
+ * painted host, or a document whose canvas is {@link CANVAS_COLOR} — and the composite is taken
+ * over it rather than refused.
+ *
+ * The element itself must expose a computed foreground color either way. A detached element exposes
+ * none, and the measurement throws rather than guessing one.
+ *
+ * @example
+ * ```ts
+ * const container = render('<p style="background: #000; color: #fff">Ready</p>')
+ * readContrast(requireValue(container.firstElementChild)) // 21
+ * readContrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21
+ * ```
+ */
+export function readContrast(element: Element, floor?: Color): number {
+	const foreground = parseColor(getComputedStyle(element).color)
+	if (foreground === undefined) throw new Error('Computed foreground color is unavailable')
+	const layers = readLayers(element)
+	const deepest = layers.at(-1)
+	// The walk reached a real surface exactly when its deepest layer is fully opaque. An empty stack
+	// paints nothing, and a stack ending translucent leaves the floor showing through whatever the
+	// composite reports: 64 half-transparent layers round to identical channels over opposite floors,
+	// so comparing two composited readings admits the stack this refusal exists for.
+	if (floor === undefined && (deepest === undefined || deepest[3] < 1)) {
+		throw new Error('Computed background color is unavailable')
+	}
+	const backdrop = layers.reduceRight(
+		(back, front) => blendColor(front, back),
+		floor ?? CANVAS_COLOR,
+	)
+	return measureContrast(blendColor(foreground, backdrop), backdrop)
+}
+
+/**
+ * Measures the contrast the focus chrome painted on one control reaches against its own backdrop.
+ *
+ * @param control - The control that holds the focus.
+ * @param worn - The element the control's focus chrome is painted onto. Default: `control`.
+ * @returns The strongest ratio the painted focus chrome reaches, or `undefined` when the control is
+ * not showing `:focus-visible` or the cascade paints no chrome of its own.
+ * @throws Thrown when the focused control's backdrop contains an unreadable painted color layer.
+ *
+ * @remarks
+ * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
+ * `userEvent.keyboard` from `vitest/browser`, a real click — and this measures what the browser
+ * painted once it landed. A control that is not matching `:focus-visible` when the call is made
+ * reports nothing, because no measurement taken then would be about focus.
+ *
+ * Some controls are two elements: one that takes the focus and one a reader can see. A hidden radio
+ * beside the label that carries every pixel of its chrome is the case `worn` exists for, so a
+ * measurement is not taken on a rectangle nobody is looking at. The focus state is still read off
+ * `control`, because that is what holds it.
+ *
+ * The backdrop is the surface behind the element the chrome is worn on, resolved from that element's
+ * parent through {@link readBackdrop} onto {@link CANVAS_COLOR}. A control whose ancestry paints
+ * nothing is therefore measured against the browser's own canvas, which is what a reader looking at
+ * an unstyled document sees.
+ *
+ * Only chrome the cascade paints is measured — an `outline` with a real style and width, and the
+ * first color in a `box-shadow`. A control left the browser's own `outline-style: auto` ring reports
+ * `undefined`, because that ring's two tones are guaranteed against any backdrop and its computed
+ * color names neither. A focus style that only changes the control's own fill reports `undefined`
+ * too: the resting fill is gone by the time focus is on the control, and this never moves focus to
+ * go and read it.
+ * Outline and shadow colors include `oklch()`, `oklab()`, `lab()`, `lch()`, and predefined
+ * `color()` spaces. Each readable color converts to clipped sRGB through {@link parseColor}, and
+ * the result remains a contrast ratio rather than a ring width.
+ *
+ * @example
+ * ```ts
+ * await traverseAccessible('Evaluate')
+ * readRing(resolveRendered('Evaluate')) // the ratio the painted ring reaches
+ * ```
+ */
+export function readRing(control: Element, worn?: Element): number | undefined {
+	if (!control.matches(':focus-visible')) return undefined
+	const target = worn ?? control
+	const declared = getComputedStyle(target)
+	const backdrop = readBackdrop(target.parentElement ?? target, CANVAS_COLOR)
+	const outline =
+		declared.outlineStyle === 'none' ||
+		declared.outlineStyle === 'auto' ||
+		Number.parseFloat(declared.outlineWidth) === 0
+			? undefined
+			: parseColor(declared.outlineColor)
+	const shadow = parseColor(
+		/(?:rgba?|color|oklab|oklch|lab|lch)\([^)]*\)/u.exec(declared.boxShadow)?.[0] ?? '',
+	)
+	const ratios: number[] = []
+	for (const painted of [outline, shadow]) {
+		if (painted === undefined) continue
+		ratios.push(measureContrast(blendColor(painted, backdrop), backdrop))
+	}
+	return ratios.length === 0 ? undefined : Math.max(...ratios)
+}
+
+/**
+ * Builds a detached translucent stack whose composited and flat contrast readings straddle one bar.
+ *
+ * @param bar - The contrast ratio `refused` and `accepted` must sit on opposite sides of.
+ * @returns The opaque root carrying the tint, and the refused and accepted foregrounds under it.
+ * @throws An `Error` when no grey foreground puts the two readings on opposite sides of the bar.
+ *
+ * @remarks
+ * A contrast instrument that never composites still clears every fixture painting its own opaque
+ * background, so this is the control that makes {@link readContrast}'s ancestor walk and alpha
+ * blend the thing under test. The stack is an opaque floor, a translucent tint over it, and two
+ * grey foregrounds inside the tint. `refused` reads under the bar composited and at or over it
+ * flat, and `accepted` reads the other way about, so no single non-compositing reading satisfies
+ * both.
+ *
+ * The greys are searched rather than written down, so the control follows the bar it was asked for.
+ * A bar at or under `1` is refused because every contrast ratio reaches `1`, and a bar above what
+ * the tinted surface can reach is refused because no foreground clears it — each refusal names the
+ * bar rather than returning a stack that proves nothing.
+ *
+ * The nodes are detached, so nothing is mounted for you. Append `root` to the surface you are
+ * reading, take both readings, and remove it: a computed color needs the document, and a fixture
+ * left behind is the next test's resolver ambiguity.
+ *
+ * @example
+ * ```ts
+ * const control = buildContrast(4.5)
+ * mount(control.root)
+ * readContrast(control.refused) < 4.5 // true
+ * readContrast(control.accepted) >= 4.5 // true
+ * control.root.remove()
+ * ```
+ */
+export function buildContrast(bar: number): ContrastFixture {
+	const tint: Color = [0, 0, 0, 0.06]
+	const backdrop = blendColor(tint, CANVAS_COLOR)
+	const flattened: Color = [tint[0], tint[1], tint[2], 1]
+	let refusedChannel: number | undefined
+	let acceptedChannel: number | undefined
+	for (let channel = 0; channel <= 255; channel += 1) {
+		const front: Color = [channel, channel, channel, 1]
+		const composited = measureContrast(front, backdrop)
+		const flat = measureContrast(front, flattened)
+		if (refusedChannel === undefined && composited < bar && flat >= bar) refusedChannel = channel
+		if (acceptedChannel === undefined && composited >= bar && flat < bar) acceptedChannel = channel
+	}
+	if (refusedChannel === undefined || acceptedChannel === undefined) {
+		throw new Error(`Contrast control cannot straddle the bar ${bar}`)
+	}
+	const root = build('div', {
+		attributes: {
+			style: `background-color: rgb(${CANVAS_COLOR[0]}, ${CANVAS_COLOR[1]}, ${CANVAS_COLOR[2]})`,
+		},
+	})
+	const tinted = build('div', {
+		attributes: {
+			style: `background-color: rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${tint[3]})`,
+		},
+	})
+	const refused = build('p', {
+		text: 'Composited contrast control',
+		attributes: {
+			style: `color: rgb(${refusedChannel}, ${refusedChannel}, ${refusedChannel})`,
+		},
+	})
+	const accepted = build('p', {
+		text: 'Composited contrast survivor',
+		attributes: {
+			style: `color: rgb(${acceptedChannel}, ${acceptedChannel}, ${acceptedChannel})`,
+		},
+	})
+	tinted.append(refused, accepted)
+	root.append(tinted)
+	return Object.freeze({ root, refused, accepted })
+}
