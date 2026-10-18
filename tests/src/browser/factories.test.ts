@@ -9,6 +9,7 @@ import {
 	createDragEvent,
 	createHarness,
 	createJournal,
+	createKeyboardEvent,
 	createPointerEvent,
 	createPortfolio,
 	createStorage,
@@ -125,6 +126,52 @@ describe('createDragEvent', () => {
 		requireValue(event.dataTransfer).setData('text/plain', 'row-9')
 		requireValue(container.querySelector('span')).dispatchEvent(event)
 		expect(carried.calls).toStrictEqual([['row-9']])
+	})
+})
+
+describe('createKeyboardEvent', () => {
+	it('builds a real keyboard event of the type asked for', () => {
+		const event = createKeyboardEvent('keydown', { key: 'Escape' })
+		expect(event).toBeInstanceOf(KeyboardEvent)
+		expect(event.type).toBe('keydown')
+		expect(event.key).toBe('Escape')
+	})
+
+	it('carries the defaults a hand-built event lacks', () => {
+		const event = createKeyboardEvent('keyup')
+		expect(event.bubbles).toBe(true)
+		expect(event.cancelable).toBe(true)
+	})
+
+	it('takes an override without restating the rest', () => {
+		const event = createKeyboardEvent('keydown', { key: 'k', ctrlKey: true })
+		expect(event.ctrlKey).toBe(true)
+		expect(event.shiftKey).toBe(false)
+		expect(event.bubbles).toBe(true)
+	})
+
+	it('overrides a bubbling default when the caller names it', () => {
+		const event = createKeyboardEvent('keydown', { bubbles: false, cancelable: false })
+		expect(event.bubbles).toBe(false)
+		expect(event.cancelable).toBe(false)
+	})
+
+	it('reaches an ancestor listener and can be prevented, which a bare event cannot', () => {
+		const container = buildFixture('<div><button type="button">Save</button></div>')
+		const heard = createRecorder<[string]>()
+		container.addEventListener('keydown', (event) => heard.handler(event.type))
+		const button = requireValue(container.querySelector('button'))
+		const bare = new KeyboardEvent('keydown')
+		button.dispatchEvent(bare)
+		bare.preventDefault()
+		expect(heard.calls).toStrictEqual([])
+		expect(bare.defaultPrevented).toBe(false)
+		const event = createKeyboardEvent('keydown')
+		const proceeded = button.dispatchEvent(event)
+		expect(heard.calls).toStrictEqual([['keydown']])
+		expect(proceeded).toBe(true)
+		event.preventDefault()
+		expect(event.defaultPrevented).toBe(true)
 	})
 })
 

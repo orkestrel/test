@@ -417,15 +417,16 @@ A `Shape` cell holds the constant's declared type.
 
 #### Factories
 
-| API                  | Kind     | Signature                                                                                                 | Summary                                                                                             |
-| -------------------- | -------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `createPointerEvent` | function | `(name: string, options?: PointerEventInit) => PointerEvent`                                              | Creates one real pointer event, ready to dispatch.                                                  |
-| `createDragEvent`    | function | `(name: string, options?: DragEventInit) => DragEvent`                                                    | Creates one real drag event carrying a live data transfer, ready to dispatch.                       |
-| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | Creates the capture portfolio one run places its screenshots through; a disabled run still refuses. |
-| `createChannel`      | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | Creates one console channel that records every call it receives and hands that call on unchanged.   |
-| `createJournal`      | function | `() => JournalInterface`                                                                                  | Creates the journal one scenario records its steps and the page's own output into.                  |
-| `createStorage`      | function | `(options?: StorageOptions) => WebStorageInterface`                                                       | Creates an inert `Storage` a host can withhold, grant, and run out of room in.                      |
-| `createHarness`      | function | `(options: HarnessOptions<TState, TEvent, TContext>) => HarnessInterface`                                 | Creates a mounted statechart harness that renders one transition table and drives it row by row.    |
+| API                   | Kind     | Signature                                                                                                 | Summary                                                                                             |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `createPointerEvent`  | function | `(name: string, options?: PointerEventInit) => PointerEvent`                                              | Creates one real pointer event, ready to dispatch.                                                  |
+| `createDragEvent`     | function | `(name: string, options?: DragEventInit) => DragEvent`                                                    | Creates one real drag event carrying a live data transfer, ready to dispatch.                       |
+| `createKeyboardEvent` | function | `(name: string, options?: KeyboardEventInit) => KeyboardEvent`                                            | Creates one real keyboard event, ready to dispatch.                                                 |
+| `createPortfolio`     | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | Creates the capture portfolio one run places its screenshots through; a disabled run still refuses. |
+| `createChannel`       | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | Creates one console channel that records every call it receives and hands that call on unchanged.   |
+| `createJournal`       | function | `() => JournalInterface`                                                                                  | Creates the journal one scenario records its steps and the page's own output into.                  |
+| `createStorage`       | function | `(options?: StorageOptions) => WebStorageInterface`                                                       | Creates an inert `Storage` a host can withhold, grant, and run out of room in.                      |
+| `createHarness`       | function | `(options: HarnessOptions<TState, TEvent, TContext>) => HarnessInterface`                                 | Creates a mounted statechart harness that renders one transition table and drives it row by row.    |
 
 `resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
 passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its

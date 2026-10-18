@@ -88,6 +88,32 @@ export function createDragEvent(name: string, options?: DragEventInit): DragEven
 }
 
 /**
+ * Creates one real keyboard event, ready to dispatch.
+ *
+ * @param name - The event type, such as `keydown`.
+ * @param options - Any `KeyboardEventInit` member, each one overriding the default beneath it.
+ * @returns A real `KeyboardEvent` of that type.
+ *
+ * @remarks
+ * A bare `new KeyboardEvent('keydown')` neither bubbles nor can be cancelled, so a delegated listener
+ * never hears it and `preventDefault` does nothing, which is the shape that passes in a test and
+ * fails in a browser. `bubbles` and `cancelable` are set, as a browser's own key event carries them.
+ * Override either by naming it; every other member, such as `key`, `code`, and the modifiers, is the
+ * platform's own and is named in `options`.
+ *
+ * The event is real rather than a shaped object, so `instanceof KeyboardEvent` holds and the members
+ * a handler reads are the ones the platform defines.
+ *
+ * @example
+ * ```ts
+ * element.dispatchEvent(createKeyboardEvent('keydown', { key: 'Escape' }))
+ * ```
+ */
+export function createKeyboardEvent(name: string, options?: KeyboardEventInit): KeyboardEvent {
+	return new KeyboardEvent(name, { bubbles: true, cancelable: true, ...options })
+}
+
+/**
  * Creates the capture portfolio one run places its screenshots through; a disabled run still refuses.
  *
  * @param options - The state registry, the variant matrix, the variant this run renders, the
