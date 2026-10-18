@@ -9,7 +9,7 @@ import {
 	waitForCondition,
 } from '@src/core'
 import { commands, page, userEvent } from 'vitest/browser'
-import { sendProtocol, waitForFrame } from '../helpers.js'
+import { parkPointer, sendProtocol, waitForFrame } from '../helpers.js'
 import {
 	ACCESSIBLE_ROLES,
 	CONTENT_ROLES,
@@ -736,8 +736,9 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
  * to its park point in cleanup, and a rejection there joins the aggregate described under `@throws`.
  * The provider must expose a DevTools session.
  *
- * The park point is (-1, -1) in the runner page's coordinates, one pixel above and to the left of
- * that page's viewport. The browser hit-tests nothing outside the viewport, so no element takes a
+ * The pointer parks through the `parkPointer` verb, which sends no release of its own. The park
+ * point is (-1, -1) in the runner page's coordinates, one pixel above and to the left of that
+ * page's viewport. The browser hit-tests nothing outside the viewport, so no element takes a
  * `mouseover` event or hover paint from the parked pointer until the next pointer verb. This holds
  * even where a staging, scroll, or offset lays content over the park point.
  *
@@ -768,8 +769,7 @@ export async function releasePointer(): Promise<void> {
 	}
 	if (released) document.documentElement.removeAttribute(POINTER_HOLD)
 	try {
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: -1, y: -1 })
-		await waitForFrame()
+		await parkPointer()
 	} catch (cause) {
 		if (!released) {
 			throw new AggregateError([rejection], isError(cause) ? cause.message : String(cause), {
@@ -955,6 +955,73 @@ export async function driveTraversal(
 	throw new Error(
 		`Interactive target "${name}" is not reachable through forward Tab traversal: ${trail.join(' > ')}`,
 	)
+}
+
+/**
+ * Walks forward by real Tab presses from the focused element until a predicate accepts a stop or
+ * the Tab order ends.
+ *
+ * @param stop - Accepts the destination. Omit it to census the remaining document.
+ * @returns Every element focus reached, in order and each once, the accepted stop last.
+ * @throws Thrown when the walk outlasts every element the document holds, or a key press rejects.
+ *
+ * @remarks
+ * Focus is read after each press, so the walk reaches what the browser's own sequential navigation
+ * reaches, including a scroll container Chromium focuses without a `tabindex`. The static
+ * {@link describeFocus} sort does not. The walk ends with an empty list when only the body holds
+ * focus, and where focus revisits a stop or returns to the body. It applies no rule about which stop
+ * counts: the predicate sees each one and decides, so a consumer that refuses a hidden stop throws
+ * from its own predicate.
+ *
+ * @example
+ * ```ts
+ * const stops = await walkFocus((focused) => focused.id === 'save')
+ * ```
+ */
+export async function walkFocus(
+	stop?: (element: HTMLElement) => boolean,
+): Promise<readonly HTMLElement[]> {
+	const reached: HTMLElement[] = []
+	const limit = document.getElementsByTagName('*').length
+	while (reached.length <= limit) {
+		const active = document.activeElement
+		if (!(active instanceof HTMLElement) || active === document.body || reached.includes(active)) {
+			return reached
+		}
+		reached.push(active)
+		if (stop?.(active) === true) return reached
+		await pressKeys('{Tab}')
+	}
+	throw new Error('Focus traversal did not end')
+}
+
+/**
+ * Collects the elements of a region that a forward Tab walk reaches from a starting element.
+ *
+ * @param root - The region whose stops are collected; the walk ends where focus leaves it.
+ * @param start - The element that takes focus first. It is not a stop.
+ * @returns The region's Tab stops in order, including a scroll container Chromium focuses
+ * automatically.
+ * @throws Thrown when `start` cannot take focus.
+ *
+ * @remarks
+ * The walk is {@link walkFocus} with the region's edge as its stop, so a stop outside `root` ends the
+ * walk and is left out of the result.
+ *
+ * @example
+ * ```ts
+ * const stops = await collectTabStops(screen, heading)
+ * ```
+ */
+export async function collectTabStops(
+	root: Element,
+	start: HTMLElement,
+): Promise<readonly HTMLElement[]> {
+	start.focus()
+	if (document.activeElement !== start) throw new Error('The start element cannot take focus')
+	await pressKeys('{Tab}')
+	const reached = await walkFocus((focused) => !root.contains(focused))
+	return reached.filter((stop) => stop !== start && root.contains(stop))
 }
 
 /**

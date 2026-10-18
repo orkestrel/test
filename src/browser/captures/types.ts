@@ -1,4 +1,4 @@
-import type { JourneyVariant } from '@src/core'
+import type { JourneyVariant, WaitOptions } from '@src/core'
 
 /** Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots. */
 export interface FrameOptions {
@@ -108,6 +108,15 @@ export interface PortfolioInterface {
 	 * not read back as the bytes this shot produced.
 	 */
 	place(state: string, element?: Element): Promise<string | undefined>
+}
+
+/**
+ * Configures how long a reading must hold still: the time bounds of {@link WaitOptions} and the
+ * frames it must agree across.
+ */
+export interface StabilityOptions extends WaitOptions {
+	/** Holds the count of consecutive painted frames the reading must hold across. Default: `4`. */
+	readonly frames?: number
 }
 
 /** Configures the tester's print medium, motion preference, and forced colours. */

@@ -20,6 +20,7 @@ import {
 	stageMedia,
 	stagePane,
 	waitForFrame,
+	waitForStability,
 } from '@src/browser'
 import { createRecorder, requireValue, waitForCondition } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -1507,6 +1508,54 @@ describe.sequential('media teardown after failure', () => {
 	it('reads provider defaults after the repeated release', () => {
 		expect(matchMedia('print').matches).toBe(false)
 		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+	})
+})
+
+describe('waitForStability', () => {
+	// The reading changes on its first two reads and then holds, so the read count at resolution
+	// separates a wait that counts unchanged frames from one that resolves on the first agreement.
+	it('resolves only after the frames asked for have held the settled reading, four by default', async () => {
+		for (const { options, reads: expected } of [
+			{ options: { frames: 2 }, reads: 5 },
+			{ options: { frames: 1 }, reads: 4 },
+			{ options: undefined, reads: 7 },
+		]) {
+			const reads = createRecorder<[]>()
+			await waitForStability(
+				'the reading settles',
+				() => {
+					reads.handler()
+					return String(Math.min(reads.count, 3))
+				},
+				options,
+			)
+			expect(reads.count).toBe(expected)
+		}
+	})
+
+	// The control: a reading that moves on every frame never agrees with itself, so the budget runs
+	// out and the refusal names what was being waited for.
+	it('exhausts the budget on a reading that changes every frame, naming the description', async () => {
+		const reads = createRecorder<[]>()
+		await expect(
+			waitForStability(
+				'the box holds still',
+				() => {
+					reads.handler()
+					return String(reads.count)
+				},
+				{ budget: 100 },
+			),
+		).rejects.toThrow('Condition "the box holds still" did not hold within 100ms')
+		expect(reads.count).toBeGreaterThan(2)
+	})
+
+	it('refuses a frame count that is not a positive integer', async () => {
+		for (const frames of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await expect(
+				waitForStability('the reading holds', () => 'still', { frames }),
+			).rejects.toThrow('Stability frames must be a positive integer')
+		}
 	})
 })
 

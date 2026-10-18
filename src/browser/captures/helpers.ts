@@ -4,6 +4,7 @@ import type {
 	FrameOptions,
 	FrameReading,
 	MediaOptions,
+	StabilityOptions,
 } from './types.js'
 import { waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
@@ -454,6 +455,50 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 }
 
 /**
+ * Waits for a reading to hold across consecutive painted frames.
+ *
+ * @param description - The wait described in a timeout error.
+ * @param read - The reading to compare from frame to frame, such as a scroll position or a box.
+ * @param options - The frame count, the time bounds, and the abort signal.
+ * @returns A promise resolving after the reading is unchanged across the frames asked for.
+ * @throws Thrown when the frame count is not a positive integer, when `read` throws, or when the
+ * reading keeps changing until the budget runs out. The timeout error names the description.
+ *
+ * @remarks
+ * The first read is immediate, and each later read follows one painted frame. The wait ends when the
+ * last `frames + 1` reads agree, so a reading that settles on read `n` resolves on read `n + frames`.
+ * Default frames: `4`. Default budget: `1000` milliseconds. Default interval: `10` milliseconds.
+ *
+ * @example
+ * ```ts
+ * await waitForStability('the panel holds its box', () =>
+ *   JSON.stringify(panel.getBoundingClientRect().toJSON()),
+ * )
+ * ```
+ */
+export async function waitForStability(
+	description: string,
+	read: () => string,
+	options?: StabilityOptions,
+): Promise<void> {
+	const frames = options?.frames ?? 4
+	if (!Number.isInteger(frames) || frames < 1) {
+		throw new Error('Stability frames must be a positive integer')
+	}
+	const readings = [read()]
+	await waitForCondition(
+		description,
+		async () => {
+			await waitForFrame()
+			readings.push(read())
+			const tail = readings.slice(-(frames + 1))
+			return tail.length > frames && tail.every((reading) => reading === tail[0])
+		},
+		options,
+	)
+}
+
+/**
  * Restores the media readings observed before the first stage as explicit emulation. With nothing
  * staged, clears every override and waits for a stable reading, not a proved engine baseline. Checks
  * the budget between polls, so a frame that never paints is not bounded by it.
@@ -506,15 +551,12 @@ export async function releaseMedia(): Promise<void> {
 		return
 	}
 	await sendProtocol('Emulation.setEmulatedMedia', { media: '', features: [] })
-	let previous = queries.map((query) => matchMedia(query).matches)
 	try {
-		await waitForCondition('media emulation cleared', async () => {
-			await waitForFrame()
-			const readings = queries.map((query) => matchMedia(query).matches)
-			const stable = readings.every((reading, index) => reading === previous[index])
-			previous = readings
-			return stable
-		})
+		await waitForStability(
+			'media emulation cleared',
+			() => queries.map((query) => matchMedia(query).matches).join(),
+			{ frames: 1 },
+		)
 	} catch (cause) {
 		throw new Error('Media emulation did not clear from the tester', { cause })
 	}

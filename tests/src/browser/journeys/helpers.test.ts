@@ -7,6 +7,7 @@ import {
 	clickAccessible,
 	clickAccessibleWithin,
 	clickDisclosure,
+	collectTabStops,
 	commitInput,
 	computeNamePattern,
 	describeFocus,
@@ -53,6 +54,7 @@ import {
 	waitForAnimations,
 	waitForFrame,
 	waitForState,
+	walkFocus,
 } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -1396,6 +1398,91 @@ describe('driveTraversal', () => {
 		expect(reached).toBe(second)
 		expect(document.activeElement).toBe(second)
 		expect(resolutions.count).toBeGreaterThan(2)
+	})
+})
+
+describe('walkFocus', () => {
+	it('lists every node a forward Tab reaches, once and in order, from the focused control', async () => {
+		const container = buildFixture(
+			'<button type="button">One</button><a href="#two">Two</a><input type="text" aria-label="Three">',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect((await walkFocus()).map((stop) => readName(stop))).toStrictEqual(['One', 'Two', 'Three'])
+	})
+
+	it('stops at the first node the predicate accepts and includes it', async () => {
+		const container = buildFixture(
+			'<button type="button">One</button><a href="#two">Two</a><input type="text" aria-label="Three">',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(
+			(await walkFocus((focused) => readName(focused) === 'Two')).map((stop) => readName(stop)),
+		).toStrictEqual(['One', 'Two'])
+	})
+
+	it('lists nothing when only the body holds focus', async () => {
+		buildFixture('<button type="button">One</button>')
+		if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+		expect(document.activeElement).toBe(document.body)
+		expect(await walkFocus()).toStrictEqual([])
+	})
+
+	it('reaches the focusable scroller that describeFocus leaves out', async () => {
+		const container = buildFixture(
+			'<button type="button">One</button>' +
+				'<div style="height: 40px; overflow-y: auto"><div style="height: 400px"></div></div>',
+		)
+		const scroller = requireValue(container.querySelector<HTMLElement>('div'))
+		requireValue(container.querySelector('button')).focus()
+		expect(await walkFocus()).toContain(scroller)
+		// Control: the static selector sort is a second mechanism, and it disagrees about the scroller.
+		expect(describeFocus(container)).toBe('1. button "One"')
+	})
+})
+
+describe('collectTabStops', () => {
+	const REGION = [
+		'<section data-region>',
+		'<h2 data-start tabindex="-1">Heading</h2>',
+		'<button type="button">One</button>',
+		'<button type="button" tabindex="-1">Skipped</button>',
+		'<a href="#two">Two</a>',
+		'<input type="text" aria-label="Three">',
+		'</section>',
+		'<button type="button">After</button>',
+	].join('')
+
+	it('collects the stops of a region after a start element, leaving out the start and a stop outside', async () => {
+		const container = buildFixture(REGION)
+		const region = requireValue(container.querySelector<HTMLElement>('[data-region]'))
+		const start = requireValue(container.querySelector<HTMLElement>('[data-start]'))
+		const stops = await collectTabStops(region, start)
+		expect(stops.map((stop) => readName(stop))).toStrictEqual(['One', 'Two', 'Three'])
+		expect(stops).not.toContain(start)
+		expect(stops).not.toContain(resolveAccessible('After'))
+	})
+
+	it('includes the scroller Chromium focuses on its own, which describeFocus omits', async () => {
+		const container = buildFixture(REGION)
+		const region = requireValue(container.querySelector<HTMLElement>('[data-region]'))
+		const start = requireValue(container.querySelector<HTMLElement>('[data-start]'))
+		const planted = region.appendChild(document.createElement('div'))
+		planted.setAttribute('style', 'height: 40px; overflow-y: auto')
+		planted.appendChild(document.createElement('div')).setAttribute('style', 'height: 400px')
+		const stops = await collectTabStops(region, start)
+		expect(stops.at(-1)).toBe(planted)
+		expect(stops).toHaveLength(4)
+		// Control: the static selector sort reads the same region and lists three, so the two
+		// mechanisms disagree about exactly the scroller.
+		expect(describeFocus(region).split('\n')).toHaveLength(3)
+	})
+
+	it('refuses a start element that cannot take focus', async () => {
+		const container = buildFixture(REGION)
+		const region = requireValue(container.querySelector<HTMLElement>('[data-region]'))
+		await expect(collectTabStops(region, document.createElement('div'))).rejects.toThrow(
+			'The start element cannot take focus',
+		)
 	})
 })
 
