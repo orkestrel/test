@@ -97,8 +97,8 @@ export function createDragEvent(name: string, options?: DragEventInit): DragEven
  *
  * @remarks
  * A disabled portfolio is the ordinary run. `place` then resizes nothing, writes nothing, and
- * records nothing, so a journey calls it unconditionally and a suite with the flag unset pays for
- * none of it. The portfolio refuses an unregistered variant at creation. Every run, enabled or not,
+ * records no placement, so a journey calls it unconditionally and a suite with the flag unset pays
+ * for none of it. The portfolio refuses an unregistered variant at creation. Every run, enabled or not,
  * refuses an unregistered state name and a second placement of one state, so a wrong name fails the
  * ordinary run. A disabled run keeps the names it has seen apart from `placements`, which stays
  * empty.
