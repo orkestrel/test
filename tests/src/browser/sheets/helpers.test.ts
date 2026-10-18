@@ -49,6 +49,21 @@ describe('readCascade', () => {
 		expect(order.indexOf('journey-second-outer')).toBeLessThan(order.indexOf('journey-first-inner'))
 		expect(order.indexOf('journey-first-inner')).toBeGreaterThan(-1)
 	})
+
+	it('decodes an escaped class and reads no class inside an attribute value', () => {
+		buildStylesheet(
+			String.raw`.journey-escaped\:state { color: rgb(1, 2, 3) }` +
+				'[title=".journey-quoted"] { color: rgb(4, 5, 6) }' +
+				'.-journey-offset { color: rgb(7, 8, 9) }',
+		)
+		const known = readCascade()
+		expect(known.has('journey-escaped:state')).toBe(true)
+		expect(known.has('-journey-offset')).toBe(true)
+		// A pattern stopping at the escape reads the half before it, and one blind to quoting reads
+		// the attribute value's text as a class.
+		expect(known.has('journey-escaped')).toBe(false)
+		expect(known.has('journey-quoted')).toBe(false)
+	})
 })
 
 describe('readRules', () => {

@@ -1,4 +1,5 @@
 import type { CensusFixture, CensusReading, EscapeFixture } from './types.js'
+import { collectSelectorClasses } from '@src/core'
 import { build, readStyle } from '../helpers.js'
 
 /**
@@ -19,6 +20,13 @@ import { build, readStyle } from '../helpers.js'
  * stack and inserted the deepest rule first. Iterate the set where the order is the subject, and
  * read `has` where membership is.
  *
+ * Each rule's selector text is read by {@link collectSelectorClasses}, so the tokens are the class
+ * names a selector means rather than what a pattern over its text finds: an escaped name decodes,
+ * so `.sm\:flex` defines `sm:flex` rather than `sm`; text inside an attribute value, a string, or
+ * a comment defines nothing, so `[title=".card"]` defines no `card`; and a name opening with an
+ * underscore, a hyphen, or a non-ASCII letter counts. One rule's own tokens enter in code-unit
+ * order.
+ *
  * `@keyframes` children are outside that walk, so an animation's own rules define no token here.
  * Reach the animation itself through {@link findKeyframes}.
  *
@@ -28,14 +36,11 @@ import { build, readStyle } from '../helpers.js'
  * ```
  */
 export function readCascade(): ReadonlySet<string> {
-	const known = new Set<string>()
-	for (const rule of readRules()) {
-		if (!(rule instanceof CSSStyleRule)) continue
-		for (const match of rule.selectorText.matchAll(/\.([a-zA-Z][\w-]*)/g)) {
-			known.add(String(match[1]))
-		}
-	}
-	return known
+	return new Set(
+		readRules().flatMap((rule) =>
+			rule instanceof CSSStyleRule ? collectSelectorClasses(rule.selectorText) : [],
+		),
+	)
 }
 
 /**

@@ -11,6 +11,7 @@ import {
 	captureError,
 	checkBounds,
 	collect,
+	collectSelectorClasses,
 	collectStream,
 	createHostileValues,
 	createRecorder,
@@ -1295,6 +1296,53 @@ describe('executeScenarios', () => {
 		expect(failure.cause).toBe(refusal)
 		expect(rows.calls).toStrictEqual([['closed opens on show']])
 		expect(trail.count).toBe(0)
+	})
+})
+
+describe('collectSelectorClasses', () => {
+	it('reads every selector token, excludes quoted and attribute text, and decodes escapes', () => {
+		expect(
+			collectSelectorClasses(
+				'.panel.active:is(.child, .other):not([title=".false"]) > .-offset, .panel',
+			),
+		).toStrictEqual(['-offset', 'active', 'child', 'other', 'panel'])
+		expect(
+			collectSelectorClasses(
+				String.raw`.\31 0, .a\:b, .\000061 lpha, .x\00002e y, .café, .\0 , .\110000 `,
+			),
+		).toStrictEqual(['10', 'a:b', 'alpha', 'café', 'x.y', '�'])
+		expect(
+			collectSelectorClasses(
+				String.raw`[title='escaped\' .false'][data-value=\.ignored] .real /* .comment */ :lang('.string')`,
+			),
+		).toStrictEqual(['real'])
+		expect(
+			collectSelectorClasses(String.raw`type\.not-a-class #id\.not-a-class .actual`),
+		).toStrictEqual(['actual'])
+		expect(collectSelectorClasses('')).toStrictEqual([])
+	})
+
+	it('counts a class opening with an underscore, a hyphen, or a non-ASCII letter', () => {
+		expect(
+			collectSelectorClasses('._private, .-offset, .--token, .élan, .\u{1F600}'),
+		).toStrictEqual(['--token', '-offset', '_private', 'élan', '\u{1F600}'])
+	})
+
+	it('refuses a selector whose delimiters, escapes, or alphabet cannot be read whole', () => {
+		for (const selector of [
+			'.valid { color: red }',
+			'.valid[',
+			'.valid]',
+			'.valid:not(',
+			'.valid)',
+			'.valid\\',
+			'.1bad',
+			'.valid/*',
+			'.valid[title="x]',
+			'.valid[[]]',
+		]) {
+			expect(() => collectSelectorClasses(selector)).toThrow(`Unreadable selector: ${selector}`)
+		}
 	})
 })
 

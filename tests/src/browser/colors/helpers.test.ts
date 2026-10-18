@@ -22,6 +22,7 @@ import {
 	parseColor,
 	parseCSSColor,
 	readBackdrop,
+	readColorContrast,
 	readContrast,
 	readLayers,
 	readRing,
@@ -358,6 +359,81 @@ describe('readContrast', () => {
 	})
 })
 
+describe('readColorContrast', () => {
+	it('reads the contrast a resolved color reaches against the surface behind an element', () => {
+		const container = buildFixture('<div style="background: #fff"><span>Mark</span></div>')
+		const mark = requireValue(container.querySelector('span'))
+		// Black on the white surface reads the ceiling, white on white the floor, and a clear color the
+		// same floor, because the surface shows through it.
+		expect(readColorContrast(mark, 'rgb(0, 0, 0)')).toBeCloseTo(21, 1)
+		expect(readColorContrast(mark, 'rgb(255, 255, 255)')).toBeCloseTo(1, 5)
+		expect(readColorContrast(mark, 'rgba(0, 0, 0, 0)')).toBeCloseTo(1, 5)
+		// A half-opaque black blends with the surface first, so it reads between the two.
+		const half = readColorContrast(mark, 'rgba(0, 0, 0, 0.5)')
+		expect(half).toBeGreaterThan(3.5)
+		expect(half).toBeLessThan(4.5)
+		expect(() => readColorContrast(mark, 'not a color')).toThrow(
+			'Color "not a color" is unreadable',
+		)
+	})
+
+	it('resolves a keyword and a token reference through the cascade', () => {
+		const container = buildFixture(
+			'<div style="background: #fff; --journey-ink: #000"><span>Mark</span></div>',
+		)
+		const mark = requireValue(container.querySelector('span'))
+		expect(readColorContrast(mark, 'black')).toBeCloseTo(21, 5)
+		expect(readColorContrast(mark, 'var(--journey-ink)')).toBeCloseTo(21, 5)
+	})
+
+	it('refuses a stack ending translucent unless a floor is named, and composites onto that floor', () => {
+		const container = buildFixture(
+			'<div style="background: rgba(255, 255, 255, 0.5)"><span>Mark</span></div>',
+		)
+		const mark = requireValue(container.querySelector('span'))
+		expect(() => readColorContrast(mark, 'rgb(0, 0, 0)')).toThrow(
+			'Computed background color is unavailable',
+		)
+		// The half-white tint is white over the canvas and mid grey over black, so the floor decides
+		// the answer rather than standing in for a refusal.
+		expect(readColorContrast(mark, 'rgb(0, 0, 0)', { floor: CANVAS_COLOR })).toBeCloseTo(21, 5)
+		expect(readColorContrast(mark, 'rgb(0, 0, 0)', { floor: [0, 0, 0, 1] })).toBeCloseTo(5.28, 1)
+	})
+
+	it('refuses a stack where nothing paints, and measures it on a named floor', () => {
+		const container = buildFixture('<p>Ready</p>')
+		const paragraph = requireValue(container.querySelector('p'))
+		expect(() => readColorContrast(paragraph, 'rgb(0, 0, 0)')).toThrow(
+			'Computed background color is unavailable',
+		)
+		expect(readColorContrast(paragraph, 'rgb(0, 0, 0)', { floor: CANVAS_COLOR })).toBeCloseTo(21, 5)
+	})
+
+	it('multiplies the color alpha by the opacity before compositing', () => {
+		const container = buildFixture('<div style="background: #fff"><span>Mark</span></div>')
+		const mark = requireValue(container.querySelector('span'))
+		const declared = readColorContrast(mark, 'rgba(0, 0, 0, 0.5)')
+		expect(readColorContrast(mark, 'rgb(0, 0, 0)', { opacity: 0.5 })).toBe(declared)
+		expect(readColorContrast(mark, 'rgba(0, 0, 0, 0.5)', { opacity: 1 })).toBe(declared)
+		expect(readColorContrast(mark, 'rgb(0, 0, 0)', { opacity: 0 })).toBe(1)
+		for (const opacity of [Number.NaN, -0.1, 1.1, Number.POSITIVE_INFINITY]) {
+			expect(() => readColorContrast(mark, 'rgb(0, 0, 0)', { opacity })).toThrow(
+				'Contrast opacity must be between 0 and 1',
+			)
+		}
+	})
+
+	it('refuses an unreadable painted layer even with a floor named', () => {
+		const container = buildFixture(
+			'<div id="unreadable-surface" style="background-color: color(srgb calc(infinity) 0 0)"><span>Mark</span></div>',
+		)
+		const mark = requireValue(container.querySelector('span'))
+		expect(() => readColorContrast(mark, 'rgb(0, 0, 0)', { floor: CANVAS_COLOR })).toThrow(
+			/div#unreadable-surface/u,
+		)
+	})
+})
+
 describe('readRing', () => {
 	// guides/test.md → Patterns → "Measure what a reader sees", the `readRing` fence. A browser fence
 	// carries in this directory because the guides project runs with the browser disabled.
@@ -439,6 +515,21 @@ describe('readRing', () => {
 		)
 		const control = await traverseAccessible('Shadowed')
 		expect(readRing(control)).toBeCloseTo(21, 5)
+	})
+
+	it('reads no backdrop for a focused control whose cascade paints no chrome', async () => {
+		buildFixture(
+			'<div style="background-color: color(srgb calc(infinity) 0 0)">' +
+				'<button type="button">Unpainted</button></div>',
+		)
+		const control = resolveRendered('Unpainted')
+		control.focus()
+		await userEvent.keyboard('{ArrowRight}')
+		expect(control.matches(':focus-visible')).toBe(true)
+		expect(readStyle(control, 'outline-style')).toBe('auto')
+		// Nothing is measured, so the unreadable surface behind the control is never read; the same
+		// surface behind painted chrome is refused in the modern paint readings.
+		expect(readRing(control)).toBeUndefined()
 	})
 })
 

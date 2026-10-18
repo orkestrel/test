@@ -1,4 +1,4 @@
-import type { Color, ContrastFixture } from './types.js'
+import type { Color, ContrastFixture, ContrastOptions } from './types.js'
 import { build, mount, readStyle } from '../helpers.js'
 import { CANVAS_COLOR } from './constants.js'
 
@@ -598,6 +598,70 @@ export function readBackdrop(element: Element, floor: Color): Color {
 }
 
 /**
+ * Measures the WCAG 2.x contrast ratio one color reaches when painted over an element's backdrop.
+ *
+ * @param element - The element whose own and ancestor backgrounds paint the surface.
+ * @param color - Any CSS color expression, such as the resolved `border-left-color` of a
+ * pseudo-element.
+ * @param options - The floor the backdrop walk ends on and the opacity the color is shown at.
+ * @returns The ratio of the color composited over the backdrop, against that backdrop.
+ * @throws Thrown when `color` names no readable color, when `opacity` lies outside `0` to `1`, when
+ * a painted background layer is unreadable, and — with `floor` omitted — when the walk from the
+ * element upwards reaches no opaque layer.
+ *
+ * @remarks
+ * This is the reading {@link readContrast} and {@link readRing} take for their own colors, with the
+ * color handed in: a separator grip, a placeholder, a checkbox mark, or any other paint that is not
+ * the element's text. The backdrop composites the {@link readLayers} stack top-over-bottom, the
+ * color composites over that backdrop, and the ratio is measured between the two, so a translucent
+ * color reads at the strength a reader sees.
+ *
+ * A computed color value parses directly through {@link parseColor}; any other expression, such as
+ * a keyword or a `var()` reference, resolves through {@link parseCSSColor}.
+ *
+ * With `options.floor` omitted, the walk must reach a fully opaque layer, and the refusal shares
+ * `readContrast`'s voice, because the number a stack the canvas shows through produces is as much a
+ * report of the assumption as of the page. Name the floor wherever the caller knows what the stack
+ * sits on: {@link CANVAS_COLOR} for a document, or the color a fragment is really mounted onto.
+ * `options.opacity` multiplies the color's alpha before compositing, for a mark painted inside an
+ * element whose own `opacity` is below `1`. Default: `1`.
+ *
+ * @example
+ * ```ts
+ * const container = render('<div style="background: #fff"><span>Mark</span></div>')
+ * const mark = requireValue(container.querySelector('span'))
+ * readColorContrast(mark, 'rgb(0, 0, 0)') // 21
+ * readColorContrast(mark, 'rgb(0, 0, 0)', { opacity: 0.5 }) // the rgba(0, 0, 0, 0.5) reading
+ * ```
+ */
+export function readColorContrast(
+	element: Element,
+	color: string,
+	options?: ContrastOptions,
+): number {
+	const painted = parseColor(color) ?? parseCSSColor(color)
+	if (painted === undefined) throw new Error(`Color "${color}" is unreadable`)
+	const opacity = options?.opacity ?? 1
+	if (!(opacity >= 0 && opacity <= 1)) throw new Error('Contrast opacity must be between 0 and 1')
+	const floor = options?.floor
+	const layers = readLayers(element)
+	const deepest = layers.at(-1)
+	// The walk reached a real surface exactly when its deepest layer is fully opaque. An empty stack
+	// paints nothing, and a stack ending translucent leaves the floor showing through whatever the
+	// composite reports: 64 half-transparent layers round to identical channels over opposite floors,
+	// so comparing two composited readings admits the stack this refusal exists for.
+	if (floor === undefined && (deepest === undefined || deepest[3] < 1)) {
+		throw new Error('Computed background color is unavailable')
+	}
+	const backdrop = layers.reduceRight(
+		(back, front) => blendColor(front, back),
+		floor ?? CANVAS_COLOR,
+	)
+	const [red, green, blue, alpha] = painted
+	return measureContrast(blendColor([red, green, blue, alpha * opacity], backdrop), backdrop)
+}
+
+/**
  * Measures the WCAG 2.x contrast ratio between an element's computed text and background colors.
  *
  * @param element - The element whose rendered text contrast to measure.
@@ -628,7 +692,8 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * over it rather than refused.
  *
  * The element itself must expose a computed foreground color either way. A detached element exposes
- * none, and the measurement throws rather than guessing one.
+ * none, and the measurement throws rather than guessing one. The computed foreground is then
+ * measured by {@link readColorContrast}, which owns the walk, the refusal, and the composite.
  *
  * @example
  * ```ts
@@ -638,22 +703,11 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * ```
  */
 export function readContrast(element: Element, floor?: Color): number {
-	const foreground = parseColor(getComputedStyle(element).color)
-	if (foreground === undefined) throw new Error('Computed foreground color is unavailable')
-	const layers = readLayers(element)
-	const deepest = layers.at(-1)
-	// The walk reached a real surface exactly when its deepest layer is fully opaque. An empty stack
-	// paints nothing, and a stack ending translucent leaves the floor showing through whatever the
-	// composite reports: 64 half-transparent layers round to identical channels over opposite floors,
-	// so comparing two composited readings admits the stack this refusal exists for.
-	if (floor === undefined && (deepest === undefined || deepest[3] < 1)) {
-		throw new Error('Computed background color is unavailable')
+	const foreground = getComputedStyle(element).color
+	if (parseColor(foreground) === undefined) {
+		throw new Error('Computed foreground color is unavailable')
 	}
-	const backdrop = layers.reduceRight(
-		(back, front) => blendColor(front, back),
-		floor ?? CANVAS_COLOR,
-	)
-	return measureContrast(blendColor(foreground, backdrop), backdrop)
+	return readColorContrast(element, foreground, floor === undefined ? {} : { floor })
 }
 
 /**
@@ -663,7 +717,8 @@ export function readContrast(element: Element, floor?: Color): number {
  * @param worn - The element the control's focus chrome is painted onto. Default: `control`.
  * @returns The strongest ratio the painted focus chrome reaches, or `undefined` when the control is
  * not showing `:focus-visible` or the cascade paints no chrome of its own.
- * @throws Thrown when the focused control's backdrop contains an unreadable painted color layer.
+ * @throws Thrown when the backdrop behind painted focus chrome contains an unreadable painted color
+ * layer.
  *
  * @remarks
  * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
@@ -676,10 +731,11 @@ export function readContrast(element: Element, floor?: Color): number {
  * measurement is not taken on a rectangle nobody is looking at. The focus state is still read off
  * `control`, because that is what holds it.
  *
- * The backdrop is the surface behind the element the chrome is worn on, resolved from that element's
- * parent through {@link readBackdrop} onto {@link CANVAS_COLOR}. A control whose ancestry paints
- * nothing is therefore measured against the browser's own canvas, which is what a reader looking at
- * an unstyled document sees.
+ * The backdrop is the surface behind the element the chrome is worn on: each painted color is
+ * measured by {@link readColorContrast} from that element's parent, with {@link CANVAS_COLOR} as the
+ * floor. A control whose ancestry paints nothing is therefore measured against the browser's own
+ * canvas, which is what a reader looking at an unstyled document sees. The backdrop is read only
+ * for chrome the cascade paints, so a control reporting `undefined` never reads it.
  *
  * Only chrome the cascade paints is measured — an `outline` with a real style and width, and the
  * first color in a `box-shadow`. A control left the browser's own `outline-style: auto` ring reports
@@ -701,21 +757,18 @@ export function readRing(control: Element, worn?: Element): number | undefined {
 	if (!control.matches(':focus-visible')) return undefined
 	const target = worn ?? control
 	const declared = getComputedStyle(target)
-	const backdrop = readBackdrop(target.parentElement ?? target, CANVAS_COLOR)
 	const outline =
 		declared.outlineStyle === 'none' ||
 		declared.outlineStyle === 'auto' ||
 		Number.parseFloat(declared.outlineWidth) === 0
 			? undefined
-			: parseColor(declared.outlineColor)
-	const shadow = parseColor(
-		/(?:rgba?|color|oklab|oklch|lab|lch)\([^)]*\)/u.exec(declared.boxShadow)?.[0] ?? '',
+			: declared.outlineColor
+	const shadow = /(?:rgba?|color|oklab|oklch|lab|lch)\([^)]*\)/u.exec(declared.boxShadow)?.[0]
+	const ratios = [outline, shadow].flatMap((painted) =>
+		painted === undefined || parseColor(painted) === undefined
+			? []
+			: [readColorContrast(target.parentElement ?? target, painted, { floor: CANVAS_COLOR })],
 	)
-	const ratios: number[] = []
-	for (const painted of [outline, shadow]) {
-		if (painted === undefined) continue
-		ratios.push(measureContrast(blendColor(painted, backdrop), backdrop))
-	}
 	return ratios.length === 0 ? undefined : Math.max(...ratios)
 }
 

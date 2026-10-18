@@ -509,6 +509,84 @@ export function decodeJSONLines(text: string): readonly unknown[] {
 }
 
 /**
+ * Collects the class names one selector text names, decoded and without repeats.
+ *
+ * @param selector - A selector list as `CSSStyleRule.selectorText` serializes it, functional
+ * pseudo-classes and CSS escapes included.
+ * @returns The decoded class names, each once, sorted by code unit.
+ * @throws An `Error` reading `Unreadable selector: <selector>` when a quote, comment, attribute block,
+ * or parenthesis is left open or closed twice, when an escape is cut short, when a class name opens
+ * with a digit, or when the text carries a character outside the selector alphabet, such as a
+ * declaration block's braces.
+ *
+ * @remarks
+ * This reads tokens, not the selector grammar: it never decides whether a selector is valid, only
+ * which class names it carries. Text inside a quoted string, a comment, or an attribute block
+ * contributes no name, so `[title=".card"]` names no class, and an escaped name decodes to the
+ * class it means, so `.sm\:flex` names `sm:flex`. A name may open with an underscore, a hyphen, two
+ * hyphens, a non-ASCII letter, or an escape, which is what the CSS identifier rule admits.
+ *
+ * An escape naming code point zero, a surrogate, or a point past the Unicode range decodes to the
+ * replacement character, as the CSS syntax rule decodes it.
+ *
+ * @example
+ * ```ts
+ * import { collectSelectorClasses } from '@orkestrel/test'
+ *
+ * collectSelectorClasses('.panel.active:not(.hidden)') // ['active', 'hidden', 'panel']
+ * collectSelectorClasses(String.raw`.sm\:flex[title=".card"]`) // ['sm:flex']
+ *
+ * // Throws Error: Unreadable selector: .card { color: red }
+ * collectSelectorClasses('.card { color: red }')
+ * ```
+ */
+export function collectSelectorClasses(selector: string): readonly string[] {
+	const escape = String.raw`\\(?:[0-9a-f]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f0-9a-f])`
+	const name = String.raw`(?:${escape}|[-\w\u{80}-\u{10FFFF}])`
+	const opening = String.raw`(?:--|-?(?:[_a-z\u{80}-\u{10FFFF}]|${escape}))`
+	const quoted = String.raw`"(?:[^"\\\r\n\f]|\\(?:\r\n|[\s\S]))*"|'(?:[^'\\\r\n\f]|\\(?:\r\n|[\s\S]))*'`
+	const comment = String.raw`/\*[\s\S]*?\*/`
+	const attribute = String.raw`\[(?:${quoted}|${comment}|${escape}|/(?!\*)|[^[\]"'\\/])*\]`
+	// Each match starts where the last one ended, so the matches cover the whole text exactly when
+	// every character belongs to a token; a gap is a character no token reads.
+	const tokens = [
+		...selector.matchAll(
+			new RegExp(
+				String.raw`${quoted}|${comment}|${attribute}|\.(${opening}${name}*)|${name}+|[()]|[\s>+~,*:#|&=]`,
+				'giuy',
+			),
+		),
+	]
+	const covered = tokens.reduce((length, [text]) => length + text.length, 0)
+	const depth = tokens.reduce(
+		(open, [text]) => (open < 0 ? open : open + Number(text === '(') - Number(text === ')')),
+		0,
+	)
+	if (covered !== selector.length || depth !== 0) {
+		throw new Error(`Unreadable selector: ${selector}`)
+	}
+	const names = tokens.flatMap(([, token]) =>
+		token === undefined
+			? []
+			: [
+					token.replace(
+						/\\([0-9a-f]{1,6})(?:\r\n|[ \t\r\n\f])?|\\([^\r\n\f])/giu,
+						(_escape: string, hex: string | undefined, escaped: string | undefined) => {
+							if (hex === undefined) return requireValue(escaped)
+							const point = Number.parseInt(hex, 16)
+							return String.fromCodePoint(
+								point === 0 || point > 0x10_ff_ff || (point >= 0xd8_00 && point <= 0xdf_ff)
+									? 0xff_fd
+									: point,
+							)
+						},
+					),
+				],
+	)
+	return Object.freeze([...new Set(names)].sort())
+}
+
+/**
  * Captures the value thrown by a thunk.
  *
  * @param thunk - The work whose thrown value to capture.

@@ -9,6 +9,22 @@
 export type Color = readonly [red: number, green: number, blue: number, alpha: number]
 
 /**
+ * Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the
+ * painted color is shown at.
+ *
+ * @remarks
+ * Omit `floor` to refuse a stack whose walk reaches no opaque layer, exactly as `readContrast` does.
+ * `opacity` multiplies the color's own alpha before it is composited, so a mark painted in a
+ * translucent element reads at the strength a reader sees.
+ */
+export interface ContrastOptions {
+	/** Holds the opaque color the backdrop walk ends on when nothing above it paints. */
+	readonly floor?: Color
+	/** Holds the factor, from `0` to `1`, the color's alpha is multiplied by. Default: `1`. */
+	readonly opacity?: number
+}
+
+/**
  * Holds a detached translucent stack whose flat and composited readings disagree across one bar.
  *
  * @remarks

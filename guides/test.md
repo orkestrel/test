@@ -185,35 +185,46 @@ instead of propagating.
 
 #### Helpers
 
-| API                   | Kind     | Signature                                                                             | Summary                                                                                                                                     |
-| --------------------- | -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `waitForCondition`    | function | `(description, condition, options?) => Promise<void>`                                 | Waits until a condition holds within an elapsed-time budget.                                                                                |
-| `retryUntil`          | function | `(description, produce, satisfied, options?) => Promise<T>`                           | Repeats a producer until one produced value satisfies a predicate.                                                                          |
-| `waitForEvent`        | function | `(subscribe, description, options?) => Promise<TArgs>`                                | Waits for the first delivery from an event subscription.                                                                                    |
-| `waitForText`         | function | `(description, read, text, options?) => Promise<string>`                              | Waits until a reading of text carries an expected sentence.                                                                                 |
-| `checkBounds`         | function | `(subject: string, budget: number, interval: number) => void`                         | Checks the resolved bounds one bounded wait runs under.                                                                                     |
-| `buildRetryExhausted` | function | `(description, budget, elapsed, last, cause) => Error`                                | Builds the error `retryUntil` raises when its elapsed-time budget runs out.                                                                 |
-| `buildRefusal`        | function | `(name: string, cause: unknown) => Error`                                             | Builds the error a refused fixture build raises, named for the row it was building for.                                                     |
-| `dropRegistration`    | function | `(registrations: SignalRegistration[], installed) => SignalRegistration \| undefined` | Drops the registration an instrumented signal installed for one listener.                                                                   |
-| `decodeJSONLines`     | function | `(text: string) => readonly unknown[]`                                                | Decodes newline-delimited JSON values.                                                                                                      |
-| `waitForDelay`        | function | `(ms?: number) => Promise<void>`                                                      | Waits for a host timer to elapse.                                                                                                           |
-| `waitForAbort`        | function | `(signal: AbortSignal) => Promise<void>`                                              | Waits until an abort signal is aborted.                                                                                                     |
-| `captureError`        | function | `(thunk: () => unknown) => unknown`                                                   | Captures the value thrown by a thunk.                                                                                                       |
-| `requireValue`        | function | `<T>(value: T \| null \| undefined, message?: string) => T`                           | Narrows a value away from `null` and `undefined`, throwing when it is absent.                                                               |
-| `collect`             | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`                              | Collects every value from an async iterable.                                                                                                |
-| `collectStream`       | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`                             | Collects every value from a readable stream.                                                                                                |
-| `roundTripJSON`       | function | `<T>(value: T & JSONSafe<T>) => T`                                                    | Copies a JSON value through serialization and parsing.                                                                                      |
-| `invokeUnchecked`     | function | `<T>(target: unknown, method: unknown, args: readonly unknown[]) => T`                | Invokes an unknown method through an explicit unchecked result contract.                                                                    |
-| `readProperty`        | function | `<T>(target: unknown, key: PropertyKey) => T`                                         | Reads a property from an unknown object or function.                                                                                        |
-| `flattenHeaders`      | function | `(init: HeadersSource) => Readonly<Record<string, string>>`                           | Normalizes headers into a frozen plain record.                                                                                              |
-| `resolveRoot`         | function | `(meta: ImportMeta) => URL`                                                           | Resolves the parent directory of a calling module, which is the workspace root when called from the conventional `tests/setup.ts` location. |
-| `executeScenario`     | function | `(scenario, context) => Promise<void>`                                                | Drives one statechart scenario through its arrange, act, and assert phases.                                                                 |
-| `executeScenarios`    | function | `(scenarios, build) => Promise<void>`                                                 | Drives a statechart table row by row, each row against a context of its own.                                                                |
+| API                      | Kind     | Signature                                                                             | Summary                                                                                                                                     |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `waitForCondition`       | function | `(description, condition, options?) => Promise<void>`                                 | Waits until a condition holds within an elapsed-time budget.                                                                                |
+| `retryUntil`             | function | `(description, produce, satisfied, options?) => Promise<T>`                           | Repeats a producer until one produced value satisfies a predicate.                                                                          |
+| `waitForEvent`           | function | `(subscribe, description, options?) => Promise<TArgs>`                                | Waits for the first delivery from an event subscription.                                                                                    |
+| `waitForText`            | function | `(description, read, text, options?) => Promise<string>`                              | Waits until a reading of text carries an expected sentence.                                                                                 |
+| `checkBounds`            | function | `(subject: string, budget: number, interval: number) => void`                         | Checks the resolved bounds one bounded wait runs under.                                                                                     |
+| `buildRetryExhausted`    | function | `(description, budget, elapsed, last, cause) => Error`                                | Builds the error `retryUntil` raises when its elapsed-time budget runs out.                                                                 |
+| `buildRefusal`           | function | `(name: string, cause: unknown) => Error`                                             | Builds the error a refused fixture build raises, named for the row it was building for.                                                     |
+| `dropRegistration`       | function | `(registrations: SignalRegistration[], installed) => SignalRegistration \| undefined` | Drops the registration an instrumented signal installed for one listener.                                                                   |
+| `decodeJSONLines`        | function | `(text: string) => readonly unknown[]`                                                | Decodes newline-delimited JSON values.                                                                                                      |
+| `collectSelectorClasses` | function | `(selector: string) => readonly string[]`                                             | Collects the class names one selector text names, decoded and without repeats.                                                              |
+| `waitForDelay`           | function | `(ms?: number) => Promise<void>`                                                      | Waits for a host timer to elapse.                                                                                                           |
+| `waitForAbort`           | function | `(signal: AbortSignal) => Promise<void>`                                              | Waits until an abort signal is aborted.                                                                                                     |
+| `captureError`           | function | `(thunk: () => unknown) => unknown`                                                   | Captures the value thrown by a thunk.                                                                                                       |
+| `requireValue`           | function | `<T>(value: T \| null \| undefined, message?: string) => T`                           | Narrows a value away from `null` and `undefined`, throwing when it is absent.                                                               |
+| `collect`                | function | `<T>(source: AsyncIterable<T>) => Promise<readonly T[]>`                              | Collects every value from an async iterable.                                                                                                |
+| `collectStream`          | function | `<T>(stream: ReadableStream<T>) => Promise<readonly T[]>`                             | Collects every value from a readable stream.                                                                                                |
+| `roundTripJSON`          | function | `<T>(value: T & JSONSafe<T>) => T`                                                    | Copies a JSON value through serialization and parsing.                                                                                      |
+| `invokeUnchecked`        | function | `<T>(target: unknown, method: unknown, args: readonly unknown[]) => T`                | Invokes an unknown method through an explicit unchecked result contract.                                                                    |
+| `readProperty`           | function | `<T>(target: unknown, key: PropertyKey) => T`                                         | Reads a property from an unknown object or function.                                                                                        |
+| `flattenHeaders`         | function | `(init: HeadersSource) => Readonly<Record<string, string>>`                           | Normalizes headers into a frozen plain record.                                                                                              |
+| `resolveRoot`            | function | `(meta: ImportMeta) => URL`                                                           | Resolves the parent directory of a calling module, which is the workspace root when called from the conventional `tests/setup.ts` location. |
+| `executeScenario`        | function | `(scenario, context) => Promise<void>`                                                | Drives one statechart scenario through its arrange, act, and assert phases.                                                                 |
+| `executeScenarios`       | function | `(scenarios, build) => Promise<void>`                                                 | Drives a statechart table row by row, each row against a context of its own.                                                                |
 
 `dropRegistration` is the mechanic `createSignal`'s one-shot and scope-abort paths share, exported
 because both of them call it rather than because a consumer was expected to. Reaching it takes a
 `SignalRegistration` list of your own: `createSignal` hands back `SignalInterface`, whose members are
 `controller`, `signal`, and `count`, so nothing this package returns carries the list to pass.
+
+`collectSelectorClasses` reads the class names out of a selector's text, and the browser's
+`readCascade` reads every loaded rule through it. It reads tokens, not the selector grammar: text
+inside a quoted string, a comment, or an attribute block names no class, so `[title=".card"]`
+contributes nothing, and an escaped name decodes to the class it means, so `.sm\:flex` names
+`sm:flex`. A name may open with an underscore, a hyphen, two hyphens, a non-ASCII letter, or an
+escape. Text it cannot read whole — an open or doubled quote, comment, attribute block, or
+parenthesis, a cut-short escape, a class name opening with a digit, or a character outside the
+selector alphabet such as a declaration block's braces — throws an `Error` reading
+`Unreadable selector: <selector>`.
 
 #### Factories
 
@@ -260,8 +271,9 @@ a detached control the caller appends where it is reading; `clearStorage` takes 
 `removeDatabase` takes a database name. The predicates, the element readers, and the describers name
 a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
 `readName`, `readStates`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
-`readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readLayers`, `readBackdrop`,
-and `readRing` — and each reads that node rather than acting on a target it was handed.
+`readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readColorContrast`,
+`readLayers`, `readBackdrop`, and `readRing` — and each reads that node rather than acting on a
+target it was handed.
 `waitForAnimations` takes one too, and waiting for a browser to stop painting it changes nothing
 about it. `captureFrame` and `place` take an
 element as well, and photographing one is a reading too: neither moves focus, dispatches an event,
@@ -279,6 +291,7 @@ a union's arms escaped as `\|`.
 | Type                  | Kind      | Shape                                                                          | Summary                                                                                                                                         |
 | --------------------- | --------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Color`               | type      | `readonly [red, green, blue, alpha]`                                           | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
+| `ContrastOptions`     | interface | `{ floor?, opacity? }`                                                         | Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the painted color is shown at.                    |
 | `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                             | Configures one built element: its class list, its text, and its attributes.                                                                     |
 | `FrameOptions`        | interface | `{ path, width, height, element? }`                                            | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
 | `FrameOffset`         | interface | `{ top, left }`                                                                | Represents how far an element frame moves the tester frame from the runner window's origin for the shot, in CSS pixels.                         |
@@ -383,6 +396,7 @@ A `Shape` cell holds the constant's declared type.
 | `measureContrast`          | function | `(front: Color, back: Color) => number`                                                                                 | Measures the WCAG 2.x contrast ratio between two opaque colors.                                                                                                                                                                                                                 |
 | `readLayers`               | function | `(element: Element) => readonly Color[]`                                                                                | Collects readable background color layers and refuses an unreadable painted layer.                                                                                                                                                                                              |
 | `readBackdrop`             | function | `(element: Element, floor: Color) => Color`                                                                             | Resolves the opaque color standing behind one element.                                                                                                                                                                                                                          |
+| `readColorContrast`        | function | `(element: Element, color: string, options?: ContrastOptions) => number`                                                | Measures the WCAG 2.x contrast ratio one color reaches when painted over an element's backdrop.                                                                                                                                                                                 |
 | `readContrast`             | function | `(element: Element, floor?: Color) => number`                                                                           | Measures the WCAG 2.x contrast ratio between an element's computed text and background colors.                                                                                                                                                                                  |
 | `readRing`                 | function | `(control: Element, worn?: Element) => number \| undefined`                                                             | Measures the contrast the focus chrome painted on one control reaches against its own backdrop.                                                                                                                                                                                 |
 | `readClipEdge`             | function | `(element: Element) => number \| undefined`                                                                             | Measures the row a clipping element cuts its content off at, in document coordinates.                                                                                                                                                                                           |
@@ -550,6 +564,15 @@ or the color a fragment is really mounted onto — and the same stack composites
 being refused. A detached element is refused either way, because its computed foreground color does
 not exist.
 
+`readColorContrast` is the same measurement with the color handed in, for paint that is not the
+element's own text: a separator grip, a placeholder, a checkbox mark. `readContrast` and `readRing`
+both measure through it. A computed color value parses directly, and any other expression — a
+keyword, a hex triple, a `var()` reference — resolves through `parseCSSColor`. `floor` takes the
+part `readContrast`'s second argument takes, with the same refusal and the same voice when it is
+omitted. `opacity` multiplies the color's own alpha before it is composited, for a mark painted
+inside an element whose `opacity` is below `1`, and a value outside `0` to `1` is refused rather than
+read.
+
 `readLayers` is the reading that refusal turns on. It hands back the painted layers themselves,
 element first and the deepest last, so a walk that ended on a real surface is the one whose last
 layer has an alpha of `1`. A composited color cannot answer that question: 64 half-transparent
@@ -561,7 +584,9 @@ An unreadable painted background layer throws an error naming its element and co
 Non-finite calculations such as `color(srgb calc(infinity) 0 0)` are deliberately unreadable.
 A layer with an explicit zero alpha paints nothing and is skipped, including an unreadable one.
 Background images remain outside this color reader. The refusal propagates through `readBackdrop`,
-`readContrast`, and the focused-control reading in `readRing`, even with a supplied floor.
+`readContrast`, `readColorContrast`, and the reading `readRing` takes of painted focus chrome, even
+with a supplied floor. A focused control whose cascade paints no chrome reads no backdrop, so it
+reports `undefined` over an unreadable surface too.
 
 `readBackdrop` composites that stack and takes its floor as an argument rather than reaching for
 `CANVAS_COLOR` itself, so a measurement over a surface the canvas never shows through names the
@@ -593,6 +618,14 @@ the top-level rules alone. Insertion order is breadth-first, so a top-level clas
 class declared inside an earlier grouping rule; 0.0.8 popped a stack and inserted the deepest rule
 first. Iterate the set where the order is the subject and read `has` where membership is. A
 `@keyframes` rule's own children are outside the walk, so an animation's stops define no token here.
+
+Each rule's selector text is read by `collectSelectorClasses`, and that reading differs from 0.0.26,
+which matched a pattern over the text. An escaped name decodes, so `.sm\:flex` defines `sm:flex`
+where 0.0.26 read `sm`. Text inside an attribute value, a string, or a comment defines nothing, so
+`[title=".card"]` defines no `card`. A name opening with an underscore, a hyphen, or a non-ASCII
+letter counts, where 0.0.26 skipped it. A census that saw any of those misreadings reports the
+corrected set, so `readCensus` can move a token into or out of `undeclared`. One rule's own tokens
+enter the set in code-unit order rather than in the order the selector writes them.
 
 `findRule` and `findKeyframes` differ in how they match, and the subject is what decides it. A
 selector is compound, so `findRule` matches its argument as a substring of the whole selector text:
@@ -1157,7 +1190,9 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Named region "<name>" could not be resolved`                                            | `readPerception`          |
 | `Interactive target "<name>" does not carry a value`                                     | `readValue`               |
 | `Computed foreground color is unavailable`                                               | `readContrast`            |
-| `Computed background color is unavailable`                                               | `readContrast`            |
+| `Computed background color is unavailable`                                               | `readColorContrast`       |
+| `Color "<value>" is unreadable`                                                          | `readColorContrast`       |
+| `Contrast opacity must be between 0 and 1`                                               | `readColorContrast`       |
 | `Tester pane is unavailable for a capture`                                               | `stagePane`               |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                    | `stagePane`               |
 | `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane`        | `captureFrame`            |
@@ -1183,6 +1218,9 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Storage quota must be a non-negative integer`                                           | `createStorage`           |
 | `Statechart harness mounted no transition`                                               | `createHarness`           |
 | `Statechart harness carries no status`                                                   | `status`                  |
+
+`readContrast` measures through `readColorContrast`, so its background refusal is that row's voice,
+and `readRing` never raises it, because it names `CANVAS_COLOR` as the floor on every reading.
 
 Some of those rows are not plain `Error` messages. `buildDenial` returns a `DOMException` named
 `SecurityError`, `createStorage` raises that one from every operation the permission withholds and a
@@ -1456,8 +1494,9 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     predicates, the element readers, and the describers do take a node —
     `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`, `readName`, `readStates`,
     `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`,
-    `readToken`, `readPixels`, `readContrast`, `readLayers`, `readBackdrop`, and `readRing` — and
-    each is a reader of a node the caller already has rather than a verb that acts on a target.
+    `readToken`, `readPixels`, `readContrast`, `readColorContrast`, `readLayers`, `readBackdrop`,
+    and `readRing` — and each is a reader of a node the caller already has rather than a verb that
+    acts on a target.
     `waitForAnimations` takes one as the subject of a wait, and waiting for a browser to stop
     painting it changes nothing about it. `buildContrast`, `buildEscapes`, and `buildCensus` return
     detached nodes for the caller to append and remove, the way `build` does. `captureFrame`
@@ -3610,7 +3649,11 @@ Each entry names the contracts its file proves. The test names carry the cases.
   carrying both the arrival and the departure that `absent` waits past, an empty expectation and an
   empty departure each refused, a reader throw propagated unchanged, the timeout naming the wait and
   the budget, an abort rejecting with the signal's own reason, and a refused bound raised through the
-  family. `decodeJSONLines` takes empty input, a trailing newline, CRLF,
+  family. `collectSelectorClasses` takes a selector list whose functional pseudo-classes nest class
+  names beside an attribute block, quoted strings, and a comment that name none, every escape form
+  decoded with the out-of-range points read as the replacement character, names opening with an
+  underscore, a hyphen, two hyphens, and a non-ASCII letter, the empty selector, and each unreadable
+  text refused by name. `decodeJSONLines` takes empty input, a trailing newline, CRLF,
   line order, primitive lines, and a malformed physical line named with the native `SyntaxError` as
   its cause. `collect` and `collectStream` drain an empty and an ordered source, and the stream's
   reader lock is released afterwards. `roundTripJSON` takes a copy of a flat and a nested
@@ -3733,7 +3776,12 @@ Each entry names the contracts its file proves. The test names carry the cases.
   nothing paints and one whose every painted layer is translucent, a stack 64 translucent layers
   deep whose composite has rounded to the canvas's own channels, a detached element whose computed
   foreground does not exist, and the same unpainted and translucent stacks measured against a
-  supplied floor instead of refused. The color leaves beneath it take their own inputs: `parseColor`
+  supplied floor instead of refused. `readColorContrast` takes the ceiling, the floor, a clear
+  color, and a half-opaque one over an opaque surface, a keyword and a `var()` reference resolved
+  through the cascade, a translucent and an unpainted stack refused until a floor is named and then
+  composited onto it, an `opacity` reading equal to the declared alpha it multiplies with the
+  refused factors beside it, and an unreadable color and an unreadable painted layer each refused.
+  The color leaves beneath it take their own inputs: `parseColor`
   across the legacy and modern syntaxes, a refused keyword, hex triple, empty value, and unsupported
   color space, and — as the control the literals cannot supply — what this browser actually computes
   for a keyword and for a `color-mix()`. `blendColor`, `measureLuminance`, and `measureContrast`
@@ -3744,7 +3792,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   composited onto it, and an opaque layer that ends the walk. `readRing` takes a painted outline and
   a painted box-shadow reached through `traverseAccessible`, a control that is not focused, a
   focused control left the browser's own ring, a focus style that only repaints the control's fill,
-  and a `worn` element whose reading separates from the control's own. `measureContent` takes a
+  a `worn` element whose reading separates from the control's own, and an unpainted focused control
+  over an unreadable surface that reads no backdrop. `measureContent` takes a
   1600-row document read under an 844 pane and under a 2356 one, against the scroll height that
   agrees with it under the shorter pane and stretches to the pane under the taller, and a document
   whose last element carries a bottom margin under a body carrying bottom padding, where a reading
@@ -3797,7 +3846,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   bottom row split between two colors reported as no floor at all, a path holding no file,
   a file holding no image and refused without a size, and a PNG header over no image data, refused
   with the size the header declares. The `readCascade` function takes class tokens collected from
-  plain and grouped rules and only real ones;
+  plain and grouped rules and only real ones, and an escaped class decoded beside an attribute
+  value whose class-like text defines nothing;
   `readRows` takes a row joined from its own text nodes rather than from run-together content, and
   an empty list; `extractOrphans` takes a child class rendered outside its container with a nested
   one left alone, nothing reported when every child sits inside one, and, as the control, an element
