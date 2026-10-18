@@ -394,7 +394,7 @@ A `Shape` cell holds the constant's declared type.
 | -------------------- | -------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `createPointerEvent` | function | `(name: string, options?: PointerEventInit) => PointerEvent`                                              | Creates one real pointer event, ready to dispatch.                                                |
 | `createDragEvent`    | function | `(name: string, options?: DragEventInit) => DragEvent`                                                    | Creates one real drag event carrying a live data transfer, ready to dispatch.                     |
-| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | Creates the capture portfolio one run places its screenshots through.                             |
+| `createPortfolio`    | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | Creates the capture portfolio one run places its screenshots through; a disabled run still refuses. |
 | `createChannel`      | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | Creates one console channel that records every call it receives and hands that call on unchanged. |
 | `createJournal`      | function | `() => JournalInterface`                                                                                  | Creates the journal one scenario records its steps and the page's own output into.                |
 | `createStorage`      | function | `(options?: StorageOptions) => WebStorageInterface`                                                       | Creates an inert `Storage` a host can withhold, grant, and run out of room in.                    |
@@ -706,8 +706,10 @@ pixels; a file with no PNG header is refused without a size.
 
 `createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
 naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
-resizes nothing, writes nothing, and records nothing, so a journey calls it unconditionally. An
-enabled `place` applies the variant and writes `<directory>/<state>--<variant>.png` through
+resizes nothing, writes nothing, and records nothing, so a journey calls it unconditionally. It
+still refuses an unregistered state and a second placement of one state, so a journey that names a
+state wrongly fails the ordinary run rather than the first capture run; `placements` and `paths`
+stay empty, because they answer for what was captured. An enabled `place` applies the variant and writes `<directory>/<state>--<variant>.png` through
 `captureFrame`, so it stages the pane at the variant's size, covers the whole document, verifies the
 written bytes, and records only a path that read back as this run's own frame. The tester comes back
 at the viewport it had before the placement, so a journey that places a state carries on at its own
@@ -3772,7 +3774,9 @@ Each entry names the contracts its file proves. The test names carry the cases.
   contract, and the portfolio's refusals, its disabled gate, and its writes. Creation refuses an
   unregistered variant name; the registry expands across every variant whether or not the run
   writes; a run
-  that is not enabled applies nothing, writes nothing, and records nothing; an enabled run applies
+  that is not enabled applies nothing, writes nothing, and records nothing, yet refuses an
+  unregistered state and a second placement of one state, and accepts two distinct registered states
+  with its lists still empty; an enabled run applies
   the variant, resizes the viewport, writes a real file through the provider, records it, and hands
   out snapshots rather than its own lists; it refuses an unregistered state and a second placement of
   one state; and a placement handed an element writes a frame that is not the whole page's and leaves

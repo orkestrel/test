@@ -170,6 +170,47 @@ describe('createPortfolio', () => {
 		expect(portfolio.paths).toStrictEqual([])
 	})
 
+	it('refuses a second placement of one state while the run is not enabled', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+		})
+		await expect(portfolio.place('answer-ideal')).resolves.toBeUndefined()
+		await expect(portfolio.place('answer-ideal')).rejects.toThrow(
+			'Capture state "answer-ideal" is already placed',
+		)
+		expect(portfolio.placements).toStrictEqual([])
+		expect(portfolio.paths).toStrictEqual([])
+	})
+
+	it('refuses a state the registry does not carry while the run is not enabled', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+		})
+		await expect(portfolio.place('answer-partial')).rejects.toThrow(
+			'Capture state "answer-partial" is not registered',
+		)
+		expect(portfolio.placements).toStrictEqual([])
+	})
+
+	it('accepts two distinct registered states while the run is not enabled', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+		})
+		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
+		await expect(portfolio.place('answer-ideal')).resolves.toBeUndefined()
+		expect(portfolio.placements).toStrictEqual([])
+		expect(portfolio.paths).toStrictEqual([])
+	})
+
 	it('refuses a state the registry does not carry', async () => {
 		const portfolio = createPortfolio({
 			states: STATES,

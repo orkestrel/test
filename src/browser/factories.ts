@@ -98,8 +98,10 @@ export function createDragEvent(name: string, options?: DragEventInit): DragEven
  * @remarks
  * A disabled portfolio is the ordinary run. `place` then resizes nothing, writes nothing, and
  * records nothing, so a journey calls it unconditionally and a suite with the flag unset pays for
- * none of it. The portfolio refuses an unregistered variant at creation. An enabled run refuses an
- * unregistered state name and a second placement of one state.
+ * none of it. The portfolio refuses an unregistered variant at creation. Every run, enabled or not,
+ * refuses an unregistered state name and a second placement of one state, so a wrong name fails the
+ * ordinary run. A disabled run keeps the names it has seen apart from `placements`, which stays
+ * empty.
  *
  * An enabled `place` writes through `captureFrame`, so a placed state carries that helper's staged
  * pane and its byte readback: a path is recorded only after the file on disk has been proved to hold
@@ -126,6 +128,9 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 	const enabled = options.enabled ?? false
 	const placed: string[] = []
 	const paths: string[] = []
+	// The names a disabled run has been asked for, kept apart from `placed` so that list keeps
+	// meaning "captured".
+	const seen: string[] = []
 	return {
 		variant: options.variant,
 		files,
@@ -136,12 +141,15 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 			return [...paths]
 		},
 		async place(state, element) {
-			if (!enabled) return undefined
 			if (!registry.includes(state)) {
 				throw new Error(`Capture state "${state}" is not registered`)
 			}
-			if (placed.includes(state)) {
+			if (placed.includes(state) || seen.includes(state)) {
 				throw new Error(`Capture state "${state}" is already placed`)
+			}
+			if (!enabled) {
+				seen.push(state)
+				return undefined
 			}
 			const file = `${state}--${options.variant}.png`
 			selected.apply?.()
