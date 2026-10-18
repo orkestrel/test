@@ -107,8 +107,8 @@ const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['
 Object.keys(sources)
 // ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts', 'src/core/validators.ts', 'src/server/constants.ts',
-//  'src/server/factories.ts', 'src/server/handlers.ts', 'src/server/helpers.ts',
-//  'src/server/index.ts', 'src/server/types.ts']
+//  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts',
+//  'src/server/types.ts']
 
 // The keys are paths; the values are the file contents.
 sources['src/core/index.ts']
