@@ -27,13 +27,22 @@ import {
 	readLayers,
 	readRing,
 	readStyle,
+	releasePointer,
 	resolveRendered,
 	traverseAccessible,
 } from '@src/browser'
 import { requireValue } from '@src/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../../setupBrowser.js'
+
+// A Tab pressed before the page holds real input focus moves nothing, and a file that opens on a
+// traversal case gets no focus from an earlier one. A trusted click gives the page that focus, and
+// the release returns the pointer to the origin it started from.
+beforeAll(async () => {
+	await userEvent.click(document.body)
+	await releasePointer()
+})
 
 afterEach(resetFixtures)
 
