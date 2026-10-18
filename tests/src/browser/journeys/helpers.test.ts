@@ -7,10 +7,12 @@ import {
 	clickAccessible,
 	clickAccessibleWithin,
 	clickDisclosure,
+	collectScrollRegions,
 	collectTabStops,
 	commitInput,
 	computeNamePattern,
 	describeFocus,
+	describeScrollRegions,
 	describeTree,
 	driveHold,
 	driveTraversal,
@@ -23,8 +25,10 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	parkPointer,
 	POINTER_HOLD,
 	pressKeys,
+	readAnimations,
 	readContrast,
 	readFocus,
 	readHit,
@@ -47,6 +51,7 @@ import {
 	resolveFileInput,
 	resolveRendered,
 	sendProtocol,
+	settleCapture,
 	traverseAccessible,
 	traverseAccessibleWithin,
 	typeAccessible,
@@ -1079,6 +1084,46 @@ describe('holdAccessible', () => {
 		)
 		await holdAccessible('tab', 'Drafts')
 		expect(resolveAccessible('tab', 'Drafts').matches(':active')).toBe(true)
+	})
+})
+
+describe('parkPointer', () => {
+	it('moves the pointer off a hovered control and clears its hover', async () => {
+		buildFixture('<button type="button">Hovered</button>')
+		await hoverAccessible('Hovered')
+		const button = resolveAccessible('Hovered')
+		expect(button.matches(':hover')).toBe(true)
+		await parkPointer()
+		expect(button.matches(':hover')).toBe(false)
+	})
+
+	// The control is the release that follows: it shows the recorder sees a button-up, so the zero
+	// before it reads as a press left held rather than as a recorder that sees nothing.
+	it('leaves a held press held, and the release clears it', async () => {
+		buildFixture('<button type="button">Held</button>')
+		const releases = createRecorder<[event: PointerEvent]>()
+		document.addEventListener('pointerup', releases.handler)
+		try {
+			await holdAccessible('Held')
+			const held = document.documentElement.getAttribute(POINTER_HOLD)
+			expect(held).not.toBeNull()
+			await parkPointer()
+			expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe(held)
+			expect(releases.count).toBe(0)
+			// The pointer left the control, so its `:active` paint is gone although the press is owed a release.
+			expect(resolveAccessible('Held').matches(':active')).toBe(false)
+			await releasePointer()
+			expect(releases.count).toBe(1)
+			expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+			expect(resolveAccessible('Held').matches(':active')).toBe(false)
+		} finally {
+			document.removeEventListener('pointerup', releases.handler)
+		}
+	})
+
+	it('resolves with an idle pointer', async () => {
+		await expect(parkPointer()).resolves.toBeUndefined()
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
 	})
 })
 
@@ -2208,6 +2253,197 @@ describe('waitForAnimations', () => {
 
 		expect(settled).toBeGreaterThan(moving)
 		expect(readStyle(panel, 'color')).toBe('rgb(0, 0, 0)')
+	})
+})
+
+describe('readAnimations', () => {
+	it('splits the running animations by whether each one ends, beside a paused one and an outside one it leaves out', () => {
+		buildStylesheet(
+			'@keyframes settle-turn { to { transform: rotate(360deg) } }' +
+				'.settle-turn { width: 20px; height: 20px; animation: settle-turn 800ms linear infinite }' +
+				'.settle-grow { width: 10px; transition: width 5000ms linear }',
+		)
+		const container = buildFixture(
+			'<section><div class="settle-turn"></div><div class="settle-grow"></div><div class="settle-rest"></div></section>',
+		)
+		const outside = buildFixture('<div class="settle-turn"></div>')
+		const section = requireValue(container.querySelector('section'))
+		const grow = requireValue(container.querySelector<HTMLElement>('.settle-grow'))
+		const rest = requireValue(container.querySelector<HTMLElement>('.settle-rest'))
+		expect(readStyle(grow, 'width')).toBe('10px')
+		grow.style.width = '200px'
+		const paused = rest.animate({ opacity: [1, 0.2] }, { duration: 5000 })
+		paused.pause()
+		try {
+			const reading = readAnimations(section)
+			expect(
+				reading.finite.map((animation) =>
+					animation instanceof CSSTransition ? animation.transitionProperty : animation.id,
+				),
+			).toStrictEqual(['width'])
+			expect(
+				reading.endless.map((animation) =>
+					animation instanceof CSSAnimation ? animation.animationName : animation.id,
+				),
+			).toStrictEqual(['settle-turn'])
+			// Control: the browser reports the paused animation on the section, and neither list holds
+			// it; the spinner outside the section is the outside element's alone.
+			expect(section.getAnimations({ subtree: true })).toContain(paused)
+			expect([...reading.finite, ...reading.endless]).not.toContain(paused)
+			expect(readAnimations(requireValue(outside.firstElementChild)).endless).toHaveLength(1)
+			expect(readAnimations(build('div'))).toStrictEqual({ finite: [], endless: [] })
+		} finally {
+			paused.cancel()
+		}
+	})
+})
+
+describe('settleCapture', () => {
+	it('parks the pointer, waits out transitions, and holds endless animations at their first frame, beside the page left unsettled', async () => {
+		buildStylesheet(
+			'.settle-fill { background-color: rgb(255, 255, 255); transition: background-color 400ms linear }' +
+				'.settle-fill:hover { background-color: rgb(200, 0, 0) }' +
+				'@keyframes settle-turn { to { transform: rotate(360deg) } }' +
+				'.settle-turn { width: 20px; height: 20px; animation: settle-turn 800ms linear infinite }',
+		)
+		const container = buildFixture(
+			'<button class="settle-fill" type="button">Hover target</button><div class="settle-turn"></div>',
+		)
+		const button = resolveAccessible('Hover target')
+		const turn = requireValue(container.querySelector<HTMLElement>('.settle-turn'))
+		await hoverAccessible('Hover target')
+		// Control: before the settle the pointer holds the hover, a transition runs, and the spinner turns.
+		expect(button.matches(':hover')).toBe(true)
+		expect(readAnimations(container).finite.length).toBeGreaterThan(0)
+		expect(readAnimations(container).endless.map((animation) => animation.playState)).toStrictEqual(
+			['running'],
+		)
+		const resume = await settleCapture({ budget: 2000 })
+		try {
+			expect(button.matches(':hover')).toBe(false)
+			expect(readAnimations(document.documentElement).finite).toStrictEqual([])
+			expect(readStyle(button, 'background-color')).toBe('rgb(255, 255, 255)')
+			const [held] = turn.getAnimations()
+			expect(held?.playState).toBe('paused')
+			expect(held?.currentTime).toBe(0)
+			expect(readStyle(turn, 'transform')).toBe('matrix(1, 0, 0, 1, 0, 0)')
+		} finally {
+			resume()
+		}
+		expect(turn.getAnimations()[0]?.playState).toBe('running')
+	})
+
+	it('leaves the pointer and its pressed paint where they are when asked, beside the default park that takes the pressed paint away', async () => {
+		buildFixture('<button type="button">Held</button>')
+		await holdAccessible('Held')
+		const held = document.documentElement.getAttribute(POINTER_HOLD)
+		expect(held).not.toBeNull()
+		const kept = await settleCapture({ pointer: false })
+		try {
+			expect(resolveAccessible('Held').matches(':hover')).toBe(true)
+			expect(resolveAccessible('Held').matches(':active')).toBe(true)
+		} finally {
+			kept()
+		}
+		// Control: the default settle parks the pointer, so the control loses its hover and its pressed
+		// paint, and the press stays owed its release either way.
+		const parked = await settleCapture()
+		try {
+			expect(resolveAccessible('Held').matches(':hover')).toBe(false)
+			expect(resolveAccessible('Held').matches(':active')).toBe(false)
+			expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe(held)
+		} finally {
+			parked()
+		}
+	})
+
+	it('refuses with the wait voice when a finite animation outlasts the budget, and holds nothing', async () => {
+		buildStylesheet(
+			'@keyframes settle-turn { to { transform: rotate(360deg) } }' +
+				'.settle-turn { width: 20px; height: 20px; animation: settle-turn 800ms linear infinite }' +
+				'.settle-slow { width: 10px; transition: width 5000ms linear }',
+		)
+		const container = buildFixture('<div class="settle-turn"></div><div class="settle-slow"></div>')
+		const turn = requireValue(container.querySelector<HTMLElement>('.settle-turn'))
+		const slow = requireValue(container.querySelector<HTMLElement>('.settle-slow'))
+		expect(readStyle(slow, 'width')).toBe('10px')
+		slow.style.width = '200px'
+		await expect(settleCapture({ budget: 20 })).rejects.toThrow(
+			'Animation "html" did not settle within 20ms',
+		)
+		expect(turn.getAnimations()[0]?.playState).toBe('running')
+	})
+})
+
+describe('collectScrollRegions', () => {
+	it('collects the rendered boxes that scroll and describes each offset beside the largest one it reaches', () => {
+		const root = buildFixture(
+			[
+				'<div id="vertical" style="overflow: auto; height: 50px"><div style="height: 200px"></div></div>',
+				'<div id="horizontal" style="overflow-x: auto; width: 100px; height: 40px"><div style="width: 300px; height: 10px"></div></div>',
+				'<div id="fits" style="overflow: auto; height: 100px"><div style="height: 20px"></div></div>',
+				'<div id="clipped" style="overflow: hidden; height: 50px"><div style="height: 200px"></div></div>',
+				'<div id="absent" hidden style="overflow: auto; height: 50px"><div style="height: 200px"></div></div>',
+			].join(''),
+		)
+		const regions = collectScrollRegions(root)
+		expect(regions.map(({ id }) => id)).toStrictEqual(['vertical', 'horizontal'])
+		// Each axis keeps only the boxes that scroll along it.
+		expect(collectScrollRegions(root, 'inline').map(({ id }) => id)).toStrictEqual(['horizontal'])
+		expect(collectScrollRegions(root, 'block').map(({ id }) => id)).toStrictEqual(['vertical'])
+		const text = describeScrollRegions(regions)
+		expect(text.split('\n')[0]).toMatch(/^window \d+x\d+ scroll /u)
+		expect(text).toContain('scroll div#vertical: left 0/0 top 0/150')
+		expect(text).toContain('scroll div#horizontal: left 0/200 top 0/0')
+		for (const id of ['fits', 'clipped', 'absent']) expect(text).not.toContain(`#${id}`)
+		// Control: a population with no scrolling box says so.
+		expect(describeScrollRegions([]).split('\n')[1]).toBe('no scroll region overflows')
+	})
+
+	it('counts the root itself when it scrolls', () => {
+		const root = buildFixture('<div style="height: 200px"></div>')
+		root.style.overflowY = 'auto'
+		root.style.height = '50px'
+		expect(collectScrollRegions(root)).toStrictEqual([root])
+		// Control: the same root with room for its content scrolls nowhere.
+		root.style.height = '300px'
+		expect(collectScrollRegions(root)).toStrictEqual([])
+	})
+})
+
+describe('describeScrollRegions', () => {
+	it('names a region by its tag, its id, and its accessible name cut to 40 characters, with its offsets after a scroll', () => {
+		const name = 'A pane whose accessible name runs past forty characters'
+		// The scrollbars are hidden so each box measures its declared size on a host that draws
+		// classic scrollbars as well as on one that overlays them.
+		const root = buildFixture(
+			[
+				`<section aria-label="${name}" style="overflow: auto; scrollbar-width: none; width: 100px; height: 50px">`,
+				'<div style="width: 300px; height: 200px"></div>',
+				'</section>',
+				'<div style="overflow: auto; scrollbar-width: none; width: 100px; height: 50px"><div style="height: 120px"></div></div>',
+				'<div style="height: 3000px"></div>',
+			].join(''),
+		)
+		const [pane, bare] = collectScrollRegions(root)
+		const scrolled = requireValue(pane)
+		scrolled.scrollTo({ left: 20, top: 30, behavior: 'instant' })
+		try {
+			window.scrollTo({ left: 0, top: 25, behavior: 'instant' })
+			const lines = describeScrollRegions([scrolled, requireValue(bare)]).split('\n')
+			expect(lines.slice(1)).toStrictEqual([
+				`scroll section "${name.slice(0, 40)}": left 20/200 top 30/150 box 100x50 content 300x200`,
+				'scroll div: left 0/0 top 0/70 box 100x50 content 100x120',
+			])
+			expect(lines[0]).toMatch(
+				new RegExp(
+					`^window ${String(innerWidth)}x${String(innerHeight)} scroll 0,25 of \\d+,\\d+$`,
+					'u',
+				),
+			)
+		} finally {
+			window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
+		}
 	})
 })
 

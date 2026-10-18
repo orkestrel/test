@@ -1,4 +1,14 @@
 /**
+ * Represents one rendered color as straight sRGB channels and its alpha.
+ *
+ * @remarks
+ * The channels run 0–255 and the alpha runs 0–1, which is the shape a computed `rgb()` value already
+ * carries. `parseColor` converts the 0–1 channels of `color(srgb …)` onto the same scale, so every
+ * color the measurement family passes around is comparable without asking where it came from.
+ */
+export type Color = readonly [red: number, green: number, blue: number, alpha: number]
+
+/**
  * Configures one built element: its class list, its text, and its attributes.
  *
  * @remarks

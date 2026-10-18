@@ -34,31 +34,6 @@ export async function sendProtocol(
 }
 
 /**
- * Parks the pointer outside the page and waits for the parked pointer's frame to paint.
- *
- * @returns A promise resolving after the pointer has moved to its park point and one frame has painted.
- * @throws Thrown when the provider exposes no DevTools session, or the move rejects.
- *
- * @remarks
- * The park point is (-1, -1) in the runner page's coordinates, one pixel above and to the left of
- * that page's viewport. The browser hit-tests nothing outside the viewport, so no element keeps its
- * hover paint from the parked pointer. This sends no button release: a press that the
- * `holdAccessible` verb holds stays recorded as held and its button-up is still owed, so a later
- * `releasePointer` call sends it. The control a held press was on loses its `:active` paint when the
- * pointer leaves it. Use this verb to clear hover without ending a held press, and
- * `releasePointer` for teardown.
- *
- * @example
- * ```ts
- * await parkPointer()
- * ```
- */
-export async function parkPointer(): Promise<void> {
-	await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: -1, y: -1 })
-	await waitForFrame()
-}
-
-/**
  * Waits for one animation frame to settle pending browser paint work.
  *
  * @returns A promise resolving after one `requestAnimationFrame`.

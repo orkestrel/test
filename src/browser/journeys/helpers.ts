@@ -1,5 +1,5 @@
 import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@src/core'
-import type { StateOptions } from './types.js'
+import type { AnimationReading, SettleOptions, StateOptions } from './types.js'
 import { isError, isString } from '@orkestrel/contract'
 import {
 	checkBounds,
@@ -9,7 +9,7 @@ import {
 	waitForCondition,
 } from '@src/core'
 import { commands, page, userEvent } from 'vitest/browser'
-import { parkPointer, sendProtocol, waitForFrame } from '../helpers.js'
+import { sendProtocol, waitForFrame } from '../helpers.js'
 import {
 	ACCESSIBLE_ROLES,
 	CONTENT_ROLES,
@@ -721,6 +721,31 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
 		}
 		throw error
 	}
+}
+
+/**
+ * Parks the pointer outside the page and waits for the parked pointer's frame to paint.
+ *
+ * @returns A promise resolving after the pointer has moved to its park point and one frame has painted.
+ * @throws Thrown when the provider exposes no DevTools session, or the move rejects.
+ *
+ * @remarks
+ * The park point is (-1, -1) in the runner page's coordinates, one pixel above and to the left of
+ * that page's viewport. The browser hit-tests nothing outside the viewport, so no element keeps its
+ * hover paint from the parked pointer. This sends no button release: a press that the
+ * `holdAccessible` verb holds stays recorded as held and its button-up is still owed, so a later
+ * `releasePointer` call sends it. The control a held press was on loses its `:active` paint when the
+ * pointer leaves it. Use this verb to clear hover without ending a held press, and
+ * `releasePointer` for teardown.
+ *
+ * @example
+ * ```ts
+ * await parkPointer()
+ * ```
+ */
+export async function parkPointer(): Promise<void> {
+	await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x: -1, y: -1 })
+	await waitForFrame()
 }
 
 /**
@@ -1637,10 +1662,7 @@ export async function waitForAnimations(element: Element, options?: WaitOptions)
 	try {
 		while (true) {
 			signal?.throwIfAborted()
-			const running = element.getAnimations({ subtree: true }).filter((animation) => {
-				const iterations = animation.effect?.getTiming().iterations ?? 1
-				return animation.playState === 'running' && Number.isFinite(iterations)
-			})
+			const running = readAnimations(element).finite
 			if (running.length === 0) return
 			const elapsed = performance.now() - start
 			if (expired || elapsed >= budget) {
@@ -1668,6 +1690,154 @@ export async function waitForAnimations(element: Element, options?: WaitOptions)
 	} finally {
 		if (timer !== undefined) clearTimeout(timer)
 	}
+}
+
+/**
+ * Reads the animations running on one element and its subtree, split by whether each one ends.
+ *
+ * @param element - The element whose own animations and descendants' animations to read.
+ * @returns The running animations that end, and the running animations whose effect declares
+ * infinite iterations.
+ *
+ * @remarks
+ * The split is the one {@link waitForAnimations} waits by: it waits on `finite` and leaves
+ * `endless` running. A paused, an idle, and a finished animation are at rest, so neither
+ * list holds one. A detached element runs no animation and reads as two empty lists.
+ *
+ * @example
+ * ```ts
+ * readAnimations(document.documentElement).finite.length // 0 once every transition has settled
+ * ```
+ */
+export function readAnimations(element: Element): AnimationReading {
+	const running = element
+		.getAnimations({ subtree: true })
+		.filter((animation) => animation.playState === 'running')
+	return {
+		finite: running.filter((animation) =>
+			Number.isFinite(animation.effect?.getTiming().iterations ?? 1),
+		),
+		endless: running.filter(
+			(animation) => !Number.isFinite(animation.effect?.getTiming().iterations ?? 1),
+		),
+	}
+}
+
+/**
+ * Settles the page for one capture: parks the pointer, waits out every finite animation, and holds
+ * each endless animation at its first frame.
+ *
+ * @param options - The time bounds of the wait, its abort signal, and whether the pointer parks.
+ * @returns A promise resolving, after one more frame has painted, to the resume: a function that
+ * sets every held animation running again.
+ * @throws Thrown when the pointer cannot park, as {@link parkPointer} raises it, and when a finite
+ * animation is still running at the budget, as {@link waitForAnimations} raises it. An aborted wait
+ * rejects with the signal's reason.
+ *
+ * @remarks
+ * A pointer left over a control paints that control's hover, and a transition still running paints
+ * a fill between two states, so neither is a state the interface rests in. An endless animation, a
+ * spinner or a placeholder shimmer, stands at a different phase in every frame unless it is held at
+ * the same one, so each is paused at its first frame. Call the resume once the frame is shot; a
+ * capture that throws still owes it, so call it from a `finally` block.
+ *
+ * The subject is the whole document, its root element included. The pointer parks through
+ * {@link parkPointer}, which sends no button release, so a held press stays held either way. Pass
+ * `pointer: false` only where the pointer is part of the state, such as a drag in flight: the
+ * control under it then keeps its hover and its pressed paint. Default budget: `1000` milliseconds.
+ *
+ * @example
+ * ```ts
+ * const resume = await settleCapture()
+ * try {
+ * 	await portfolio.place('start-empty')
+ * } finally {
+ * 	resume()
+ * }
+ * ```
+ */
+export async function settleCapture(options?: SettleOptions): Promise<() => void> {
+	if (options?.pointer ?? true) await parkPointer()
+	await waitForFrame()
+	await waitForAnimations(document.documentElement, options)
+	const held = readAnimations(document.documentElement).endless
+	for (const animation of held) {
+		animation.pause()
+		animation.currentTime = 0
+	}
+	await waitForFrame()
+	return () => {
+		for (const animation of held) animation.play()
+	}
+}
+
+/**
+ * Collects the rendered boxes a person can scroll.
+ *
+ * @param root - The element whose subtree is searched, the root included.
+ * @param axis - The scroll axis to keep: `'inline'` for boxes that scroll across, `'block'` for
+ * boxes that scroll down. Omit it to keep both.
+ * @returns Each rendered element, in document order, whose resolved overflow scrolls on a searched
+ * axis where its content is larger than its box.
+ *
+ * @remarks
+ * A screenshot shows no scrollbar where the browser overlays them, so a frame alone never tells
+ * that a pane scrolls or how far. A box counts when its `overflow-x` or `overflow-y` value is the
+ * `auto` keyword or the `scroll` keyword and its content overflows on that axis; a `hidden` or
+ * `clip` box cuts its content without letting anyone scroll it, and a box whose content fits has
+ * nowhere to go. An element {@link isRendered} refuses is left out, because nobody can see it scroll.
+ *
+ * @example
+ * ```ts
+ * collectScrollRegions(document.documentElement).map((region) => region.id)
+ * collectScrollRegions(document.documentElement, 'inline').map((region) => region.id)
+ * ```
+ */
+export function collectScrollRegions(
+	root: Element,
+	axis?: 'inline' | 'block',
+): readonly HTMLElement[] {
+	return [root, ...root.querySelectorAll('*')].filter((element): element is HTMLElement => {
+		if (!(element instanceof HTMLElement) || !isRendered(element)) return false
+		const style = getComputedStyle(element)
+		const inline =
+			['auto', 'scroll'].includes(style.overflowX) && element.scrollWidth > element.clientWidth
+		const block =
+			['auto', 'scroll'].includes(style.overflowY) && element.scrollHeight > element.clientHeight
+		return (axis !== 'block' && inline) || (axis !== 'inline' && block)
+	})
+}
+
+/**
+ * Describes the window's scroll position and each scroll region's offsets and extents.
+ *
+ * @param regions - The regions to describe, as {@link collectScrollRegions} returns them.
+ * @returns One line for the window, then one line per region with each offset beside the largest
+ * offset that region reaches, or a line saying no region overflows.
+ *
+ * @remarks
+ * The window line reads `window <w>x<h> scroll <x>,<y> of <x>,<y>`. Each region line reads
+ * `scroll <tag>#<id> "<name>": left <x>/<x> top <y>/<y> box <w>x<h> content <w>x<h>`, where the id
+ * and the accessible name appear only when the region carries them and the name is cut to 40
+ * characters. Record it beside a frame, so the journey's output says which panes scroll and where
+ * each one stood when the picture was taken.
+ *
+ * @example
+ * ```ts
+ * describeScrollRegions(collectScrollRegions(document.documentElement))
+ * ```
+ */
+export function describeScrollRegions(regions: readonly HTMLElement[]): string {
+	const root = document.documentElement
+	return [
+		`window ${String(innerWidth)}x${String(innerHeight)} scroll ${String(scrollX)},${String(scrollY)} of ${String(root.scrollWidth - innerWidth)},${String(root.scrollHeight - innerHeight)}`,
+		...(regions.length === 0
+			? ['no scroll region overflows']
+			: regions.map((region) => {
+					const name = readName(region).slice(0, 40)
+					return `scroll ${region.localName}${region.id === '' ? '' : `#${region.id}`}${name === '' ? '' : ` "${name}"`}: left ${String(region.scrollLeft)}/${String(region.scrollWidth - region.clientWidth)} top ${String(region.scrollTop)}/${String(region.scrollHeight - region.clientHeight)} box ${String(region.clientWidth)}x${String(region.clientHeight)} content ${String(region.scrollWidth)}x${String(region.scrollHeight)}`
+				})),
+	].join('\n')
 }
 
 /**

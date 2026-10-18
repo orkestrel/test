@@ -1,3 +1,4 @@
+import type { Color } from '../types.js'
 import type {
 	CaptureVariant,
 	FrameOffset,
@@ -108,6 +109,53 @@ export function readClipMargin(element: Element): number {
 	if (overflow !== 'clip' && !(overflow === 'visible' && clipsOverflow(element))) return 0
 	const length = /(-?\d*\.?\d+)px/u.exec(readStyle(element, 'overflow-clip-margin'))
 	return length === null ? 0 : Number.parseFloat(length[1] ?? '0')
+}
+
+/**
+ * Measures the block size an element shows after every clipping ancestor cuts it.
+ *
+ * @param element - The element to read.
+ * @returns The height in CSS pixels of the part of the element's box that lies inside the clip of
+ * every ancestor that clips its overflow, and `0` where none of it does.
+ *
+ * @remarks
+ * The `getBoundingClientRect` method reports the whole box of a clipped element, so a bar taller
+ * than its frame still reads its own height there; this reading is the height a person sees. An
+ * ancestor clips where the {@link clipsOverflow} helper says so. Its top edge is the top of its
+ * padding box, and its bottom edge is the one the {@link readClipEdge} helper measures, so a paint
+ * containment and an `overflow-clip-margin` length count. That edge comes in document coordinates
+ * and is converted into the viewport coordinates the box is read in, so a scrolled page reads the
+ * same height as an unscrolled one.
+ *
+ * @example
+ * ```ts
+ * readClippedBlock(bar) // the frame's height where the frame clips a taller bar
+ * ```
+ */
+export function readClippedBlock(element: Element): number {
+	const box = element.getBoundingClientRect()
+	const walker = element.ownerDocument.createTreeWalker(
+		element.ownerDocument,
+		NodeFilter.SHOW_ELEMENT,
+	)
+	walker.currentNode = element
+	const frames: Element[] = []
+	while (walker.parentNode() !== null) {
+		const ancestor = walker.currentNode
+		if (ancestor instanceof Element && clipsOverflow(ancestor)) frames.push(ancestor)
+	}
+	const top = Math.max(
+		box.top,
+		...frames.map((frame) => frame.getBoundingClientRect().top + frame.clientTop),
+	)
+	const bottom = Math.min(
+		box.bottom,
+		...frames.flatMap((frame) => {
+			const edge = readClipEdge(frame)
+			return edge === undefined ? [] : [edge - window.scrollY]
+		}),
+	)
+	return Math.max(0, bottom - top)
 }
 
 /**
@@ -849,6 +897,47 @@ export async function readFrame(path: string): Promise<FrameReading> {
 		height: image.height,
 		floor: single ? `rgb(${String(red)}, ${String(green)}, ${String(blue)})` : undefined,
 	}
+}
+
+/**
+ * Reads one painted pixel of an element's screenshot.
+ *
+ * @param element - The rendered element to shoot.
+ * @param x - The pixel's horizontal position as a fraction of the shot's width, from `0` to `1`.
+ * @param y - The pixel's vertical position as a fraction of the shot's height, from `0` to `1`.
+ * @returns The pixel's frozen color: its channels from 0 to 255 and its alpha from 0 to 1.
+ * @throws Thrown when the provider cannot shoot the element, when the shot is not an image this
+ * browser decodes, and when the browser hands out no 2D canvas to measure it on.
+ *
+ * @remarks
+ * The runner scales the tester to fit its window, so a shot's size in device pixels is not the
+ * element's size in CSS pixels. The position is therefore a fraction of the shot rather than an
+ * offset, and a fraction of `1` reads the last row or column rather than one past it. The shot is
+ * not saved. The reading is what the provider painted, so it answers for compositing, stacking, and
+ * clipping that a computed style cannot see; it composes with `matchesColor` and `measureContrast`.
+ *
+ * @example
+ * ```ts
+ * const [red, green, blue] = await readShotPixel(figure, 0.5, 0.5)
+ * ```
+ */
+export async function readShotPixel(element: Element, x: number, y: number): Promise<Color> {
+	const encoded = await page.screenshot({ element, save: false })
+	const image = new Image()
+	image.src = `data:image/png;base64,${encoded}`
+	await image.decode().catch((cause: unknown) => {
+		throw new Error('Shot is not an image this browser decodes', { cause })
+	})
+	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')
+	if (context === null) throw new Error('Shot cannot be measured without a 2D canvas')
+	context.drawImage(image, 0, 0)
+	const [red = 0, green = 0, blue = 0, alpha = 0] = context.getImageData(
+		Math.min(image.width - 1, Math.floor(image.width * x)),
+		Math.min(image.height - 1, Math.floor(image.height * y)),
+		1,
+		1,
+	).data
+	return Object.freeze([red, green, blue, alpha / 255])
 }
 
 /**

@@ -66,6 +66,34 @@ export interface StateOptions extends WaitOptions {
 }
 
 /**
+ * Configures one capture settle: the time bounds of {@link WaitOptions} and whether the pointer
+ * parks first.
+ *
+ * @remarks
+ * The bounds go to the wait on finite animations and mean there what they mean everywhere else.
+ * Leave the pointer where it is only where the pointer is part of the state being shot, such as a
+ * drag in flight.
+ */
+export interface SettleOptions extends WaitOptions {
+	/** Determines whether the pointer parks outside the page before the wait. Default: `true`. */
+	readonly pointer?: boolean
+}
+
+/**
+ * Represents the animations running on one element and its subtree, split by whether each one ends.
+ *
+ * @remarks
+ * An animation counts as endless when its effect declares infinite iterations. A paused, an idle,
+ * and a finished animation are at rest, so neither list holds one.
+ */
+export interface AnimationReading {
+	/** Lists the running animations that end, the ones `waitForAnimations` waits on. */
+	readonly finite: readonly Animation[]
+	/** Lists the running animations whose effect declares infinite iterations. */
+	readonly endless: readonly Animation[]
+}
+
+/**
  * Configures an inert `Storage`: its seed, which operations the host permits, and its quota.
  *
  * @remarks

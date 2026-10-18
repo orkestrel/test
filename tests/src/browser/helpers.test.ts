@@ -3,19 +3,14 @@ import type { JourneyVariant } from '@src/core'
 import {
 	build,
 	expandCaptures,
-	holdAccessible,
-	hoverAccessible,
 	mount,
-	parkPointer,
-	POINTER_HOLD,
 	readPixels,
 	readStyle,
-	releasePointer,
 	render,
 	resolveAccessible,
 	waitForFrame,
 } from '@src/browser'
-import { createRecorder, createTeardown, requireValue } from '@src/core'
+import { createTeardown, requireValue } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
@@ -29,48 +24,6 @@ describe('waitForFrame', () => {
 		})
 		await waitForFrame()
 		expect(painted).toBe(true)
-	})
-})
-
-describe('parkPointer', () => {
-	afterEach(releasePointer)
-
-	it('moves the pointer off a hovered control and clears its hover', async () => {
-		buildFixture('<button type="button">Hovered</button>')
-		await hoverAccessible('Hovered')
-		const button = resolveAccessible('Hovered')
-		expect(button.matches(':hover')).toBe(true)
-		await parkPointer()
-		expect(button.matches(':hover')).toBe(false)
-	})
-
-	// The control is the release that follows: it shows the recorder sees a button-up, so the zero
-	// before it reads as a press left held rather than as a recorder that sees nothing.
-	it('leaves a held press held, and the release clears it', async () => {
-		buildFixture('<button type="button">Held</button>')
-		const releases = createRecorder<[event: PointerEvent]>()
-		document.addEventListener('pointerup', releases.handler)
-		try {
-			await holdAccessible('Held')
-			const held = document.documentElement.getAttribute(POINTER_HOLD)
-			expect(held).not.toBeNull()
-			await parkPointer()
-			expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe(held)
-			expect(releases.count).toBe(0)
-			// The pointer left the control, so its `:active` paint is gone although the press is owed a release.
-			expect(resolveAccessible('Held').matches(':active')).toBe(false)
-			await releasePointer()
-			expect(releases.count).toBe(1)
-			expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
-			expect(resolveAccessible('Held').matches(':active')).toBe(false)
-		} finally {
-			document.removeEventListener('pointerup', releases.handler)
-		}
-	})
-
-	it('resolves with an idle pointer', async () => {
-		await expect(parkPointer()).resolves.toBeUndefined()
-		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
 	})
 })
 

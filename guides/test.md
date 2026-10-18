@@ -272,12 +272,14 @@ a detached control the caller appends where it is reading; `clearStorage` takes 
 a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
 `readName`, `readStates`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
 `readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readColorContrast`,
-`readLayers`, `readBackdrop`, and `readRing` — and each reads that node rather than acting on a
-target it was handed.
+`readLayers`, `readBackdrop`, `readRing`, `readAnimations`, `readClippedBlock`, and
+`collectScrollRegions` — and each reads that node rather than acting on a target it was handed.
 `waitForAnimations` takes one too, and waiting for a browser to stop painting it changes nothing
 about it. `captureFrame` and `place` take an
 element as well, and photographing one is a reading too: neither moves focus, dispatches an event,
-or changes what the element renders. `typeInput` and `commitInput` are the exception, and it stays
+or changes what the element renders. `readShotPixel` takes one for the same reason and reads one
+pixel of the provider's shot of it. `settleCapture` takes no element: it parks the pointer the way
+`parkPointer` does and holds the document's endless animations until the resume it returns runs. `typeInput` and `commitInput` are the exception, and it stays
 narrow: they write into the field they are given, as the synthetic counterpart of `typeAccessible`
 for a component that listens for `input`. The color leaves, the cascade readers, the pane verbs,
 and the whole-document readers take a value or nothing at all, so they name no target either.
@@ -302,6 +304,8 @@ a union's arms escaped as `\|`.
 | `JournalStep`         | interface | `{ action, trigger, result }`                                                  | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
 | `JournalInterface`    | interface | `{ steps, output }` plus `start` / `stop` / `record`                           | Records one scenario: every step it took and everything the page said while it ran.                                                             |
 | `StateOptions`        | interface | `WaitOptions` plus `{ absent? }`                                               | Configures a bounded wait over the states a control announces.                                                                                  |
+| `SettleOptions`       | interface | `WaitOptions` plus `{ pointer? }`                                              | Configures one capture settle: the time bounds of `WaitOptions` and whether the pointer parks first.                                            |
+| `AnimationReading`    | interface | `{ finite, endless }`                                                          | Represents the animations running on one element and its subtree, split by whether each one ends.                                               |
 | `MediaOptions`        | interface | `{ print?, motion?, forced? }`                                                 | Configures the tester's print medium, motion preference, and forced colours.                                                                    |
 | `StabilityOptions`    | interface | `WaitOptions` plus `{ frames? }`                                               | Configures how long a reading must hold still: the time bounds of `WaitOptions` and the frames it must agree across.                            |
 | `StorageOptions`      | interface | `{ values?, reads?, writes?, quota? }`                                         | Configures an inert `Storage`: its seed, which operations the host permits, and its quota.                                                      |
@@ -375,6 +379,10 @@ A `Shape` cell holds the constant's declared type.
 | `waitForFrame`             | function | `() => Promise<void>`                                                                                                   | Waits for one animation frame to settle pending browser paint work.                                                                                                                                                                                                             |
 | `waitForState`             | function | `(name, state, options?) => Promise<readonly string[]>` / `(role, name, state, options?) => Promise<readonly string[]>` | Waits until one named control announces a state, or stops announcing it.                                                                                                                                                                                                        |
 | `waitForAnimations`        | function | `(element: Element, options?: WaitOptions) => Promise<void>`                                                            | Waits until every finite animation on one element and its subtree has stopped moving.                                                                                                                                                                                           |
+| `readAnimations`           | function | `(element: Element) => AnimationReading`                                                                                | Reads the animations running on one element and its subtree, split by whether each one ends.                                                                                                                                                                                    |
+| `settleCapture`            | function | `(options?: SettleOptions) => Promise<() => void>`                                                                      | Settles the page for one capture: parks the pointer, waits out every finite animation, and holds each endless animation at its first frame.                                                                                                                                     |
+| `collectScrollRegions`     | function | `(root: Element, axis?: 'inline' \| 'block') => readonly HTMLElement[]`                                                 | Collects the rendered boxes a person can scroll.                                                                                                                                                                                                                                |
+| `describeScrollRegions`    | function | `(regions: readonly HTMLElement[]) => string`                                                                           | Describes the window's scroll position and each scroll region's offsets and extents.                                                                                                                                                                                            |
 | `build`                    | function | `<K extends keyof HTMLElementTagNameMap>(tag: K, options?: ElementOptions) => HTMLElementTagNameMap[K]`                 | Builds one unmounted element of a known tag, wearing the classes, text, and attributes asked for.                                                                                                                                                                               |
 | `mount`                    | function | `<T extends Element>(element: T) => T`                                                                                  | Puts one element into the document and hands it straight back.                                                                                                                                                                                                                  |
 | `render`                   | function | `(markup: string) => HTMLDivElement` / `(tag: K, classes: string) => HTMLElementTagNameMap[K]`                          | Renders one fixture into the document from trusted markup.                                                                                                                                                                                                                      |
@@ -405,6 +413,7 @@ A `Shape` cell holds the constant's declared type.
 | `readRing`                 | function | `(control: Element, worn?: Element) => number \| undefined`                                                             | Measures the contrast the focus chrome painted on one control reaches against its own backdrop.                                                                                                                                                                                 |
 | `readClipEdge`             | function | `(element: Element) => number \| undefined`                                                                             | Measures the row a clipping element cuts its content off at, in document coordinates.                                                                                                                                                                                           |
 | `readClipMargin`           | function | `(element: Element) => number`                                                                                          | Measures how far past its own box a clipping element lets its content show.                                                                                                                                                                                                     |
+| `readClippedBlock`         | function | `(element: Element) => number`                                                                                          | Measures the block size an element shows after every clipping ancestor cuts it.                                                                                                                                                                                                 |
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                         | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
 | `measureContent`           | function | `() => number`                                                                                                          | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                      | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
@@ -415,6 +424,7 @@ A `Shape` cell holds the constant's declared type.
 | `waitForStability`         | function | `(description: string, read: () => string, options?: StabilityOptions) => Promise<void>`                                | Waits for a reading to hold across consecutive painted frames.                                                                                                                                                                                                                  |
 | `captureFrame`             | function | `(options: FrameOptions) => Promise<string>`                                                                            | Shoots one frame at one viewport size and proves the file on disk holds this run's bytes.                                                                                                                                                                                       |
 | `readFrame`                | function | `(path: string) => Promise<FrameReading>`                                                                               | Reads one written frame back and reports its size and the color its bottom row paints.                                                                                                                                                                                          |
+| `readShotPixel`            | function | `(element: Element, x: number, y: number) => Promise<Color>`                                                            | Reads one painted pixel of an element's screenshot.                                                                                                                                                                                                                             |
 | `readCascade`              | function | `() => ReadonlySet<string>`                                                                                             | Collects every class token the stylesheets loaded into this document actually define.                                                                                                                                                                                           |
 | `readClasses`              | function | `(root: ParentNode) => ReadonlySet<string>`                                                                             | Collects every class token the markup under one root carries.                                                                                                                                                                                                                   |
 | `readCensus`               | function | `(root: ParentNode) => CensusReading`                                                                                   | Takes the authored-class census of one subtree against the cascade this document loaded.                                                                                                                                                                                        |
@@ -1210,6 +1220,8 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Capture frame at <path> is not an image this browser decodes`                           | `readFrame`               |
 | `Capture frame at <path> is not an image this browser decodes: <w>x<h> device pixels`    | `readFrame`               |
 | `Capture frame at <path> cannot be measured without a 2D canvas`                         | `readFrame`               |
+| `Shot is not an image this browser decodes`                                              | `readShotPixel`           |
+| `Shot cannot be measured without a 2D canvas`                                            | `readShotPixel`           |
 | `Capture variant "<name>" is not registered`                                             | `createPortfolio`         |
 | `Capture state "<state>" is not registered`                                              | `place`                   |
 | `Capture state "<state>" is already placed`                                              | `place`                   |
@@ -1246,7 +1258,8 @@ states it last read, so an exhausted wait says what the control was announcing i
 `waitForAnimations` names the subject through `readRole` and `readName` and lists the animations
 still running. Both validate their bounds through `checkBounds`, which raises
 `Wait budget must be finite and non-negative` for the first and `Animation budget must be finite and
-non-negative` for the second.
+non-negative` for the second. `settleCapture` raises the `waitForAnimations` voices unchanged, and
+because it waits on the document's root element, an exhausted settle names `html` as its subject.
 
 Some of them are narrowing rather than findings, and no input reaches them. Each `could not be
 resolved` is one: a preceding length check does not narrow the later lookup under
@@ -1264,7 +1277,9 @@ disk disagrees with the bytes the provider handed back — which a provider that
 never produces, so the suite proves that comparison discriminates with a planted file rather than by
 reaching the refusal. `Capture frame at <path> cannot be measured without a 2D canvas` is narrowing
 of the same kind: a canvas allocated for this reading and asked for no other context type hands one
-back. The remaining refusals of the `readFrame` function are driven, by a path holding no file, by a
+back. `readShotPixel` carries the same pair for a shot the provider hands back rather than a file:
+`Shot cannot be measured without a 2D canvas` is that narrowing, and `Shot is not an image this
+browser decodes` fires only where the provider returns bytes that are not the image it shot. The remaining refusals of the `readFrame` function are driven, by a path holding no file, by a
 file holding no image, and by a PNG header over no image data, and so is
 `Capture frame at <path> never settled after <n> restagings`, by a fixture whose full-height panel
 grows with every pane the capture stages.
@@ -1836,6 +1851,16 @@ the helper rather than to the host, and each names what to reach for instead.
   `n + frames`. The default is four frames; the budget and interval are those of `waitForCondition`.
   A reading that changes on every frame exhausts the budget, and the refusal names the description.
   The `releaseMedia` function with nothing staged waits through it for one frame.
+- **`settleCapture` holds endless animations until its resume runs.** It parks the pointer through
+  `parkPointer`, so a held press stays held and only loses its pressed paint; `pointer: false`
+  leaves the pointer, its hover, and that paint where they are. It waits out every finite animation
+  in the document, root element included, then pauses each endless one at its first frame and
+  resolves to the resume. Call the resume from a `finally` block once the frame is shot. A settle
+  whose wait exhausts throws before it holds anything, so it owes no resume.
+- **`readShotPixel` reads a shot at the runner's scale.** The position is a fraction of the shot,
+  and a fraction of `1` reads its last row or column. Where the runner scales the tester, the shot's
+  edge pixels can blend with what lies beside the element, so read a pixel inside a painted band rather
+  than on its edge.
 - **`stageMedia` overrides the provider page, and `releaseMedia` restores the first stage's
   readings.** Pin a base with `{ motion: true }` rather than assuming the host prefers motion.
   `motion: false` stages reduced motion; `print: true` stages print, and `print: false` stages
@@ -3572,6 +3597,16 @@ await portfolio.place('start-empty')
 portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
 ```
 
+Settle the page before each frame of a capture run. `settleCapture` parks the pointer, waits out
+every finite animation in the document, and holds each endless one at its first frame, so a hover,
+a transition caught part way, and a spinner's phase stay out of the picture. It resolves to the
+resume; call `place` after it, and call the resume from a `finally` block, so the held animations
+run again whether or not the frame was written. Pass `pointer: false` where the pointer is part of
+the state, such as a drag in flight. Gate the settle on the flag `enabled` takes: an ordinary run's
+`place` shoots nothing, and parking the pointer there changes the journey that run is proving.
+Where a frame holds a scroll region, record `describeScrollRegions` of what `collectScrollRegions`
+finds beside it, because a picture does not show how far a pane scrolls.
+
 ### Measure a document's content edge
 
 A capture stages the pane at the height the document needs, and the body's box cannot answer for
@@ -3751,7 +3786,17 @@ Each entry names the contracts its file proves. The test names carry the cases.
   reading, and a refused bound. `waitForAnimations` takes a descendant transition awaited to its end,
   the exhaustion naming the subject and the animation still running, an infinite-iteration animation
   excluded while it is still turning, a detached subject refused, and a refused bound; its settled
-  reading is compared against the interpolated one taken mid-transition. `readRefusal` takes the
+  reading is compared against the interpolated one taken mid-transition. `readAnimations` takes a
+  running transition and a running infinite animation split apart, a paused animation and one
+  outside the subject left out, and a detached element read as two empty lists. `settleCapture`
+  takes a hovered control's transition waited out and a spinner held at its first frame until the
+  resume sets it running, a held press whose hover and pressed paint `pointer: false` leaves in
+  place beside the default park that takes both away, and an exhausted wait refused with nothing
+  held. `collectScrollRegions` takes a vertical and a horizontal scroller beside a box whose content
+  fits, a clipping box, and a hidden one, each axis alone, and a scrolling root counted itself;
+  `describeScrollRegions` takes a region named by its tag, its id, and its cut accessible name with
+  its offsets after a scroll, the window's position after a scroll, and an empty population.
+  `readRefusal` takes the
   absent, gated, and ambiguous voices beside a target that resolves under a bare name and under a
   role, and — as the control for the rethrow — a fixture element whose own `tabIndex` getter refuses
   with a string, handed straight back. `readCensus` takes a population carrying both undeclared
@@ -3873,7 +3918,11 @@ Each entry names the contracts its file proves. The test names carry the cases.
   frame's size and floor, read a second way through the cascade's own answer for the same canvas, a
   bottom row split between two colors reported as no floor at all, a path holding no file,
   a file holding no image and refused without a size, and a PNG header over no image data, refused
-  with the size the header declares. The `readCascade` function takes class tokens collected from
+  with the size the header declares. The `readShotPixel` function takes each half of a split shot,
+  frozen, and both corners clamped onto the shot. The `readClippedBlock` function takes a frame
+  clipping a taller child, a paint containment and a clip margin, elements wholly under a frame's
+  edge, an unclipped control, and the same reading on a page scrolled past its top, which a reading
+  that skipped the coordinate conversion fails. The `readCascade` function takes class tokens collected from
   plain and grouped rules and only real ones, and an escaped class decoded beside an attribute
   value whose class-like text defines nothing;
   `readRows` takes a row joined from its own text nodes rather than from run-together content, and

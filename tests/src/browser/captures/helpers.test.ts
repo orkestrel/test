@@ -9,8 +9,10 @@ import {
 	MEDIA_STAGE,
 	readClipEdge,
 	readClipMargin,
+	readClippedBlock,
 	readFrame,
 	readPixels,
+	readShotPixel,
 	readStyle,
 	releaseMedia,
 	releasePane,
@@ -92,6 +94,59 @@ describe('readClipMargin', () => {
 		for (const { style, margin } of CLIP_MARGIN_CASES) {
 			const frame = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
 			expect({ style, margin: readClipMargin(frame) }).toStrictEqual({ style, margin })
+		}
+	})
+})
+
+describe('readClippedBlock', () => {
+	it('reads the block size a clipping ancestor leaves of a taller element, beside an unclipped one', () => {
+		const root = buildFixture(
+			[
+				'<div data-frame style="height: 80px; overflow: hidden">',
+				'<div data-tall style="height: 200px"></div>',
+				'<div data-below style="height: 40px"></div>',
+				'</div>',
+				'<div data-open style="height: 80px"><div data-free style="height: 200px"></div></div>',
+				'<div data-inner style="height: 50px; overflow: hidden"><div data-outer style="height: 20px; margin-top: 60px"></div></div>',
+				'<div data-paint style="height: 80px; contain: paint"><div data-paint-tall style="height: 200px"></div></div>',
+				'<div data-margin style="height: 80px; overflow: clip; overflow-clip-margin: 20px"><div data-margin-tall style="height: 200px"></div></div>',
+			].join(''),
+		)
+		const tall = requireValue(root.querySelector('[data-tall]'))
+		expect(tall.getBoundingClientRect().height).toBe(200)
+		expect(readClippedBlock(tall)).toBe(80)
+		// A frame whose overflow stays visible clips by paint containment, and an `overflow: clip` frame
+		// lets its content show as far as its clip margin reaches.
+		expect(readClippedBlock(requireValue(root.querySelector('[data-paint-tall]')))).toBe(80)
+		expect(readClippedBlock(requireValue(root.querySelector('[data-margin-tall]')))).toBe(100)
+		// An element wholly under the frame's edge shows nothing.
+		expect(readClippedBlock(requireValue(root.querySelector('[data-below]')))).toBe(0)
+		expect(readClippedBlock(requireValue(root.querySelector('[data-outer]')))).toBe(0)
+		// Control: a parent that clips nothing leaves the full box.
+		expect(readClippedBlock(requireValue(root.querySelector('[data-free]')))).toBe(200)
+	})
+
+	// The clip edge is read in document coordinates and the box in viewport ones, so only a scrolled
+	// page tells a reading that converts between them from one that does not: at the top of the page
+	// the two coordinate systems agree.
+	it('reads the same clipped height after the page scrolls, beside the reading taken at the top', () => {
+		const root = buildFixture(
+			[
+				'<div data-frame style="height: 80px; margin-top: 40px; overflow: hidden">',
+				'<div data-tall style="height: 200px"></div>',
+				'</div>',
+				'<div style="height: 3000px"></div>',
+			].join(''),
+		)
+		const tall = requireValue(root.querySelector('[data-tall]'))
+		try {
+			window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
+			expect(readClippedBlock(tall)).toBe(80)
+			window.scrollTo({ left: 0, top: 30, behavior: 'instant' })
+			expect(window.scrollY).toBe(30)
+			expect(readClippedBlock(tall)).toBe(80)
+		} finally {
+			window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
 		}
 	})
 })
@@ -1241,6 +1296,25 @@ describe('readFrame', () => {
 			'message',
 			`Capture frame at ${planted} is not an image this browser decodes: 40000x30000 device pixels`,
 		)
+	})
+})
+
+describe('readShotPixel', () => {
+	it('reads one painted pixel of an element shot at a fraction of the shot, clamped to its last pixel, beside the opposite half', async () => {
+		const root = buildFixture(
+			'<div data-shot style="width: 200px; height: 100px; background: linear-gradient(to right, rgb(255, 0, 0) 50%, rgb(0, 0, 255) 50%)"></div>',
+		)
+		const shot = requireValue(root.querySelector<HTMLElement>('[data-shot]'))
+		const left = await readShotPixel(shot, 0.25, 0.5)
+		expect(left).toStrictEqual([255, 0, 0, 1])
+		expect(Object.isFrozen(left)).toBe(true)
+		// Control: the opposite half reads the other color, so the position selects the pixel read.
+		expect(await readShotPixel(shot, 0.75, 0.5)).toStrictEqual([0, 0, 255, 1])
+		// The shot's edge pixels blend with the page when the runner scales the frame, so the corners
+		// read as the half they sit in rather than as the pure color.
+		const [first, last] = [await readShotPixel(shot, 0, 0), await readShotPixel(shot, 1, 1)]
+		expect(first[0]).toBeGreaterThan(first[2])
+		expect(last[2]).toBeGreaterThan(last[0])
 	})
 })
 

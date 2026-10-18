@@ -1,4 +1,4 @@
-import type { Color } from './types.js'
+import type { Color } from '../types.js'
 
 /**
  * Names the color a browser paints an unstyled document with: opaque white.

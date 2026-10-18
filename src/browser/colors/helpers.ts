@@ -1,4 +1,5 @@
-import type { Color, ContrastFixture, ContrastOptions } from './types.js'
+import type { Color } from '../types.js'
+import type { ContrastFixture, ContrastOptions } from './types.js'
 import { build, mount, readStyle } from '../helpers.js'
 import { CANVAS_COLOR } from './constants.js'
 
