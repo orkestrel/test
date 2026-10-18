@@ -38,7 +38,7 @@ import { buildFixture, buildStylesheet, resetFixtures } from '../../../setupBrow
 
 // A Tab pressed before the page holds real input focus moves nothing, and a file that opens on a
 // traversal case gets no focus from an earlier one. A trusted click gives the page that focus, and
-// the release returns the pointer to the origin it started from.
+// `releasePointer` parks the pointer at (-1, -1), so the click does not leave it on the body.
 beforeAll(async () => {
 	await userEvent.click(document.body)
 	await releasePointer()
@@ -526,9 +526,9 @@ describe('readRing', () => {
 		expect(readRing(control)).toBeCloseTo(21, 5)
 	})
 
-	it('reads no backdrop for a focused control whose cascade paints no chrome', async () => {
+	it('refuses an unreadable backdrop behind a focused control whose cascade paints no chrome', async () => {
 		buildFixture(
-			'<div style="background-color: color(srgb calc(infinity) 0 0)">' +
+			'<div id="unreadable-surface" style="background-color: color(srgb calc(infinity) 0 0)">' +
 				'<button type="button">Unpainted</button></div>',
 		)
 		const control = resolveRendered('Unpainted')
@@ -536,9 +536,11 @@ describe('readRing', () => {
 		await userEvent.keyboard('{ArrowRight}')
 		expect(control.matches(':focus-visible')).toBe(true)
 		expect(readStyle(control, 'outline-style')).toBe('auto')
-		// Nothing is measured, so the unreadable surface behind the control is never read; the same
-		// surface behind painted chrome is refused in the modern paint readings.
-		expect(readRing(control)).toBeUndefined()
+		// The backdrop is read for every focused control before the chrome is looked for, so the
+		// unreadable surface refuses the reading although nothing would have been measured.
+		expect(() => readRing(control)).toThrow(
+			/Computed background color is unreadable on div#unreadable-surface/u,
+		)
 	})
 })
 

@@ -717,8 +717,9 @@ export function readContrast(element: Element, floor?: Color): number {
  * @param worn - The element the control's focus chrome is painted onto. Default: `control`.
  * @returns The strongest ratio the painted focus chrome reaches, or `undefined` when the control is
  * not showing `:focus-visible` or the cascade paints no chrome of its own.
- * @throws Thrown when the backdrop behind painted focus chrome contains an unreadable painted color
- * layer.
+ * @throws Thrown when the control is showing `:focus-visible` and the backdrop behind the element
+ * the chrome is worn on contains an unreadable painted color layer, whether or not the cascade
+ * paints chrome.
  *
  * @remarks
  * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
@@ -734,8 +735,9 @@ export function readContrast(element: Element, floor?: Color): number {
  * The backdrop is the surface behind the element the chrome is worn on: each painted color is
  * measured by {@link readColorContrast} from that element's parent, with {@link CANVAS_COLOR} as the
  * floor. A control whose ancestry paints nothing is therefore measured against the browser's own
- * canvas, which is what a reader looking at an unstyled document sees. The backdrop is read only
- * for chrome the cascade paints, so a control reporting `undefined` never reads it.
+ * canvas, which is what a reader looking at an unstyled document sees. The backdrop is read for
+ * every control showing `:focus-visible` before the chrome is looked for, so an unreadable surface
+ * refuses the reading even where the cascade paints no chrome.
  *
  * Only chrome the cascade paints is measured — an `outline` with a real style and width, and the
  * first color in a `box-shadow`. A control left the browser's own `outline-style: auto` ring reports
@@ -756,6 +758,10 @@ export function readContrast(element: Element, floor?: Color): number {
 export function readRing(control: Element, worn?: Element): number | undefined {
 	if (!control.matches(':focus-visible')) return undefined
 	const target = worn ?? control
+	const surface = target.parentElement ?? target
+	// The backdrop refuses an unreadable layer before the chrome is looked for, so a focused control
+	// over such a surface is refused whether or not the cascade paints a ring.
+	readBackdrop(surface, CANVAS_COLOR)
 	const declared = getComputedStyle(target)
 	const outline =
 		declared.outlineStyle === 'none' ||
@@ -767,7 +773,7 @@ export function readRing(control: Element, worn?: Element): number | undefined {
 	const ratios = [outline, shadow].flatMap((painted) =>
 		painted === undefined || parseColor(painted) === undefined
 			? []
-			: [readColorContrast(target.parentElement ?? target, painted, { floor: CANVAS_COLOR })],
+			: [readColorContrast(surface, painted, { floor: CANVAS_COLOR })],
 	)
 	return ratios.length === 0 ? undefined : Math.max(...ratios)
 }

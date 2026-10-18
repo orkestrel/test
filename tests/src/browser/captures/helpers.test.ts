@@ -1512,7 +1512,7 @@ describe.sequential('media teardown after failure', () => {
 })
 
 describe('waitForStability', () => {
-	// The reading changes on its first two reads and then holds, so the read count at resolution
+	// The reading changes on its first three reads and then holds, so the read count at resolution
 	// separates a wait that counts unchanged frames from one that resolves on the first agreement.
 	it('resolves only after the frames asked for have held the settled reading, four by default', async () => {
 		for (const { options, reads: expected } of [

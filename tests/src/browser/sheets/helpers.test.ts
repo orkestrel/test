@@ -64,6 +64,15 @@ describe('readCascade', () => {
 		expect(known.has('journey-escaped')).toBe(false)
 		expect(known.has('journey-quoted')).toBe(false)
 	})
+
+	it('reads a non-ASCII letter inside a name as part of it', () => {
+		buildStylesheet('.café { color: rgb(1, 2, 3) }')
+		const known = readCascade()
+		expect(known.has('café')).toBe(true)
+		// A pattern ending its class at the first code point outside ASCII letters, digits, `_`, and
+		// `-` defines the half before the letter.
+		expect(known.has('caf')).toBe(false)
+	})
 })
 
 describe('readRules', () => {

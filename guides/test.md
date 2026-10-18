@@ -590,8 +590,9 @@ Non-finite calculations such as `color(srgb calc(infinity) 0 0)` are deliberatel
 A layer with an explicit zero alpha paints nothing and is skipped, including an unreadable one.
 Background images remain outside this color reader. The refusal propagates through `readBackdrop`,
 `readContrast`, `readColorContrast`, and the reading `readRing` takes of painted focus chrome, even
-with a supplied floor. A focused control whose cascade paints no chrome reads no backdrop, so it
-reports `undefined` over an unreadable surface too.
+with a supplied floor. `readRing` reads the backdrop for every control matching `:focus-visible`
+before it looks for chrome, so a focused control whose cascade paints no chrome is refused over an
+unreadable surface too.
 
 `readBackdrop` composites that stack and takes its floor as an argument rather than reaching for
 `CANVAS_COLOR` itself, so a measurement over a surface the canvas never shows through names the
@@ -628,7 +629,9 @@ Each rule's selector text is read by `collectSelectorClasses`, and that reading 
 which matched a pattern over the text. An escaped name decodes, so `.sm\:flex` defines `sm:flex`
 where 0.0.26 read `sm`. Text inside an attribute value, a string, or a comment defines nothing, so
 `[title=".card"]` defines no `card`. A name opening with an underscore, a hyphen, or a non-ASCII
-letter counts, where 0.0.26 skipped it. A census that saw any of those misreadings reports the
+letter counts, where 0.0.26 skipped it. A non-ASCII letter inside a name stays in it, so `.café`
+defines `café` where 0.0.26 ended the class at the first code point outside ASCII letters, digits,
+`_`, and `-` and defined `caf`. A census that saw any of those misreadings reports the
 corrected set, so `readCensus` can move a token into or out of `undeclared`. One rule's own tokens
 enter the set in code-unit order rather than in the order the selector writes them.
 
@@ -1808,7 +1811,7 @@ the helper rather than to the host, and each names what to reach for instead.
   iframe. A covered centre or unsupported geometry can refuse even when the resolver accepts the
   target. The verb inherits the resolver's focus reachability conditions.
 - **`parkPointer` ends hover and never ends a press.** It moves the pointer to (-1, -1) and waits for
-  a frame, and it sends no button-up, so a press that `holdAccessible` holds stays recorded under
+  a frame, and it sends no button-up, so a press that the `holdAccessible` verb holds stays recorded under
   `POINTER_HOLD` and its button-up is still owed to `releasePointer`. The control the press was on
   loses its `:active` paint when the pointer leaves it. Use it where a case clears hover with no
   press held, and never as a teardown for a hold.
@@ -1822,8 +1825,8 @@ the helper rather than to the host, and each names what to reach for instead.
   leaves no marker. A rejected release keeps the marker for a retry and still attempts the park. If
   that park also rejects, the park's error surfaces with the release rejection attached in the
   aggregate's errors; the park rejection is its cause.
-- **`walkFocus` reports every stop and refuses none.** It presses Tab, reads the focused element
-  after each press, and returns what focus reached, so a focusable scroll container that Chromium
+- **`walkFocus` reports every stop and refuses none.** It records the focused element and then
+  presses Tab, and returns what focus reached, so a focusable scroll container that Chromium
   focuses without a `tabindex` is a stop, and `describeFocus` omits it. A hidden or disabled stop is
   returned like any other. A consumer that refuses one throws from the predicate it passes. The walk
   ends where focus returns to the body or revisits a stop, and throws only when it outlasts the
@@ -3818,7 +3821,7 @@ Each entry names the contracts its file proves. The test names carry the cases.
   a painted box-shadow reached through `traverseAccessible`, a control that is not focused, a
   focused control left the browser's own ring, a focus style that only repaints the control's fill,
   a `worn` element whose reading separates from the control's own, and an unpainted focused control
-  over an unreadable surface that reads no backdrop. `measureContent` takes a
+  over an unreadable surface that is refused. `measureContent` takes a
   1600-row document read under an 844 pane and under a 2356 one, against the scroll height that
   agrees with it under the shorter pane and stretches to the pane under the taller, and a document
   whose last element carries a bottom margin under a body carrying bottom padding, where a reading

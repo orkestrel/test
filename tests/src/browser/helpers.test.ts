@@ -57,6 +57,8 @@ describe('parkPointer', () => {
 			await parkPointer()
 			expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe(held)
 			expect(releases.count).toBe(0)
+			// The pointer left the control, so its `:active` paint is gone although the press is owed a release.
+			expect(resolveAccessible('Held').matches(':active')).toBe(false)
 			await releasePointer()
 			expect(releases.count).toBe(1)
 			expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)

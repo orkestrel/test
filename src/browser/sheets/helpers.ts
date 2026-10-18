@@ -24,8 +24,9 @@ import { build, readStyle } from '../helpers.js'
  * names a selector means rather than what a pattern over its text finds: an escaped name decodes,
  * so `.sm\:flex` defines `sm:flex` rather than `sm`; text inside an attribute value, a string, or
  * a comment defines nothing, so `[title=".card"]` defines no `card`; and a name opening with an
- * underscore, a hyphen, or a non-ASCII letter counts. One rule's own tokens enter in code-unit
- * order.
+ * underscore, a hyphen, or a non-ASCII letter counts, and a non-ASCII letter inside a name stays in
+ * it, so `.café` defines `café` where 0.0.26 ended the class at the first code point outside ASCII
+ * letters, digits, `_`, and `-` and defined `caf`. One rule's own tokens enter in code-unit order.
  *
  * `@keyframes` children are outside that walk, so an animation's own rules define no token here.
  * Reach the animation itself through {@link findKeyframes}.

@@ -966,8 +966,9 @@ export async function driveTraversal(
  * @throws Thrown when the walk outlasts every element the document holds, or a key press rejects.
  *
  * @remarks
- * Focus is read after each press, so the walk reaches what the browser's own sequential navigation
- * reaches, including a scroll container Chromium focuses without a `tabindex`. The static
+ * The walk records the focused element and then presses Tab, so it reaches what the browser's own
+ * sequential navigation reaches, including a scroll container Chromium focuses without a
+ * `tabindex`. The static
  * {@link describeFocus} sort does not. The walk ends with an empty list when only the body holds
  * focus, and where focus revisits a stop or returns to the body. It applies no rule about which stop
  * counts: the predicate sees each one and decides, so a consumer that refuses a hidden stop throws

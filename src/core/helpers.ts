@@ -514,10 +514,10 @@ export function decodeJSONLines(text: string): readonly unknown[] {
  * @param selector - A selector list as `CSSStyleRule.selectorText` serializes it, functional
  * pseudo-classes and CSS escapes included.
  * @returns The decoded class names, each once, sorted by code unit.
- * @throws An `Error` reading `Unreadable selector: <selector>` when a quote, comment, attribute block,
- * or parenthesis is left open or closed twice, when an escape is cut short, when a class name opens
- * with a digit, or when the text carries a character outside the selector alphabet, such as a
- * declaration block's braces.
+ * @throws Thrown when a quote, comment, attribute block, or parenthesis is left open or closed
+ * twice, when an escape is cut short, when a class name opens with a digit, or when the text
+ * carries a character outside the selector alphabet, such as a declaration block's braces. The
+ * error reads `Unreadable selector: <selector>`.
  *
  * @remarks
  * This reads tokens, not the selector grammar: it never decides whether a selector is valid, only
