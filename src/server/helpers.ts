@@ -886,7 +886,8 @@ export async function chooseFiles(context: ChooserContext, request: ChooserReque
 		try {
 			// Both promises have settled, so this rethrows the activation or observation failure by identity.
 			await joined
-			if (chooser === undefined) throw new Error('Page closed before the native file chooser opened')
+			if (chooser === undefined)
+				throw new Error('Page closed before the native file chooser opened')
 			if (!(await chooser.element().evaluate((element, expected) => element === expected, target)))
 				throw new Error('Native file chooser belongs to a different input')
 			await chooser.setFiles(files, { timeout: budget })
