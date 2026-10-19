@@ -583,16 +583,19 @@ on a probe that is a child of the body, mounted so a `var()` reference resolves 
 `:root` declares, and removed in a `finally`. Refusal is the CSSOM's: an expression it will not parse
 returns `undefined`. A `var()` naming an undeclared custom property is not refused, and
 [Limits](#limits) states what that costs. The optional `scope` argument resolves the expression on
-that element itself, through one scratch property the read cannot disturb, `column-rule-color`: the
-read sets it inline to the expression, reads the computed value, and restores the inline
-declaration, its priority, and the `style` attribute text in a `finally`. The element's own and
-inherited custom properties apply, a registered property that does not inherit included,
-`currentColor` is the element's own text color, and an `input` or any other void element resolves
-like any other. While the read runs the element also holds an inline `transition: none`, so a
-transition on every property neither answers with the value it starts from nor starts one when the
-declarations return. A `MutationObserver` watching the element's `style` attribute sees those writes
-and their restoration. A disconnected scope computes no style and returns `undefined`; an element
-that is not an HTML, SVG, or MathML element has no inline style and is refused.
+that same body-mounted probe, which carries the scope's computed context onto its own inline style:
+the computed value of every custom property the expression names, a fallback's included, the
+scope's computed `color`, and its computed `color-scheme`. The expression is written into
+`background-color`, so `currentColor` is the carried `color`, and a system color or `light-dark()`
+answers as the scope's scheme. The element's own and inherited custom properties apply, a registered
+property that does not inherit included, and an `input`, an SVG element, or any other element
+resolves like any other. A custom property is named by letters, digits, `_`, and `-` after its `--`,
+and a name the scope leaves undeclared is not carried, so its `var()` fallback still applies. The
+scope element is never written: the probe is new, so it has no earlier style to start a transition
+from, a transition running on the scope keeps running and `currentColor` reads the color the scope
+shows at that moment, and the scope's geometry and scroll position stay as they were. No attribute,
+style, or child of the scope changes, so a `MutationObserver` on it records nothing. A disconnected
+scope computes no style and returns `undefined`.
 
 `matchesColor` compares two colors as a browser renders them. Each string side resolves through
 `parseCSSColor`, so a keyword, a token reference, and the `rgb()` an engine computes for either
@@ -616,11 +619,11 @@ element's own text: a separator grip, a placeholder, a checkbox mark. `readContr
 both measure through it. A computed color value parses directly, and any other expression — a
 keyword, a hex triple, a `var()` reference — resolves through `parseCSSColor` at the element's own
 scope: a token reads as the element and its ancestors declare it, and `currentColor` is the
-element's own text color, not the body's. The expression resolves on the element itself, so an
-`input` and a registered token that does not inherit resolve as they do on any other element, with
-the inline-style change that `parseCSSColor` documents. A disconnected element computes no style, so
-it refuses such an expression as unreadable; hand it a computed color such as
-`rgb(255, 255, 255)`. `floor` takes the
+element's own text color, not the body's. The read carries the element's computed custom
+properties, `color`, and `color-scheme` onto a probe, so an `input` and a registered token that does
+not inherit resolve as they do on any other element, and the element itself is never written. A
+disconnected element computes no style, so it refuses such an expression as unreadable; hand it a
+computed color such as `rgb(255, 255, 255)`. `floor` takes the
 part `readContrast`'s second argument takes, with the same refusal and the same voice when it is
 omitted. `opacity` multiplies the color's own alpha before it is composited, for a mark painted
 inside an element whose `opacity` is below `1`, and a value outside `0` to `1` is refused rather than
@@ -1249,7 +1252,6 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Computed background color is unavailable`                                               | `readColorContrast`                            |
 | `Color "<value>" is unreadable`                                                          | `readColorContrast`                            |
 | `Contrast opacity must be between 0 and 1`                                               | `readColorContrast`                            |
-| `Color "<value>" cannot be resolved at <<tag>>: it has no inline style`                  | `parseCSSColor`, `readColorContrast`           |
 | `The element is not connected to a document, so it has no clipping ancestors to read`    | `collectClippingAncestors`, `readClippedBlock` |
 | `Tester pane is unavailable for a capture`                                               | `stagePane`                                    |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                    | `stagePane`                                    |
@@ -4025,10 +4027,12 @@ Each entry names the contracts its file proves. The test names carry the cases.
   its slot. The `waitForStability` function takes reads spaced by the interval past the second.
   The `parseCSSColor` function takes an expression resolved on the scope it is handed, a registered
   token that does not inherit, a keyword, a hex triple, and `currentColor` at an `input` and an SVG
-  element, an inline style byte-identical afterwards with a pre-set scratch value and its priority
-  and a shorthand left alone, a style mutation an observer sees during the read, a transition on
-  every property and an important stylesheet rule read through, a disconnected scope answered with
-  nothing, and an element with no inline style refused. The `readColorContrast`
+  element, a running color transition read at its sampled midpoint and left running, a scroller
+  with a running height transition keeping its height and scroll position, a scope that records no
+  mutation during the read, a transition on every property that starts none, a color scheme
+  answered to a system color and to `light-dark()`, a token named only in a fallback carried, a
+  disconnected scope answered with nothing, and an element that is no HTML, SVG, or MathML element
+  resolved like any other. The `readColorContrast`
   function takes a token on an ancestor the body never declares, `currentColor`, and a token the
   element declares itself, each read at the element, a keyword, a hex triple, and a token at an
   `input`, a registered token that does not inherit, and a disconnected element refused. The `readCascade` function takes class tokens collected from

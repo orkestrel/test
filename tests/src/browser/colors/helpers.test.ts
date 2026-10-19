@@ -172,56 +172,35 @@ describe('parseCSSColor', () => {
 		expect(parseCSSColor('currentColor', svg)).toStrictEqual([4, 5, 6, 1])
 	})
 
-	it('leaves the inline style byte-identical, a pre-set scratch value and its priority included', () => {
-		const container = buildFixture(
-			'<div data-plain></div>' +
-				'<div data-set style="color: red; column-rule-color: blue !important; margin: 0"></div>' +
-				'<div data-shorthand style="column-rule: 1px solid red; margin: 0"></div>',
-		)
-		const plain = requireValue(container.querySelector<HTMLElement>('[data-plain]'))
-		const set = requireValue(container.querySelector<HTMLElement>('[data-set]'))
-		const shorthand = requireValue(container.querySelector<HTMLElement>('[data-shorthand]'))
-		const targets = [plain, set, shorthand]
-		const before = targets.map((target) => target.getAttribute('style'))
-		expect(before[0]).toBeNull()
-		for (const target of targets) {
-			expect(parseCSSColor('rebeccapurple', target)).toStrictEqual([102, 51, 153, 1])
-			// A refused value must not read back the declaration it failed to replace.
-			expect(parseCSSColor('not-a-color', target)).toBeUndefined()
-		}
-		expect(targets.map((target) => target.getAttribute('style'))).toStrictEqual(before)
-		expect(set.style.getPropertyValue('column-rule-color')).toBe('blue')
-		expect(set.style.getPropertyPriority('column-rule-color')).toBe('important')
-	})
-
-	it('reads the scope color through a transition on every property', () => {
+	it('reads the scope color on an element with a transition on every property, and starts none', () => {
 		buildStylesheet('[data-busy] { transition: all 10s }')
 		const container = buildFixture('<div data-busy style="color: rgb(1, 2, 3)">Busy</div>')
 		const scope = requireValue(container.querySelector<HTMLElement>('[data-busy]'))
-		// Force the style the transition starts from before the read changes it.
-		expect(readStyle(scope, 'column-rule-color')).toBe('rgb(1, 2, 3)')
+		expect(readStyle(scope, 'color')).toBe('rgb(1, 2, 3)')
 		expect(parseCSSColor('white', scope)).toStrictEqual([255, 255, 255, 1])
-		// The read and its restore start no transition for the page to see.
+		expect(parseCSSColor('currentColor', scope)).toStrictEqual([1, 2, 3, 1])
 		expect(scope.getAnimations()).toHaveLength(0)
 	})
 
-	it('reads the scope color through a stylesheet rule that is important', () => {
-		buildStylesheet('[data-loud] { column-rule-color: red !important }')
-		const container = buildFixture('<div data-loud>Loud</div>')
-		const scope = requireValue(container.querySelector<HTMLElement>('[data-loud]'))
-		expect(readStyle(scope, 'column-rule-color')).toBe('rgb(255, 0, 0)')
-		expect(parseCSSColor('white', scope)).toStrictEqual([255, 255, 255, 1])
+	it('answers the scope color scheme to a system color and to light-dark()', () => {
+		const container = buildFixture(
+			'<div data-dark style="color-scheme: dark"></div><div data-light style="color-scheme: light"></div>',
+		)
+		const dark = requireValue(container.querySelector<HTMLElement>('[data-dark]'))
+		const light = requireValue(container.querySelector<HTMLElement>('[data-light]'))
+		expect(parseCSSColor('light-dark(white, black)', light)).toStrictEqual([255, 255, 255, 1])
+		expect(parseCSSColor('light-dark(white, black)', dark)).toStrictEqual([0, 0, 0, 1])
+		expect(parseCSSColor('Canvas', dark)).not.toStrictEqual(parseCSSColor('Canvas', light))
 	})
 
-	it('shows a style mutation to an observer for the moment it reads, and none after it returns', () => {
-		const container = buildFixture('<div data-scope></div>')
+	it('carries a token a fallback names, and leaves an undeclared one to its fallback', () => {
+		const container = buildFixture(
+			'<div data-scope style="--spare: rgb(7, 8, 9); --alias: var(--spare)"></div>',
+		)
 		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
-		const observer = new MutationObserver(() => undefined)
-		observer.observe(scope, { attributes: true, attributeFilter: ['style'] })
-		expect(parseCSSColor('rebeccapurple', scope)).toStrictEqual([102, 51, 153, 1])
-		expect(observer.takeRecords().length).toBeGreaterThan(0)
-		expect(scope.getAttribute('style')).toBeNull()
-		observer.disconnect()
+		expect(parseCSSColor('var(--absent, var(--spare))', scope)).toStrictEqual([7, 8, 9, 1])
+		expect(parseCSSColor('var(--alias)', scope)).toStrictEqual([7, 8, 9, 1])
+		expect(parseCSSColor('var(--absent, red)', scope)).toStrictEqual([255, 0, 0, 1])
 	})
 
 	it('answers a disconnected scope with nothing, because it computes no style', () => {
@@ -230,13 +209,70 @@ describe('parseCSSColor', () => {
 		expect(detached.getAttribute('style')).toBeNull()
 	})
 
-	it('refuses a scope with no inline style to read through', () => {
-		const container = buildFixture('<div></div>')
+	it('resolves at an element that is no HTML, SVG, or MathML element', () => {
+		const container = buildFixture('<div style="color: rgb(1, 2, 3)"></div>')
 		const foreign = document.createElementNS('urn:example', 'widget')
-		container.append(foreign)
-		expect(() => parseCSSColor('red', foreign)).toThrow(
-			'Color "red" cannot be resolved at <widget>: it has no inline style',
+		requireValue(container.firstElementChild).append(foreign)
+		expect(parseCSSColor('red', foreign)).toStrictEqual([255, 0, 0, 1])
+		expect(parseCSSColor('currentColor', foreign)).toStrictEqual([1, 2, 3, 1])
+	})
+
+	it('reads currentColor at the sampled midpoint of a running color transition and leaves it running', () => {
+		const container = buildFixture(
+			'<div data-fade style="color: rgb(0, 0, 0); transition: color 10s linear">Fade</div>',
 		)
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-fade]'))
+		expect(readStyle(scope, 'color')).toBe('rgb(0, 0, 0)')
+		scope.style.color = 'rgb(255, 255, 255)'
+		// The style change starts the transition, which holds its start value until it is sampled.
+		expect(readStyle(scope, 'color')).toBe('rgb(0, 0, 0)')
+		const fade = requireValue(scope.getAnimations()[0])
+		fade.pause()
+		fade.currentTime = 5000
+		// Control: the browser itself computes the midpoint, so the read has one right answer.
+		expect(readStyle(scope, 'color')).toBe('rgb(128, 128, 128)')
+		expect(parseCSSColor('currentColor', scope)).toStrictEqual([128, 128, 128, 1])
+		expect(scope.getAnimations()).toStrictEqual([fade])
+		expect(fade.playState).toBe('paused')
+		expect(fade.currentTime).toBe(5000)
+	})
+
+	it('keeps the height and scroll position of a scroller with a running height transition', () => {
+		const container = buildFixture(
+			'<div data-scroller style="height: 100px; overflow: auto; transition: height 10s linear"><div style="height: 1000px"></div></div>',
+		)
+		const scroller = requireValue(container.querySelector<HTMLElement>('[data-scroller]'))
+		expect(readStyle(scroller, 'height')).toBe('100px')
+		scroller.style.height = '300px'
+		expect(readStyle(scroller, 'height')).toBe('100px')
+		const grow = requireValue(scroller.getAnimations()[0])
+		grow.pause()
+		grow.currentTime = 5000
+		scroller.scrollTop = 800
+		// Control: the midpoint is a 200px box scrolled to the end of its 1000px child.
+		expect(scroller.offsetHeight).toBe(200)
+		expect(scroller.scrollTop).toBe(800)
+		expect(parseCSSColor('white', scroller)).toStrictEqual([255, 255, 255, 1])
+		expect(scroller.offsetHeight).toBe(200)
+		expect(scroller.scrollTop).toBe(800)
+		expect(scroller.getAnimations()).toStrictEqual([grow])
+	})
+
+	it('records no mutation on the scope while it reads, on the refusing path as well', () => {
+		const container = buildFixture('<div data-scope style="color: rgb(1, 2, 3)"><b>Kept</b></div>')
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
+		const observer = new MutationObserver(() => undefined)
+		observer.observe(scope, {
+			attributes: true,
+			childList: true,
+			characterData: true,
+			subtree: true,
+		})
+		expect(parseCSSColor('rebeccapurple', scope)).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('currentColor', scope)).toStrictEqual([1, 2, 3, 1])
+		expect(parseCSSColor('not-a-color', scope)).toBeUndefined()
+		expect(observer.takeRecords()).toStrictEqual([])
+		observer.disconnect()
 	})
 })
 

@@ -380,8 +380,6 @@ export function parseColor(value: string): Color | undefined {
  * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value, the
  * computed result names no color {@link parseColor} speaks, or the scope is disconnected and
  * computes no style.
- * @throws Thrown when the scope is not an HTML, SVG, or MathML element of a document with a window,
- * because no inline style exists to read through.
  *
  * @remarks
  * This is the live half of the pair {@link parseColor} opens. `parseColor` reads text and speaks
@@ -397,19 +395,23 @@ export function parseColor(value: string): Color | undefined {
  * against what the body declares and paints. The probe is removed in a `finally`, so a value that
  * throws on the way through leaves no node behind.
  *
- * With a scope the expression resolves on the scope element itself, through one scratch property
- * the read cannot disturb, `column-rule-color`. The read sets that property inline to the
- * expression, reads the computed value, and restores the inline declaration, its priority, and the
- * `style` attribute text in a `finally`. The element's own and inherited custom properties
- * therefore apply, a registered property that does not inherit included, `currentColor` is the
- * element's own text color, and an `input` or any other void element resolves like any other. While
- * the read runs the element holds an inline `column-rule-color` and an inline `transition: none`,
- * the second so that a transition on every property neither answers with the value it starts from
- * nor starts one when the declarations return. A `MutationObserver` watching the element's `style`
- * attribute sees those writes and their restoration, and a rule keyed to the inline style sees them
- * for that moment.
+ * With a scope the expression resolves on that same body-mounted probe, which carries the scope's
+ * computed context onto its own inline style: the computed value of every custom property the
+ * expression names, a fallback's included, the scope's computed `color`, and its computed
+ * `color-scheme`. The expression is written into `background-color`, so `currentColor` is the
+ * carried `color`, and a system color or `light-dark()` answers as the scope's scheme. The element's
+ * own and inherited custom properties therefore apply, a registered property that does not inherit
+ * included, and an `input`, an SVG element, or any other element resolves like any other. A custom
+ * property is named by letters, digits, `_`, and `-` after its `--`. A name the scope leaves
+ * undeclared is not carried, so its `var()` fallback still applies.
  *
- * Refusal is the CSSOM's: an expression it will not parse leaves the scratch declaration empty and
+ * The scope element is never written. The probe is new, so it has no earlier style to start a
+ * transition from, and a transition running on the scope keeps running: `currentColor` reads the
+ * color the scope shows at that moment, and the scope's geometry and scroll position stay as they
+ * were. No attribute, style, or child of the scope changes, so a `MutationObserver` on it records
+ * nothing.
+ *
+ * Refusal is the CSSOM's: an expression it will not parse leaves the probe's declaration empty and
  * this returns `undefined`. A `var()` naming an undeclared custom property is not refused, because
  * the cascade accepts it and computes the inherited color, so a test that means to catch a
  * missing token asserts on {@link readToken} rather than on this.
@@ -422,58 +424,29 @@ export function parseColor(value: string): Color | undefined {
  * ```
  */
 export function parseCSSColor(value: string, scope?: Element): Color | undefined {
-	if (scope === undefined) {
-		const probe = build('span')
-		mount(probe)
-		try {
-			probe.style.color = value
-			return probe.style.color === '' ? undefined : parseColor(readStyle(probe, 'color'))
-		} finally {
-			probe.remove()
-		}
-	}
-	const realm = scope.ownerDocument.defaultView
-	if (
-		realm === null ||
-		!(
-			scope instanceof realm.HTMLElement ||
-			scope instanceof realm.SVGElement ||
-			scope instanceof realm.MathMLElement
-		)
-	) {
-		throw new Error(
-			`Color "${value}" cannot be resolved at <${scope.localName}>: it has no inline style`,
-		)
-	}
-	const property = 'column-rule-color'
-	const { style } = scope
-	const attribute = scope.getAttribute('style')
-	// The scratch property comes first, so the restore flushes its value while transitions are off.
-	const saved = [property, 'transition'].map((name) => ({
-		name,
-		text: style.getPropertyValue(name),
-		priority: style.getPropertyPriority(name),
-	}))
+	const computed = scope?.isConnected === true ? getComputedStyle(scope) : undefined
+	// A scope with no computed style has no cascade to carry, so it reads nothing.
+	if (scope !== undefined && (computed === undefined || computed.color === '')) return undefined
+	const probe = build('span')
+	mount(probe)
 	try {
-		// A refused value leaves the declaration it would replace, so the pre-set one goes first.
-		style.removeProperty(property)
-		// A transition would answer with the value it starts from, and restoring would start another.
-		style.setProperty('transition', 'none', 'important')
-		style.setProperty(property, value, 'important')
-		return style.getPropertyValue(property) === ''
+		if (computed !== undefined) {
+			for (const name of new Set(value.match(/--[\p{L}\p{N}_-]+/gu))) {
+				const token = computed.getPropertyValue(name)
+				// An undeclared token stays undeclared on the probe, so its fallback still applies.
+				if (token !== '') probe.style.setProperty(name, token)
+			}
+			probe.style.color = computed.color
+			probe.style.colorScheme = computed.colorScheme
+		}
+		// With a scope, `currentColor` is the carried color only in a property other than `color`.
+		const property = computed === undefined ? 'color' : 'background-color'
+		probe.style.setProperty(property, value)
+		return probe.style.getPropertyValue(property) === ''
 			? undefined
-			: parseColor(readStyle(scope, property))
+			: parseColor(readStyle(probe, property))
 	} finally {
-		for (const { name, text, priority } of saved) {
-			if (text === '') style.removeProperty(name)
-			else style.setProperty(name, text, priority)
-			readStyle(scope, property)
-		}
-		// Writing through the CSSOM reserializes the attribute, so its text returns as it was.
-		if (scope.getAttribute('style') !== attribute) {
-			if (attribute === null) scope.removeAttribute('style')
-			else scope.setAttribute('style', attribute)
-		}
+		probe.remove()
 	}
 }
 
@@ -684,11 +657,11 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * A computed color value parses directly through {@link parseColor}; any other expression, such as
  * a keyword or a `var()` reference, resolves through {@link parseCSSColor} at the element's own
  * scope. A `var()` reference therefore reads the token as the element and its ancestors declare it,
- * and `currentColor` reads the element's own text color, not the body's. The expression resolves on
- * the element itself, so an `input` and a non-inheriting registered token resolve as they do on any
- * other element, and the inline-style change that read makes is the one
- * {@link parseCSSColor} documents. A disconnected element computes no style, so it reads no
- * expression; hand it a computed color such as `rgb(255, 255, 255)`.
+ * and `currentColor` reads the element's own text color, not the body's. The read carries the
+ * element's computed custom properties, `color`, and `color-scheme` onto a probe, so an `input` and
+ * a non-inheriting registered token resolve as they do on any other element, and the element itself
+ * is never written. A disconnected element computes no style, so it reads no expression; hand it a
+ * computed color such as `rgb(255, 255, 255)`.
  *
  * With `options.floor` omitted, the walk must reach a fully opaque layer, and the refusal shares
  * `readContrast`'s voice, because the number a stack the canvas shows through produces is as much a
