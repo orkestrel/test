@@ -134,16 +134,7 @@ export function readClipMargin(element: Element): number {
  */
 export function readClippedBlock(element: Element): number {
 	const box = element.getBoundingClientRect()
-	const walker = element.ownerDocument.createTreeWalker(
-		element.ownerDocument,
-		NodeFilter.SHOW_ELEMENT,
-	)
-	walker.currentNode = element
-	const frames: Element[] = []
-	while (walker.parentNode() !== null) {
-		const ancestor = walker.currentNode
-		if (ancestor instanceof Element && clipsOverflow(ancestor)) frames.push(ancestor)
-	}
+	const frames = collectClippingAncestors(element)
 	const top = Math.max(
 		box.top,
 		...frames.map((frame) => frame.getBoundingClientRect().top + frame.clientTop),
@@ -156,6 +147,30 @@ export function readClippedBlock(element: Element): number {
 		}),
 	)
 	return Math.max(0, bottom - top)
+}
+
+/**
+ * Collects the ancestors of an element that clip their descendants' overflow.
+ *
+ * @param element - The element whose ancestors to read.
+ * @returns Every ancestor element for which the {@link clipsOverflow} helper reports true, nearest
+ * first, and an empty list where the element has none.
+ *
+ * @remarks
+ * The walk climbs through the `parentElement` property, so it ends at the root element, which has
+ * no parent element, and the element itself is not one of its own ancestors. Each step returns its
+ * own parent's frame, if it is one, ahead of the frames above it, so the depth of the tree bounds
+ * the recursion.
+ *
+ * @example
+ * ```ts
+ * collectClippingAncestors(bar) // [frame] where a hidden-overflow frame wraps the bar
+ * ```
+ */
+export function collectClippingAncestors(element: Element): readonly Element[] {
+	const parent = element.parentElement
+	if (parent === null) return []
+	return [...(clipsOverflow(parent) ? [parent] : []), ...collectClippingAncestors(parent)]
 }
 
 /**

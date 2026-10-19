@@ -420,6 +420,7 @@ A `Shape` cell holds the constant's declared type.
 | `readClipEdge`             | function | `(element: Element) => number \| undefined`                                                                             | Measures the row a clipping element cuts its content off at, in document coordinates.                                                                                                                                                                                           |
 | `readClipMargin`           | function | `(element: Element) => number`                                                                                          | Measures how far past its own box a clipping element lets its content show.                                                                                                                                                                                                     |
 | `readClippedBlock`         | function | `(element: Element) => number`                                                                                          | Measures the block size an element shows after every clipping ancestor cuts it.                                                                                                                                                                                                 |
+| `collectClippingAncestors` | function | `(element: Element) => readonly Element[]`                                                                              | Collects the ancestors of an element that clip their descendants' overflow.                                                                                                                                                                                                     |
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                         | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
 | `measureContent`           | function | `() => number`                                                                                                          | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                      | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
@@ -1840,7 +1841,7 @@ the helper rather than to the host, and each names what to reach for instead.
 - **`parkPointer` ends hover and never ends a press.** It moves the pointer to (-1, -1) and waits for
   a frame, and it sends no button-up, so a press that the `holdAccessible` verb holds stays recorded under
   `POINTER_HOLD` and its button-up is still owed to `releasePointer`. The control the press was on
-  loses its `:active` paint when the pointer leaves it. Use it where a case clears hover with no
+  loses both its `:hover` paint and its `:active` paint when the pointer leaves it. Use it where a case clears hover with no
   press held, and never as a teardown for a hold.
 - **`releasePointer` parks the pointer outside the page.** It releases at the recorded point first,
   which can produce a click. It then clears hover through `parkPointer`, which moves to (-1, -1) in
@@ -1864,7 +1865,7 @@ the helper rather than to the host, and each names what to reach for instead.
   A reading that changes on every frame exhausts the budget, and the refusal names the description.
   The `releaseMedia` function with nothing staged waits through it for one frame.
 - **`settleCapture` holds endless animations until its resume runs.** It parks the pointer through
-  `parkPointer`, so a held press stays held and only loses its pressed paint; `pointer: false`
+  `parkPointer`, so a held press stays held and only loses its hover and pressed paint; `pointer: false`
   leaves the pointer, its hover, and that paint where they are. It waits out every finite animation
   in the document, root element included, then pauses each endless one at its first frame and
   resolves to the resume. Call the resume from a `finally` block once the frame is shot. A settle
@@ -3620,7 +3621,7 @@ every finite animation in the document, and holds each endless one at its first 
 a transition caught part way, and a spinner's phase stay out of the picture. It resolves to the
 resume; call `place` after it, and call the resume from a `finally` block, so the held animations
 run again whether or not the frame was written. Pass `pointer: false` where the pointer is part of
-the state, such as a drag in flight. Gate the settle on the flag `enabled` takes: an ordinary run's
+the state, such as a drag in flight. Gate the settle on the flag that `enabled` takes: an ordinary run's
 `place` shoots nothing, and parking the pointer there changes the journey that run is proving.
 Where a frame holds a scroll region, record `describeScrollRegions` of what `collectScrollRegions`
 finds beside it, because a picture does not show how far a pane scrolls.

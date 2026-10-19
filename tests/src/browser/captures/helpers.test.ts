@@ -2,6 +2,7 @@ import {
 	CAPTURE_PANE,
 	captureFrame,
 	clipsOverflow,
+	collectClippingAncestors,
 	computeOffset,
 	expandCaptures,
 	hoverAccessible,
@@ -95,6 +96,27 @@ describe('readClipMargin', () => {
 			const frame = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
 			expect({ style, margin: readClipMargin(frame) }).toStrictEqual({ style, margin })
 		}
+	})
+})
+
+describe('collectClippingAncestors', () => {
+	it('lists the clipping ancestors nearest first, and leaves out the element and the unclipped', () => {
+		const root = buildFixture(
+			[
+				'<div data-outer style="overflow: hidden">',
+				'<div data-open>',
+				'<div data-inner style="contain: paint"><div data-leaf></div></div>',
+				'</div>',
+				'</div>',
+			].join(''),
+		)
+		const leaf = requireValue(root.querySelector('[data-leaf]'))
+		const inner = requireValue(root.querySelector('[data-inner]'))
+		const outer = requireValue(root.querySelector('[data-outer]'))
+		expect(collectClippingAncestors(leaf)).toStrictEqual([inner, outer])
+		expect(collectClippingAncestors(inner)).toStrictEqual([outer])
+		expect(collectClippingAncestors(outer)).toStrictEqual([])
+		expect(collectClippingAncestors(document.documentElement)).toStrictEqual([])
 	})
 })
 

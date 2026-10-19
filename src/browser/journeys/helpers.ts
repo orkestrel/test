@@ -1942,7 +1942,8 @@ export async function settleCapture(options?: SettleOptions): Promise<() => void
  * that a pane scrolls or how far. A box counts when its `overflow-x` or `overflow-y` value is the
  * `auto` keyword or the `scroll` keyword and its content overflows on that axis; a `hidden` or
  * `clip` box cuts its content without letting anyone scroll it, and a box whose content fits has
- * nowhere to go. An element {@link isRendered} refuses is left out, because nobody can see it scroll.
+ * nowhere to go. An element that {@link isRendered} reports false for is left out, because a person
+ * cannot scroll a box the page does not show.
  *
  * @example
  * ```ts
