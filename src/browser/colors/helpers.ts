@@ -377,36 +377,41 @@ export function parseColor(value: string): Color | undefined {
  * reference, a `color-mix()`, or a computed CSS Color 4 value.
  * @param scope - The element whose cascade the expression resolves in. Omit it to resolve at the
  * document's body.
- * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value or the
- * computed result names no color {@link parseColor} speaks.
- * @throws Thrown when the scope's child computes no style, as under a disconnected element or an
- * `input`, `textarea`, or `video` element, because no reading of that scope exists to give.
+ * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value, the
+ * computed result names no color {@link parseColor} speaks, or the scope is disconnected and
+ * computes no style.
+ * @throws Thrown when the scope is not an HTML, SVG, or MathML element of a document with a window,
+ * because no inline style exists to read through.
  *
  * @remarks
  * This is the live half of the pair {@link parseColor} opens. `parseColor` reads text and speaks
- * only the computed syntaxes a cascade hands back; this stages a probe element, hands it to the real
- * cascade, and reads back what the engine computed — which is the only way a keyword, a hex triple,
- * or a `var()` reference becomes channels at all. The read itself goes through `parseColor`, so both
+ * only the computed syntaxes a cascade hands back; this hands the expression to the real cascade
+ * and reads back what the engine computed — which is the only way a keyword, a hex triple, or a
+ * `var()` reference becomes channels at all. The read itself goes through `parseColor`, so both
  * halves agree on what a computed value means.
  * Modern perceptual and predefined RGB/XYZ spaces resolve through that parser's conversions;
  * out-of-gamut sRGB channels are clipped to 0–255 after conversion.
  *
- * The probe is mounted, because an unmounted element inherits nothing and a `var()` reference to a
- * token declared on `:root` would resolve to the initial value instead. It is removed in a `finally`,
- * so a value that throws on the way through leaves no node behind.
+ * With no scope the expression resolves on a probe that is a child of `document.body`, mounted
+ * because an unmounted element inherits nothing, so a `var()` reference or `currentColor` resolves
+ * against what the body declares and paints. The probe is removed in a `finally`, so a value that
+ * throws on the way through leaves no node behind.
  *
- * With no scope the probe is a child of `document.body`, so a `var()` reference or `currentColor`
- * resolves against what the body declares and paints. With a scope the probe is appended inside that
- * element and read there, so the expression resolves against the element's own declarations and
- * the colors it inherits, which is what a mark painted inside the element would use. The probe is the
- * scope's last child while it is read, so a rule keyed to the scope being empty, or to which child is
- * last, sees it for that moment. A child of a disconnected element, and of the `input`,
- * `textarea`, and `video` elements, computes no style, so those scopes are refused rather than read
- * as the document: read the expression at an ancestor, or hand the caller a computed color.
+ * With a scope the expression resolves on the scope element itself, through one scratch property
+ * the read cannot disturb, `column-rule-color`. The read sets that property inline to the
+ * expression, reads the computed value, and restores the inline declaration, its priority, and the
+ * `style` attribute text in a `finally`. The element's own and inherited custom properties
+ * therefore apply, a registered property that does not inherit included, `currentColor` is the
+ * element's own text color, and an `input` or any other void element resolves like any other. While
+ * the read runs the element holds an inline `column-rule-color` and an inline `transition: none`,
+ * the second so that a transition on every property neither answers with the value it starts from
+ * nor starts one when the declarations return. A `MutationObserver` watching the element's `style`
+ * attribute sees those writes and their restoration, and a rule keyed to the inline style sees them
+ * for that moment.
  *
- * Refusal is the CSSOM's: an expression it will not parse leaves the probe's inline `color` empty
- * and this returns `undefined`. A `var()` naming an undeclared custom property is not refused,
- * because the cascade accepts it and computes the inherited color, so a test that means to catch a
+ * Refusal is the CSSOM's: an expression it will not parse leaves the scratch declaration empty and
+ * this returns `undefined`. A `var()` naming an undeclared custom property is not refused, because
+ * the cascade accepts it and computes the inherited color, so a test that means to catch a
  * missing token asserts on {@link readToken} rather than on this.
  *
  * @example
@@ -417,21 +422,58 @@ export function parseColor(value: string): Color | undefined {
  * ```
  */
 export function parseCSSColor(value: string, scope?: Element): Color | undefined {
-	const probe = build('span')
-	if (scope === undefined) mount(probe)
-	else scope.append(probe)
-	try {
-		probe.style.color = value
-		if (probe.style.color === '') return undefined
-		const computed = readStyle(probe, 'color')
-		if (scope !== undefined && computed === '') {
-			throw new Error(
-				`Color "${value}" cannot be resolved at <${scope.localName}>: a child there computes no style`,
-			)
+	if (scope === undefined) {
+		const probe = build('span')
+		mount(probe)
+		try {
+			probe.style.color = value
+			return probe.style.color === '' ? undefined : parseColor(readStyle(probe, 'color'))
+		} finally {
+			probe.remove()
 		}
-		return parseColor(computed)
+	}
+	const realm = scope.ownerDocument.defaultView
+	if (
+		realm === null ||
+		!(
+			scope instanceof realm.HTMLElement ||
+			scope instanceof realm.SVGElement ||
+			scope instanceof realm.MathMLElement
+		)
+	) {
+		throw new Error(
+			`Color "${value}" cannot be resolved at <${scope.localName}>: it has no inline style`,
+		)
+	}
+	const property = 'column-rule-color'
+	const { style } = scope
+	const attribute = scope.getAttribute('style')
+	// The scratch property comes first, so the restore flushes its value while transitions are off.
+	const saved = [property, 'transition'].map((name) => ({
+		name,
+		text: style.getPropertyValue(name),
+		priority: style.getPropertyPriority(name),
+	}))
+	try {
+		// A refused value leaves the declaration it would replace, so the pre-set one goes first.
+		style.removeProperty(property)
+		// A transition would answer with the value it starts from, and restoring would start another.
+		style.setProperty('transition', 'none', 'important')
+		style.setProperty(property, value, 'important')
+		return style.getPropertyValue(property) === ''
+			? undefined
+			: parseColor(readStyle(scope, property))
 	} finally {
-		probe.remove()
+		for (const { name, text, priority } of saved) {
+			if (text === '') style.removeProperty(name)
+			else style.setProperty(name, text, priority)
+			readStyle(scope, property)
+		}
+		// Writing through the CSSOM reserializes the attribute, so its text returns as it was.
+		if (scope.getAttribute('style') !== attribute) {
+			if (attribute === null) scope.removeAttribute('style')
+			else scope.setAttribute('style', attribute)
+		}
 	}
 }
 
@@ -628,10 +670,9 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * pseudo-element, resolved at the element's own scope.
  * @param options - The floor the backdrop walk ends on and the opacity the color is shown at.
  * @returns The ratio of the color composited over the backdrop, against that backdrop.
- * @throws Thrown when `color` names no readable color, when `color` needs the element's cascade and
- * the element gives a child no style, when `opacity` lies outside `0` to `1`, when a painted
- * background layer is unreadable, and — with `floor` omitted — when the walk from the element
- * upwards reaches no opaque layer.
+ * @throws Thrown when `color` names no readable color, as under a disconnected element that computes
+ * no style, when `opacity` lies outside `0` to `1`, when a painted background layer is unreadable,
+ * and — with `floor` omitted — when the walk from the element upwards reaches no opaque layer.
  *
  * @remarks
  * This is the reading {@link readContrast} and {@link readRing} take for their own colors, with the
@@ -643,10 +684,11 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * A computed color value parses directly through {@link parseColor}; any other expression, such as
  * a keyword or a `var()` reference, resolves through {@link parseCSSColor} at the element's own
  * scope. A `var()` reference therefore reads the token as the element and its ancestors declare it,
- * and `currentColor` reads the element's own text color, not the body's. An element that gives a
- * child no style, as a disconnected element or an `input`, `textarea`, or `video` element does,
- * refuses such an expression; hand it a computed color such as `rgb(255, 255, 255)`, or read the
- * expression with {@link parseCSSColor} at an ancestor first.
+ * and `currentColor` reads the element's own text color, not the body's. The expression resolves on
+ * the element itself, so an `input` and a non-inheriting registered token resolve as they do on any
+ * other element, and the inline-style change that read makes is the one
+ * {@link parseCSSColor} documents. A disconnected element computes no style, so it reads no
+ * expression; hand it a computed color such as `rgb(255, 255, 255)`.
  *
  * With `options.floor` omitted, the walk must reach a fully opaque layer, and the refusal shares
  * `readContrast`'s voice, because the number a stack the canvas shows through produces is as much a

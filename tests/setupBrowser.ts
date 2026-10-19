@@ -284,6 +284,43 @@ export function buildStylesheet(css: string): HTMLStyleElement {
 }
 
 /**
+ * Dispatches one event from a button inside an open shadow root and reports what a document
+ * listener heard.
+ *
+ * @param event - The event to dispatch.
+ * @returns The type of each event the `document` listener heard, in order.
+ *
+ * @remarks
+ * A listener on the document hears the event only when it is composed, because the shadow boundary
+ * stops every other event at the root. The host is a recorded fixture, and the listener is removed
+ * before this returns, even when the dispatch throws.
+ *
+ * @example
+ * ```ts
+ * dispatchFromShadow(createPointerEvent('pointerdown')) // ['pointerdown']
+ * ```
+ */
+export function dispatchFromShadow(event: Event): readonly string[] {
+	const host = buildFixture('').appendChild(document.createElement('div'))
+	const button = host.attachShadow({ mode: 'open' }).appendChild(document.createElement('button'))
+	const heard: string[] = []
+	const listening = new AbortController()
+	document.addEventListener(
+		event.type,
+		(reached) => {
+			heard.push(reached.type)
+		},
+		{ signal: listening.signal },
+	)
+	try {
+		button.dispatchEvent(event)
+	} finally {
+		listening.abort()
+	}
+	return heard
+}
+
+/**
  * Removes every fixture built since the last reset.
  *
  * @example

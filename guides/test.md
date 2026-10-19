@@ -274,7 +274,7 @@ a detached control the caller appends where it is reading; `clearStorage` takes 
 `removeDatabase` takes a database name. The predicates, the element readers, and the describers name
 a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
 `readName`, `readStates`, `readProtocolPoint`, `readProtocolNode`, `readAccessibilityNode`,
-`readActiveElement`, `countElements`, `isWithin`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
+`readActiveElement`, `countElements`, `containsNode`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
 `readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readColorContrast`,
 `readLayers`, `readBackdrop`, `readRing`, `readAnimations`, `readClippedBlock`, and
 `collectScrollRegions` — and each reads that node rather than acting on a target it was handed.
@@ -373,7 +373,7 @@ A `Shape` cell holds the constant's declared type.
 | `traverseAccessibleWithin` | function | `(region: string, role: string, name: string) => Promise<HTMLElement>`                                                  | Reaches a control by role and accessible-name text inside a named region, only through natural forward Tab traversal from the current focus.                                                                                                                                    |
 | `readActiveElement`        | function | `(root?: Document \| ShadowRoot) => HTMLElement \| undefined`                                                           | Reads the HTML element that holds focus, following it into open shadow roots and same-origin frames.                                                                                                                                                                            |
 | `countElements`            | function | `(root?: Document \| ShadowRoot) => number`                                                                             | Counts the elements a tree holds, descending into open shadow roots and same-origin frames.                                                                                                                                                                                     |
-| `isWithin`                 | function | `(root: Node, node: Node) => boolean`                                                                                   | Determines whether a node sits inside a root, through open shadow roots and frames.                                                                                                                                                                                             |
+| `containsNode`             | function | `(root: Node, node: Node) => boolean`                                                                                   | Determines whether a node sits inside a root, through open shadow roots and frames.                                                                                                                                                                                             |
 | `stepFocus`                | function | `(limit: number) => AsyncGenerator<HTMLElement \| undefined, void, undefined>`                                          | Presses Tab and yields the element focus lands on, once per press, up to a limit.                                                                                                                                                                                               |
 | `driveTraversal`           | function | `(resolve: () => HTMLElement, name: string) => Promise<HTMLElement>`                                                    | Reaches the control a resolver returns, only through natural forward Tab traversal from the current focus.                                                                                                                                                                      |
 | `walkFocus`                | function | `(stop?: (element: HTMLElement) => boolean) => Promise<readonly HTMLElement[]>`                                         | Walks forward by real Tab presses from the focused element until a predicate accepts a stop or the Tab order ends.                                                                                                                                                              |
@@ -473,6 +473,11 @@ A `Shape` cell holds the constant's declared type.
 | `createDragEvent`     | function | `(name: string, options?: DragEventInit) => DragEvent`                                                    | Creates one real drag event carrying a live data transfer, ready to dispatch.                       |
 | `createKeyboardEvent` | function | `(name: string, options?: KeyboardEventInit) => KeyboardEvent`                                            | Creates one real keyboard event, ready to dispatch.                                                 |
 
+`createPointerEvent` and `createDragEvent` default to `composed: true` from 0.0.27, where 0.0.26
+left it `false`. An event dispatched inside an open shadow root stayed there in 0.0.26, and a
+listener outside that root heard nothing; a listener outside it hears the event from 0.0.27. Pass
+`{ composed: false }` to restore the 0.0.26 boundary behavior.
+
 `resolveAccessible` counts a match as reachable only when every condition holds: it is connected; it
 passes a visibility check honouring opacity and CSS; its box has non-zero width and height; its
 `tabIndex` is at least zero; it matches neither `:disabled` nor `[aria-disabled="true"]`; and it has
@@ -571,18 +576,23 @@ clipped to 0–255 after conversion; this reader does not perform perceptual gam
 Alpha is clipped to 0–1.
 
 `parseCSSColor` is the live half of the pair `parseColor` opens. `parseColor` reads text and speaks
-only the computed syntaxes a cascade hands back; `parseCSSColor` stages a probe element, hands the
-expression to the real cascade, and reads back what the engine computed — which is the only way a
-keyword, a hex triple, a `var()` reference, or a `color-mix()` becomes channels at all. The probe is
-mounted, so a `var()` reference resolves against the tokens `:root` declares, and it is removed in a
-`finally`. Refusal is the CSSOM's: an expression it will not parse returns `undefined`. A `var()`
-naming an undeclared custom property is not refused, and [Limits](#limits) states what that costs.
-The optional `scope` argument moves the probe inside an element, so the expression resolves against
-what that element and its ancestors declare and `currentColor` is the element's own text color; with
-none the probe is a child of the body. The probe is the scope's last child while it is read, so a
-rule keyed to the scope being empty or to its last child sees it for that moment. A disconnected
-scope, and an `input`, `textarea`, or `video` element, compute no style for a child, so each is
-refused rather than read as the document.
+only the computed syntaxes a cascade hands back; `parseCSSColor` hands the expression to the real
+cascade and reads back what the engine computed — which is the only way a keyword, a hex triple, a
+`var()` reference, or a `color-mix()` becomes channels at all. With no scope the expression resolves
+on a probe that is a child of the body, mounted so a `var()` reference resolves against the tokens
+`:root` declares, and removed in a `finally`. Refusal is the CSSOM's: an expression it will not parse
+returns `undefined`. A `var()` naming an undeclared custom property is not refused, and
+[Limits](#limits) states what that costs. The optional `scope` argument resolves the expression on
+that element itself, through one scratch property the read cannot disturb, `column-rule-color`: the
+read sets it inline to the expression, reads the computed value, and restores the inline
+declaration, its priority, and the `style` attribute text in a `finally`. The element's own and
+inherited custom properties apply, a registered property that does not inherit included,
+`currentColor` is the element's own text color, and an `input` or any other void element resolves
+like any other. While the read runs the element also holds an inline `transition: none`, so a
+transition on every property neither answers with the value it starts from nor starts one when the
+declarations return. A `MutationObserver` watching the element's `style` attribute sees those writes
+and their restoration. A disconnected scope computes no style and returns `undefined`; an element
+that is not an HTML, SVG, or MathML element has no inline style and is refused.
 
 `matchesColor` compares two colors as a browser renders them. Each string side resolves through
 `parseCSSColor`, so a keyword, a token reference, and the `rgb()` an engine computes for either
@@ -606,9 +616,11 @@ element's own text: a separator grip, a placeholder, a checkbox mark. `readContr
 both measure through it. A computed color value parses directly, and any other expression — a
 keyword, a hex triple, a `var()` reference — resolves through `parseCSSColor` at the element's own
 scope: a token reads as the element and its ancestors declare it, and `currentColor` is the
-element's own text color, not the body's. An `input`, `textarea`, or `video` element, and a
-disconnected one, compute no style for the probe child, so they refuse such an expression; hand
-them a computed color such as `rgb(255, 255, 255)`. `floor` takes the
+element's own text color, not the body's. The expression resolves on the element itself, so an
+`input` and a registered token that does not inherit resolve as they do on any other element, with
+the inline-style change that `parseCSSColor` documents. A disconnected element computes no style, so
+it refuses such an expression as unreadable; hand it a computed color such as
+`rgb(255, 255, 255)`. `floor` takes the
 part `readContrast`'s second argument takes, with the same refusal and the same voice when it is
 omitted. `opacity` multiplies the color's own alpha before it is composited, for a mark painted
 inside an element whose `opacity` is below `1`, and a value outside `0` to `1` is refused rather than
@@ -1237,7 +1249,7 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Computed background color is unavailable`                                               | `readColorContrast`                            |
 | `Color "<value>" is unreadable`                                                          | `readColorContrast`                            |
 | `Contrast opacity must be between 0 and 1`                                               | `readColorContrast`                            |
-| `Color "<value>" cannot be resolved at <<tag>>: a child there computes no style`         | `parseCSSColor`, `readColorContrast`           |
+| `Color "<value>" cannot be resolved at <<tag>>: it has no inline style`                  | `parseCSSColor`, `readColorContrast`           |
 | `The element is not connected to a document, so it has no clipping ancestors to read`    | `collectClippingAncestors`, `readClippedBlock` |
 | `Tester pane is unavailable for a capture`                                               | `stagePane`                                    |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                    | `stagePane`                                    |
@@ -1885,15 +1897,18 @@ the helper rather than to the host, and each names what to reach for instead.
   and returns what focus reached, so a focusable scroll container that Chromium focuses without a
   `tabindex` is a stop, and `describeFocus` omits it. Each stop is the innermost element
   `readActiveElement` reads, so a control inside an open shadow root or a same-origin frame is a stop
-  of its own and its host or frame element is not. A closed shadow root cannot be entered, so its
+  of its own and its host or frame element is not. A non-HTML control inside one, such as an SVG
+  element, reads as `undefined` rather than as its host, and `readFocus` follows it. A closed shadow root cannot be entered, so its
   host stands for what it holds, and focus in a frame from another origin throws, because the page
   cannot name a control there. A hidden or disabled stop is returned like any other. A consumer that
   refuses one throws from the predicate it passes. The walk ends where focus returns to the body or
   revisits a stop, and throws only when it outlasts the count `countElements` reads, which includes
   open shadow roots and same-origin frames. A control inside a same-origin frame belongs to the
   frame's window, so it fails this window's `instanceof HTMLElement`. `collectTabStops` is the same
-  walk bounded to a region by `isWithin`, which places a control inside an open shadow root or a
-  same-origin frame in the region that holds its host or frame element.
+  walk bounded to a region by `containsNode`, which places a control inside an open shadow root or a
+  same-origin frame in the region that holds its host or frame element. The start element is the
+  walk's origin and never its end, so a start immediately before the region, outside it, reaches the
+  region's first stop with the first press.
 - **`waitForStability` compares the last `frames + 1` reads.** The first read is immediate and each
   later read follows a painted frame, with the interval slept between polls, so the reads are not on
   consecutive frames when the interval is longer than one. A reading that settles on read `n`
@@ -3886,17 +3901,21 @@ Each entry names the contracts its file proves. The test names carry the cases.
   region an `aria-hidden` attribute withholds, and its not-visible and ambiguous refusals, `readPage`
   the whole page as one
   normalized sentence, and
-  `readFocus` a focused control's rendered text, a focused element that renders none, and nothing
-  holding focus at all; `readValue` takes a rendered value and a control carrying none. The focus
+  `readFocus` a focused control's rendered text, a focused element that renders none, an SVG element
+  focused inside an open shadow root that reads nothing rather than its host's text, a host holding
+  focus with nothing inside, and nothing holding focus at all; `readValue` takes a rendered value
+  and a control carrying none. The focus
   walk takes its inputs across each boundary: `readActiveElement` takes the page's focused control,
-  focus inside an open shadow root and through nested ones, a host holding focus with nothing inside
+  focus inside an open shadow root and through nested ones, an SVG element focused inside one that
+  answers nothing rather than its host, a host holding focus with nothing inside
   and one with a closed root, a control inside a same-origin frame typed for the frame's window, a
   frame holding focus with nothing inside, and a frame from another origin refused;
-  `countElements` takes the shadow and frame content a plain query misses; `isWithin` takes a
+  `countElements` takes the shadow and frame content a plain query misses; `containsNode` takes a
   region's own content, a shadow root's and a frame's, and a detached node left outside;
   `stepFocus` takes one press per landing, none past the consumer's last read, a limit of zero, and
   a landing on nothing. `walkFocus` and `collectTabStops` take the buttons of an open shadow root
-  and of a same-origin frame between two light controls, a start element inside a shadow root, and
+  and of a same-origin frame between two light controls, a start element inside a shadow root, a
+  start element immediately before the region that reaches the region's first stop, and
   focus in a foreign frame refused; `readProtocolPoint` takes a padded frame beside a bordered one,
   both hit-tested through the protocol, and a disconnected element refused. The element
   readers follow: `readText` takes an `aria-hidden` glyph dropped with the runs around it collapsed
@@ -4004,10 +4023,15 @@ Each entry names the contracts its file proves. The test names carry the cases.
   same climb through a host and through a slot, nearest first, and a disconnected element refused.
   The `measureContent` function takes a slotted child ended at the shadow wrapper that clips around
   its slot. The `waitForStability` function takes reads spaced by the interval past the second.
-  The `parseCSSColor` function takes an expression resolved at a scope it is handed, no probe left
-  in that scope on either path, and a scope that computes no style refused. The `readColorContrast`
+  The `parseCSSColor` function takes an expression resolved on the scope it is handed, a registered
+  token that does not inherit, a keyword, a hex triple, and `currentColor` at an `input` and an SVG
+  element, an inline style byte-identical afterwards with a pre-set scratch value and its priority
+  and a shorthand left alone, a style mutation an observer sees during the read, a transition on
+  every property and an important stylesheet rule read through, a disconnected scope answered with
+  nothing, and an element with no inline style refused. The `readColorContrast`
   function takes a token on an ancestor the body never declares, `currentColor`, and a token the
-  element declares itself, each read at the element, and an `input` refused. The `readCascade` function takes class tokens collected from
+  element declares itself, each read at the element, a keyword, a hex triple, and a token at an
+  `input`, a registered token that does not inherit, and a disconnected element refused. The `readCascade` function takes class tokens collected from
   plain and grouped rules and only real ones, and an escaped class decoded beside an attribute
   value whose class-like text defines nothing;
   `readRows` takes a row joined from its own text nodes rather than from run-together content, and
@@ -4047,7 +4071,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   as the control for the inertness claim — a write that leaves `localStorage` exactly as it was. The
   event factories take the real event type, the bubbling, cancelable, and composed defaults and an
   override of each, and an event dispatched from a button inside an open shadow root that a
-  `document` listener hears, beside a bare event of the same type that it does not.
+  `document` listener hears, beside a bare event of the same type that it does not, and a pointer
+  or drag event whose `{ composed: false }` override keeps it inside the root.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — the `readInventory` and
   wait-family contracts, and each pure leaf against its own inputs. `resolveContained` takes
   contained relative and absolute targets and both spellings of an escape, and `requireContained`

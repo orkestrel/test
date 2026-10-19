@@ -11,6 +11,7 @@ import {
 	collectTabStops,
 	commitInput,
 	computeNamePattern,
+	containsNode,
 	countElements,
 	describeFocus,
 	describeScrollRegions,
@@ -26,7 +27,6 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
-	isWithin,
 	parkPointer,
 	POINTER_HOLD,
 	pressKeys,
@@ -1724,6 +1724,21 @@ describe('readActiveElement', () => {
 		expect(readActiveElement(root)).toBe(inner)
 	})
 
+	it('answers nothing when the innermost focused element is not HTML, rather than its host', () => {
+		const container = buildFixture('<div>Host text</div>')
+		const host = requireValue(container.querySelector('div'))
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML = '<svg tabindex="0" width="20" height="20"><title>Chart</title></svg>'
+		const chart = requireValue(root.querySelector('svg'))
+		chart.focus()
+		// The page stops at the host, and the root names the SVG: only the second is where focus is.
+		expect(document.activeElement).toBe(host)
+		expect(root.activeElement).toBe(chart)
+		expect(host instanceof HTMLElement).toBe(true)
+		expect(readActiveElement()).toBeUndefined()
+		expect(readActiveElement(root)).toBeUndefined()
+	})
+
 	it('follows focus through nested shadow roots', () => {
 		const container = buildFixture('<div></div>')
 		const outer = requireValue(container.querySelector('div')).attachShadow({ mode: 'open' })
@@ -1835,13 +1850,13 @@ describe('countElements', () => {
 	})
 })
 
-describe('isWithin', () => {
+describe('containsNode', () => {
 	it('places a node in a region by containment, and the region itself', () => {
 		const container = buildFixture('<section><button type="button">In</button></section><p>Out</p>')
 		const section = requireValue(container.querySelector('section'))
-		expect(isWithin(section, requireValue(section.querySelector('button')))).toBe(true)
-		expect(isWithin(section, section)).toBe(true)
-		expect(isWithin(section, requireValue(container.querySelector('p')))).toBe(false)
+		expect(containsNode(section, requireValue(section.querySelector('button')))).toBe(true)
+		expect(containsNode(section, section)).toBe(true)
+		expect(containsNode(section, requireValue(container.querySelector('p')))).toBe(false)
 	})
 
 	it('places a control inside an open shadow root in the region that holds its host', () => {
@@ -1852,8 +1867,8 @@ describe('isWithin', () => {
 		const inner = requireValue(root.querySelector('button'))
 		// The control: containment stops at the shadow boundary, which is the reading being replaced.
 		expect(section.contains(inner)).toBe(false)
-		expect(isWithin(section, inner)).toBe(true)
-		expect(isWithin(requireValue(container.querySelector('p')), inner)).toBe(false)
+		expect(containsNode(section, inner)).toBe(true)
+		expect(containsNode(requireValue(container.querySelector('p')), inner)).toBe(false)
 	})
 
 	it('places a control inside a same-origin frame in the region that holds its frame', async () => {
@@ -1870,16 +1885,16 @@ describe('isWithin', () => {
 			),
 		)
 		expect(section.contains(inner)).toBe(false)
-		expect(isWithin(section, inner)).toBe(true)
-		expect(isWithin(requireValue(container.querySelector('p')), inner)).toBe(false)
+		expect(containsNode(section, inner)).toBe(true)
+		expect(containsNode(requireValue(container.querySelector('p')), inner)).toBe(false)
 	})
 
 	it('places a detached node and a document outside a region', () => {
 		const container = buildFixture('<section></section>')
 		const section = requireValue(container.querySelector('section'))
-		expect(isWithin(section, build('span'))).toBe(false)
-		expect(isWithin(document, document)).toBe(true)
-		expect(isWithin(section, document)).toBe(false)
+		expect(containsNode(section, build('span'))).toBe(false)
+		expect(containsNode(document, document)).toBe(true)
+		expect(containsNode(section, document)).toBe(false)
 	})
 })
 
@@ -2074,6 +2089,19 @@ describe('collectTabStops', () => {
 		expect(stops).not.toContain(resolveAccessible('After'))
 	})
 
+	it('collects the stops of a region from a start element that sits immediately before it', async () => {
+		const container = buildFixture(
+			'<button type="button">Start</button>' +
+				'<section><button type="button">Inside</button></section>' +
+				'<button type="button">After</button>',
+		)
+		const region = requireValue(container.querySelector('section'))
+		const start = requireValue(container.querySelector('button'))
+		expect(region.contains(start)).toBe(false)
+		const stops = await collectTabStops(region, start)
+		expect(stops.map((stop) => readName(stop))).toStrictEqual(['Inside'])
+	})
+
 	it('includes the scroller Chromium focuses on its own, which describeFocus omits', async () => {
 		const container = buildFixture(REGION)
 		const region = requireValue(container.querySelector<HTMLElement>('[data-region]'))
@@ -2176,6 +2204,27 @@ describe('readFocus', () => {
 		requireValue(root.querySelector('button')).focus()
 		expect(document.activeElement).toBe(host)
 		expect(readFocus()).toBe('Inner')
+	})
+
+	it('reads nothing, not its host, when the control focused inside an open shadow root is not HTML', () => {
+		const container = buildFixture('<div>Host text</div>')
+		const host = requireValue(container.querySelector('div'))
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML =
+			'<svg tabindex="0" width="20" height="20"><title>Chart</title></svg><slot></slot>'
+		requireValue(root.querySelector('svg')).focus()
+		expect(document.activeElement).toBe(host)
+		expect(host.innerText).toBe('Host text')
+		expect(readFocus()).toBeUndefined()
+	})
+
+	it('reads the host text when the host holds focus with nothing focused inside', () => {
+		const container = buildFixture('<div tabindex="0">Host text</div>')
+		const host = requireValue(container.querySelector('div'))
+		host.attachShadow({ mode: 'open' }).innerHTML =
+			'<svg width="20" height="20"></svg><slot></slot>'
+		host.focus()
+		expect(readFocus()).toBe('Host text')
 	})
 
 	it('reads nothing when focus rests on an element that renders no text', async () => {

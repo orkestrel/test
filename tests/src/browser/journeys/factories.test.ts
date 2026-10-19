@@ -23,7 +23,7 @@ import {
 	waitForDelay,
 } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildFixture, resetFixtures } from '../../../setupBrowser.js'
+import { buildFixture, dispatchFromShadow, resetFixtures } from '../../../setupBrowser.js'
 
 afterEach(resetFixtures)
 
@@ -1123,30 +1123,6 @@ describe('createHarness', () => {
 	})
 })
 
-// Dispatches one event from a button inside an open shadow root and returns the types a `document`
-// listener heard. A listener on the document hears an event only when it is composed, because the
-// shadow boundary stops every other event at the root.
-function dispatchFromShadow(event: Event): readonly string[] {
-	const container = buildFixture('<div></div>')
-	const root = requireValue(container.querySelector('div')).attachShadow({ mode: 'open' })
-	const button = root.appendChild(document.createElement('button'))
-	const heard: string[] = []
-	const listening = new AbortController()
-	document.addEventListener(
-		event.type,
-		(reached) => {
-			heard.push(reached.type)
-		},
-		{ signal: listening.signal },
-	)
-	try {
-		button.dispatchEvent(event)
-	} finally {
-		listening.abort()
-	}
-	return heard
-}
-
 describe('createPointerEvent', () => {
 	it('builds a real pointer event of the type asked for', () => {
 		const event = createPointerEvent('pointerdown')
@@ -1201,6 +1177,14 @@ describe('createPointerEvent', () => {
 		expect(dispatchFromShadow(createPointerEvent('pointerdown'))).toStrictEqual(['pointerdown'])
 		expect(dispatchFromShadow(new PointerEvent('pointerdown', { bubbles: true }))).toStrictEqual([])
 	})
+
+	// The 0.0.26 default left `composed` false, so a pointer event dispatched inside an open shadow
+	// root stayed there. The override restores that boundary behavior.
+	it('stays inside an open shadow root when the caller names composed false', () => {
+		expect(
+			dispatchFromShadow(createPointerEvent('pointerdown', { composed: false })),
+		).toStrictEqual([])
+	})
 })
 
 describe('createDragEvent', () => {
@@ -1243,6 +1227,12 @@ describe('createDragEvent', () => {
 	it('crosses an open shadow root to a document listener', () => {
 		expect(dispatchFromShadow(createDragEvent('drop'))).toStrictEqual(['drop'])
 		expect(dispatchFromShadow(new DragEvent('drop', { bubbles: true }))).toStrictEqual([])
+	})
+
+	// The 0.0.26 default left `composed` false, so a drag event dispatched inside an open shadow
+	// root stayed there. The override restores that boundary behavior.
+	it('stays inside an open shadow root when the caller names composed false', () => {
+		expect(dispatchFromShadow(createDragEvent('drop', { composed: false }))).toStrictEqual([])
 	})
 })
 

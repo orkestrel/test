@@ -1111,8 +1111,8 @@ export async function traverseAccessibleWithin(
  * frames.
  *
  * @param root - The document or open shadow root to read from. Default: the page's document.
- * @returns The innermost focused HTML element, or `undefined` when only a body, a non-HTML element,
- * or nothing holds focus.
+ * @returns The innermost focused element when it is an HTML element of its own window, or
+ * `undefined` when only a body, a non-HTML element, or nothing holds focus.
  * @throws Thrown when focus sits in a frame from another origin, whose document the page cannot
  * reach.
  *
@@ -1121,7 +1121,9 @@ export async function traverseAccessibleWithin(
  * element of a frame, never the control focused inside. This follows `shadowRoot.activeElement` and
  * a frame's `contentDocument.activeElement` until neither names a deeper element, so a host or a
  * frame holding focus with nothing focused inside is itself the answer. A closed shadow root cannot
- * be followed, so its host is the answer there.
+ * be followed, so its host is the answer there. When the innermost focused element is not HTML, as
+ * an SVG element focused inside an open shadow root, the answer is `undefined`: the host that holds
+ * it is not where focus is.
  *
  * A frame from another origin is refused rather than answered with its element, because the answer
  * would name a frame while focus sat on a control the page cannot see. The element comes back typed
@@ -1143,8 +1145,12 @@ export function readActiveElement(root: Document | ShadowRoot = document): HTMLE
 		throw new Error('Focus sits in a frame from another origin, which cannot be read')
 	}
 	const scope = framed ? active.contentDocument : active.shadowRoot
-	const inner = scope === null ? undefined : readActiveElement(scope)
-	if (inner !== undefined) return inner
+	const inside = scope?.activeElement ?? null
+	// Where something inside holds focus, the innermost element is the answer, HTML or not: a
+	// non-HTML control must not fall back to the host that holds it.
+	if (scope !== null && inside !== null && inside !== inside.ownerDocument.body) {
+		return readActiveElement(scope)
+	}
 	return active instanceof realm.HTMLElement ? active : undefined
 }
 
@@ -1191,18 +1197,18 @@ export function countElements(root: Document | ShadowRoot = document): number {
  *
  * @example
  * ```ts
- * isWithin(region, readActiveElement() ?? region)
+ * containsNode(region, readActiveElement() ?? region)
  * ```
  */
-export function isWithin(root: Node, node: Node): boolean {
+export function containsNode(root: Node, node: Node): boolean {
 	if (root.contains(node)) return true
 	const owner = node.ownerDocument
 	if (owner === null) return false
 	const realm = owner.defaultView
 	if (realm === null) return false
 	const scope = node.getRootNode()
-	if (scope === owner) return realm.frameElement !== null && isWithin(root, realm.frameElement)
-	return scope instanceof realm.ShadowRoot && isWithin(root, scope.host)
+	if (scope === owner) return realm.frameElement !== null && containsNode(root, realm.frameElement)
+	return scope instanceof realm.ShadowRoot && containsNode(root, scope.host)
 }
 
 /**
@@ -1334,7 +1340,8 @@ export async function walkFocus(
  * Collects the elements of a region that a forward Tab walk reaches from a starting element.
  *
  * @param root - The region whose stops are collected; the walk ends where focus leaves it.
- * @param start - The element that takes focus first. It is not a stop.
+ * @param start - The element that takes focus first. It is not a stop, and it need not sit in
+ * the region.
  * @returns The region's Tab stops in order, including a scroll container Chromium focuses
  * automatically.
  * @throws Thrown when `start` cannot take focus, and whatever {@link walkFocus} throws.
@@ -1342,8 +1349,10 @@ export async function walkFocus(
  * @remarks
  * The walk is {@link walkFocus} from `start` with the region's edge as its stop, so a stop outside
  * `root` ends the walk and is left out of the result. A stop belongs to the region by
- * {@link isWithin}, so a control inside an open shadow root or a same-origin frame that `root` holds
- * is in the region, and `start` may sit inside one.
+ * {@link containsNode}, so a control inside an open shadow root or a same-origin frame that `root`
+ * holds is in the region, and `start` may sit inside one. A `start` that sits outside the region,
+ * as the control immediately before it, is the walk's origin and never its end, so the first Tab into the
+ * region reaches its first stop.
  *
  * @example
  * ```ts
@@ -1356,8 +1365,8 @@ export async function collectTabStops(
 ): Promise<readonly HTMLElement[]> {
 	start.focus()
 	if (readActiveElement() !== start) throw new Error('The start element cannot take focus')
-	const reached = await walkFocus((focused) => !isWithin(root, focused))
-	return reached.filter((stop) => stop !== start && isWithin(root, stop))
+	const reached = await walkFocus((focused) => focused !== start && !containsNode(root, focused))
+	return reached.filter((stop) => stop !== start && containsNode(root, stop))
 }
 
 /**
@@ -1429,13 +1438,15 @@ export function readPage(): string {
  * Reads the rendered text of the element that holds focus.
  *
  * @returns The focused HTML element's trimmed rendered text, including an empty string, or
- * `undefined` when focus rests on a non-HTML element. When nothing holds focus, the browser
- * reports the document body as active, so the whole page's rendered text returns.
+ * `undefined` when focus rests on a non-HTML element, inside a shadow root or not. When nothing holds
+ * focus, the browser reports the document body as active, so the whole page's rendered text returns.
  * @throws Thrown when focus sits in a frame from another origin, as {@link readActiveElement} refuses.
  *
  * @remarks
  * The focused element is read through {@link readActiveElement}, so a control focused inside an open
- * shadow root or a same-origin frame answers, not its host or its frame.
+ * shadow root or a same-origin frame answers, not its host or its frame. The page text returns only
+ * when the document's active element is its body, and never as a fallback for a focused element
+ * that {@link readActiveElement} declines.
  *
  * @example
  * ```ts
@@ -1446,8 +1457,7 @@ export function readPage(): string {
 export function readFocus(): string | undefined {
 	const deep = readActiveElement()
 	if (deep !== undefined) return deep.innerText.trim()
-	const focused = document.activeElement
-	return focused instanceof HTMLElement ? focused.innerText.trim() : undefined
+	return document.activeElement === document.body ? document.body.innerText.trim() : undefined
 }
 
 /**

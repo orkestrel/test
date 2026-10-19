@@ -43,6 +43,14 @@ import { buildFixture, buildStylesheet, resetFixtures } from '../../../setupBrow
 beforeAll(async () => {
 	await userEvent.click(document.body)
 	await releasePointer()
+	// A registered property that does not inherit holds its own value on the element that sets it and
+	// its initial value everywhere else, which is the custom-property context a child cannot copy.
+	CSS.registerProperty({
+		name: '--registered-ink',
+		syntax: '<color>',
+		inherits: false,
+		initialValue: 'black',
+	})
 })
 
 afterEach(resetFixtures)
@@ -138,20 +146,97 @@ describe('parseCSSColor', () => {
 		expect(scope.innerHTML).toBe('<b>Kept</b>')
 	})
 
-	it('refuses a scope whose children compute no style, and leaves no probe in it', () => {
+	it('resolves a registered token that does not inherit as the scope itself declares it', () => {
 		const container = buildFixture(
-			'<div><input data-scope style="--grip: rgb(255, 255, 255)"></div>',
+			'<div data-parent style="background: #000"><span data-scope style="--registered-ink: #fff">Mark</span></div>',
 		)
-		const scope = requireValue(container.querySelector<HTMLInputElement>('[data-scope]'))
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
+		const parent = requireValue(container.querySelector<HTMLElement>('[data-parent]'))
+		// Control: the parent never sets the token, so its own reading is the registered initial value.
+		expect(readStyle(scope, '--registered-ink')).toBe('rgb(255, 255, 255)')
+		expect(parseCSSColor('var(--registered-ink)', parent)).toStrictEqual([0, 0, 0, 1])
+		expect(parseCSSColor('var(--registered-ink)', scope)).toStrictEqual([255, 255, 255, 1])
+	})
+
+	it('resolves a keyword, a hex triple, and currentColor at an input and an svg element', () => {
+		const container = buildFixture(
+			'<div><input data-input style="color: rgb(1, 2, 3)"><svg data-svg width="10" height="10" style="color: rgb(4, 5, 6)"></svg></div>',
+		)
+		const field = requireValue(container.querySelector<HTMLElement>('[data-input]'))
+		const svg = requireValue(container.querySelector<SVGElement>('[data-svg]'))
+		expect(parseCSSColor('white', field)).toStrictEqual([255, 255, 255, 1])
+		expect(parseCSSColor('#ff0000', field)).toStrictEqual([255, 0, 0, 1])
+		expect(parseCSSColor('currentColor', field)).toStrictEqual([1, 2, 3, 1])
+		expect(parseCSSColor('not-a-color', field)).toBeUndefined()
+		expect(parseCSSColor('rebeccapurple', svg)).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('currentColor', svg)).toStrictEqual([4, 5, 6, 1])
+	})
+
+	it('leaves the inline style byte-identical, a pre-set scratch value and its priority included', () => {
+		const container = buildFixture(
+			'<div data-plain></div>' +
+				'<div data-set style="color: red; column-rule-color: blue !important; margin: 0"></div>' +
+				'<div data-shorthand style="column-rule: 1px solid red; margin: 0"></div>',
+		)
+		const plain = requireValue(container.querySelector<HTMLElement>('[data-plain]'))
+		const set = requireValue(container.querySelector<HTMLElement>('[data-set]'))
+		const shorthand = requireValue(container.querySelector<HTMLElement>('[data-shorthand]'))
+		const targets = [plain, set, shorthand]
+		const before = targets.map((target) => target.getAttribute('style'))
+		expect(before[0]).toBeNull()
+		for (const target of targets) {
+			expect(parseCSSColor('rebeccapurple', target)).toStrictEqual([102, 51, 153, 1])
+			// A refused value must not read back the declaration it failed to replace.
+			expect(parseCSSColor('not-a-color', target)).toBeUndefined()
+		}
+		expect(targets.map((target) => target.getAttribute('style'))).toStrictEqual(before)
+		expect(set.style.getPropertyValue('column-rule-color')).toBe('blue')
+		expect(set.style.getPropertyPriority('column-rule-color')).toBe('important')
+	})
+
+	it('reads the scope color through a transition on every property', () => {
+		buildStylesheet('[data-busy] { transition: all 10s }')
+		const container = buildFixture('<div data-busy style="color: rgb(1, 2, 3)">Busy</div>')
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-busy]'))
+		// Force the style the transition starts from before the read changes it.
+		expect(readStyle(scope, 'column-rule-color')).toBe('rgb(1, 2, 3)')
+		expect(parseCSSColor('white', scope)).toStrictEqual([255, 255, 255, 1])
+		// The read and its restore start no transition for the page to see.
+		expect(scope.getAnimations()).toHaveLength(0)
+	})
+
+	it('reads the scope color through a stylesheet rule that is important', () => {
+		buildStylesheet('[data-loud] { column-rule-color: red !important }')
+		const container = buildFixture('<div data-loud>Loud</div>')
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-loud]'))
+		expect(readStyle(scope, 'column-rule-color')).toBe('rgb(255, 0, 0)')
+		expect(parseCSSColor('white', scope)).toStrictEqual([255, 255, 255, 1])
+	})
+
+	it('shows a style mutation to an observer for the moment it reads, and none after it returns', () => {
+		const container = buildFixture('<div data-scope></div>')
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
+		const observer = new MutationObserver(() => undefined)
+		observer.observe(scope, { attributes: true, attributeFilter: ['style'] })
+		expect(parseCSSColor('rebeccapurple', scope)).toStrictEqual([102, 51, 153, 1])
+		expect(observer.takeRecords().length).toBeGreaterThan(0)
+		expect(scope.getAttribute('style')).toBeNull()
+		observer.disconnect()
+	})
+
+	it('answers a disconnected scope with nothing, because it computes no style', () => {
 		const detached = build('div')
-		expect(() => parseCSSColor('var(--grip)', scope)).toThrow(
-			'Color "var(--grip)" cannot be resolved at <input>: a child there computes no style',
+		expect(parseCSSColor('red', detached)).toBeUndefined()
+		expect(detached.getAttribute('style')).toBeNull()
+	})
+
+	it('refuses a scope with no inline style to read through', () => {
+		const container = buildFixture('<div></div>')
+		const foreign = document.createElementNS('urn:example', 'widget')
+		container.append(foreign)
+		expect(() => parseCSSColor('red', foreign)).toThrow(
+			'Color "red" cannot be resolved at <widget>: it has no inline style',
 		)
-		expect(() => parseCSSColor('red', detached)).toThrow(
-			'Color "red" cannot be resolved at <div>: a child there computes no style',
-		)
-		expect(scope.childNodes.length).toBe(0)
-		expect(detached.childNodes.length).toBe(0)
 	})
 })
 
@@ -449,19 +534,35 @@ describe('readColorContrast', () => {
 		expect(readColorContrast(requireValue(declares), 'var(--grip)')).toBeCloseTo(21, 5)
 	})
 
-	it('refuses an expression it cannot resolve at an element that renders no child', () => {
+	it('reads a keyword, a hex triple, and a token at an input over a black surface', () => {
 		const container = buildFixture(
-			'<div style="background: #000"><input style="--grip: #fff; color: #fff; background: transparent"></div>',
+			'<div style="background: #000"><input style="--grip: #fff; color: #000; background: transparent"></div>',
 		)
 		const field = requireValue(container.querySelector('input'))
-		// A computed color needs no scope, so the control reads as it did before.
+		// Control: the computed spelling of white reads the ceiling without any scope.
 		expect(readColorContrast(field, 'rgb(255, 255, 255)')).toBeCloseTo(21, 5)
-		expect(() => readColorContrast(field, 'var(--grip)')).toThrow(
-			'Color "var(--grip)" cannot be resolved at <input>: a child there computes no style',
+		expect(readColorContrast(field, 'white')).toBeCloseTo(21, 5)
+		expect(readColorContrast(field, '#fff')).toBeCloseTo(21, 5)
+		expect(readColorContrast(field, 'var(--grip)')).toBeCloseTo(21, 5)
+		expect(readColorContrast(field, 'currentColor')).toBeCloseTo(1, 5)
+	})
+
+	it('reads a registered token that does not inherit as the element declares it', () => {
+		const container = buildFixture(
+			'<div style="background: #000"><span style="--registered-ink: #fff">Mark</span></div>',
 		)
-		expect(field.childNodes.length).toBe(0)
+		const mark = requireValue(container.querySelector('span'))
+		// Control: the span's computed token reads the ceiling, and the registered initial is black.
+		expect(readColorContrast(mark, readStyle(mark, '--registered-ink'))).toBeCloseTo(21, 5)
+		expect(readColorContrast(mark, 'var(--registered-ink)')).toBeCloseTo(21, 5)
+		expect(
+			readColorContrast(requireValue(mark.parentElement), 'var(--registered-ink)'),
+		).toBeCloseTo(1, 5)
+	})
+
+	it('refuses a color a detached element cannot resolve, because it computes no style', () => {
 		expect(() => readColorContrast(build('span'), 'white', { floor: CANVAS_COLOR })).toThrow(
-			'Color "white" cannot be resolved at <span>: a child there computes no style',
+			'Color "white" is unreadable',
 		)
 	})
 

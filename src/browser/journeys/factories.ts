@@ -409,6 +409,10 @@ export function createHarness<TState extends string, TEvent extends string, TCon
  * branches on the pointer kind takes the branch a mouse takes. Override any of them by naming it; a
  * touch is `{ pointerType: 'touch' }` and nothing else has to be restated.
  *
+ * `composed` defaults to `true` from 0.0.27; 0.0.26 left it `false`, so an event dispatched inside an
+ * open shadow root stayed there. A listener outside that root hears the event, and
+ * `{ composed: false }` restores the 0.0.26 boundary behavior.
+ *
  * The event is real rather than a shaped object, so `instanceof PointerEvent` holds and the
  * coordinate and modifier members a handler reads are the ones the platform defines.
  *
@@ -447,7 +451,9 @@ export function createPointerEvent(name: string, options?: PointerEventInit): Po
  *
  * `bubbles`, `cancelable`, and `composed` are set, because a drop handler that never prevents the
  * default event is a drop the browser handles itself, and a drag a browser raises inside an open
- * shadow root is heard outside it.
+ * shadow root is heard outside it. `composed` defaults to `true` from 0.0.27; 0.0.26 left it
+ * `false`, so an event dispatched inside an open shadow root stayed there. A listener outside that
+ * root hears the event, and `{ composed: false }` restores the 0.0.26 boundary behavior.
  *
  * @example
  * ```ts
