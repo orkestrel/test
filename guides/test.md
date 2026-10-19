@@ -1311,8 +1311,8 @@ The resolver's absent, gated, ambiguous, and unreachable voices stay unchanged. 
 and media-delivery refusals guard provider failures the managed Chromium suite doesn't induce.
 The suite exercises real delivery rather than substituting a provider that manufactures a failure.
 `readAccessibilityNode` raises the `readProtocolNode` voices unchanged. Of those, `found <n>
-elements` is driven, by a detached element, and the other two are narrowing: the browser replies
-to a search that way, so they guard a provider that does not.
+elements` is driven, by a detached element. The other two narrow a reply that omits `searchId` or
+`nodeIds`, which the browser never sends, so they guard a provider that does.
 
 ### Refusals outside the journey layer
 

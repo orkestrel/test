@@ -1395,17 +1395,20 @@ describe('readProtocolPoint', () => {
 		)
 		buildFixture('<button class="journey-offset">Offset</button>')
 		const button = resolveAccessible('Offset')
-		expect(readProtocolPoint(button)).toEqual(readProtocolPoint(button, { x: 40, y: 20 }))
 		const inside = readProtocolPoint(button, { x: 4, y: 4 })
 		const beyond = readProtocolPoint(button, { x: 110, y: 20 })
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...inside })
-		await waitForCondition('the offset inside the box hovers it', () => button.matches(':hover'))
-		await parkPointer()
-		expect(button.matches(':hover')).toBe(false)
-		// The control: an offset past the box edge is a real point that misses the element.
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...beyond })
-		await waitForFrame()
-		expect(button.matches(':hover')).toBe(false)
+		try {
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...inside })
+			await waitForCondition('the offset inside the box hovers it', () => button.matches(':hover'))
+			await parkPointer()
+			expect(button.matches(':hover')).toBe(false)
+			// The control: an offset past the box edge is a real point that misses the element.
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...beyond })
+			await waitForFrame()
+			expect(button.matches(':hover')).toBe(false)
+		} finally {
+			await parkPointer()
+		}
 	})
 
 	it('hovers a control inside a child frame at the projected centre and not at its own client point', async () => {
@@ -1425,17 +1428,61 @@ describe('readProtocolPoint', () => {
 		expect(own).toEqual({ x: 60, y: 40 })
 		const point = readProtocolPoint(inner)
 		expect(point).not.toEqual(own)
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
-		await waitForCondition('the projected centre hovers the nested button', () =>
-			inner.matches(':hover'),
+		try {
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+			await waitForCondition('the projected centre hovers the nested button', () =>
+				inner.matches(':hover'),
+			)
+			await parkPointer()
+			expect(inner.matches(':hover')).toBe(false)
+			// The control: the same move at the element's own client point lands in the runner, not in it.
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...own })
+			await waitForFrame()
+			await waitForFrame()
+			expect(inner.matches(':hover')).toBe(false)
+		} finally {
+			await parkPointer()
+		}
+	})
+
+	// A mouse event hit-tests the frame's content box, so the point must clear the frame's border.
+	// The button is smaller than the border is wide, so a point measured from the border-box corner
+	// lands on the border and misses it.
+	it('hovers a control inside a bordered child frame at the content point and not on the border', async () => {
+		const container = buildFixture(
+			'<iframe title="Bordered" style="position: fixed; left: 200px; top: 100px; width: 300px; height: 200px; border: 8px solid" srcdoc="<style>body { margin: 0 } button { position: fixed; left: 0; top: 0; width: 12px; height: 12px; padding: 0 }</style><button>Bordered</button>"></iframe>',
 		)
-		await parkPointer()
-		expect(inner.matches(':hover')).toBe(false)
-		// The control: the same move at the element's own client point lands in the runner, not in it.
-		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...own })
-		await waitForFrame()
-		await waitForFrame()
-		expect(inner.matches(':hover')).toBe(false)
+		const frame = requireValue(container.querySelector('iframe'))
+		const inner = requireValue(
+			await retryUntil(
+				'the bordered frame renders its button',
+				() => frame.contentDocument?.querySelector('button') ?? undefined,
+				(found) => found !== undefined,
+			),
+		)
+		expect(frame.clientLeft).toBe(8)
+		const box = inner.getBoundingClientRect()
+		const own = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+		expect(own).toEqual({ x: 6, y: 6 })
+		const point = readProtocolPoint(inner)
+		// The control: the same child point measured from the frame's border-box corner, which is where
+		// a border-blind projection lands. It is a real point on the border that misses the button.
+		const onBorder = readProtocolPoint(frame, own)
+		expect(point).not.toEqual(onBorder)
+		try {
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+			await waitForCondition('the content point hovers the bordered button', () =>
+				inner.matches(':hover'),
+			)
+			await parkPointer()
+			expect(inner.matches(':hover')).toBe(false)
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...onBorder })
+			await waitForFrame()
+			await waitForFrame()
+			expect(inner.matches(':hover')).toBe(false)
+		} finally {
+			await parkPointer()
+		}
 	})
 })
 
@@ -1486,6 +1533,29 @@ describe('readProtocolNode', () => {
 		detached.setAttribute(marker, 'preset')
 		await expect(readProtocolNode(detached)).rejects.toThrow('where one is required')
 		expect(detached.getAttribute(marker)).toBe('preset')
+	})
+
+	// The remarks promise the search reaches into shadow roots. The only marked button here lives in an
+	// open root, and a light-DOM button of the same kind is the control: the id the reader returns
+	// must describe the shadowed one.
+	it('finds the marked button inside an open shadow root', async () => {
+		const container = buildFixture(
+			'<button id="journey-light">Light</button><div id="journey-host"></div>',
+		)
+		const host = requireValue(container.querySelector('#journey-host'))
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML = '<button id="journey-shadowed">Shadowed</button>'
+		const shadowed = requireValue(root.querySelector('button'))
+		const light = requireValue(container.querySelector('#journey-light'))
+		const shadowedId = await readProtocolNode(shadowed)
+		expect(await sendProtocol('DOM.describeNode', { nodeId: shadowedId })).toMatchObject({
+			node: { nodeName: 'BUTTON', attributes: ['id', 'journey-shadowed'] },
+		})
+		const lightId = await readProtocolNode(light)
+		expect(lightId).not.toBe(shadowedId)
+		expect(await sendProtocol('DOM.describeNode', { nodeId: lightId })).toMatchObject({
+			node: { nodeName: 'BUTTON', attributes: ['id', 'journey-light'] },
+		})
 	})
 })
 

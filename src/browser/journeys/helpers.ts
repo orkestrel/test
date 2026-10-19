@@ -819,12 +819,14 @@ export async function releasePointer(): Promise<void> {
  * Default: the centre of its box.
  * @returns The point in the top-level viewport's coordinates, which is where a DevTools input
  * command addresses.
+ * @throws Thrown when a frame on the way up is not an HTML element of a document a window holds.
  *
  * @remarks
- * Each frame on the way up scales the point by the ratio of its painted width to its layout width
- * and adds its own position, so a tester iframe the runner scales or offsets is accounted for, and so
- * is an iframe the page itself nests. The reading is of the layout now: a box that moves afterwards
- * moves the point it names. An element in a document no frame holds reads its own client point.
+ * Each frame on the way up adds its border, scales the point by the ratio of its painted width to its
+ * layout width, and adds its own position, so a tester iframe the runner scales or offsets is
+ * accounted for, and so is an iframe the page itself nests, bordered or not. The reading is of the
+ * layout now: a box that moves afterwards moves the point it names. An element in a document no frame
+ * holds reads its own client point.
  *
  * @example
  * ```ts
@@ -838,12 +840,19 @@ export function readProtocolPoint(element: Element, offset?: ProtocolPoint): Pro
 	const y = box.y + (offset?.y ?? box.height / 2)
 	const frame = element.ownerDocument.defaultView?.frameElement
 	if (frame === null || frame === undefined) return { x, y }
-	// The point is now in the frame's own viewport. Its distance from the frame's corner, scaled by
-	// how much wider the frame paints than it lays out, is the offset the frame itself is read at.
+	// The frame belongs to the parent document's realm, so the check reads that realm's constructor.
+	// A frame of a document no window holds is not a layout the point can be projected through.
+	const realm = frame.ownerDocument.defaultView
+	if (realm === null || !(frame instanceof realm.HTMLElement)) {
+		throw new Error('The frame holding the element is not an HTML element of a live document')
+	}
+	// The point is now in the frame's content viewport. The border sits between that viewport and the
+	// frame's corner, so the offset from the corner adds it. Scaling by how much wider the frame paints
+	// than it lays out turns that offset into the one the frame itself is read at.
 	const bounds = frame.getBoundingClientRect()
 	return readProtocolPoint(frame, {
-		x: (x * bounds.width) / frame.clientWidth,
-		y: (y * bounds.height) / frame.clientHeight,
+		x: ((frame.clientLeft + x) * bounds.width) / frame.offsetWidth,
+		y: ((frame.clientTop + y) * bounds.height) / frame.offsetHeight,
 	})
 }
 
