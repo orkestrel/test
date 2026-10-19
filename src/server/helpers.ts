@@ -829,10 +829,18 @@ export function supportsBytes(): boolean {
  * @param request - The resolved input selector, fixture selection, activation method, and wait budget.
  * @returns A promise resolving after the expected chooser receives the files and its observer is released.
  * @throws When activation fails, no chooser opens, another input opens it, the page closes, or fixture bytes are invalid.
- * @remarks Register this function as `chooseFiles` in Vitest's `test.browser.commands`. It never falls back to direct file assignment.
+ * @remarks Register this function as the `chooseFiles` command in the workspace's `configs/commands.ts`, the
+ * module the root configuration passes to every browser project as `test.browser.commands`. It never falls
+ * back to direct file assignment.
  * @example
  * ```ts
- * const browser = { commands: { chooseFiles } }
+ * // configs/commands.ts
+ * import { chooseFiles } from '@orkestrel/test/server'
+ * import type { BrowserConfigOptions } from 'vitest/node'
+ *
+ * export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> = Object.freeze({
+ * 	chooseFiles,
+ * })
  * ```
  */
 export async function chooseFiles(context: ChooserContext, request: ChooserRequest): Promise<void> {

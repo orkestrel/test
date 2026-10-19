@@ -432,7 +432,8 @@ export function resolveFileInput(name: string): HTMLInputElement {
  * @param options - The activation method and provider wait budget.
  * @returns A promise resolving after the correct native chooser receives the fixture selection.
  * @throws When the input is refused, the provider command is unregistered, or the expected chooser does not open.
- * @remarks Register the server entry's `chooseFiles` command in `test.browser.commands`.
+ * @remarks Register the server entry's `chooseFiles` function as the `chooseFiles` command in the workspace's
+ * `configs/commands.ts`, which the root configuration passes to every browser project.
  * @example
  * ```ts
  * await chooseAccessible('Attachments', [{ name: 'note.txt', mime: 'text/plain', bytes: [72, 105] }])

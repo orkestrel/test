@@ -252,16 +252,19 @@ enabled-state, focus-order, uniqueness, and active-modal checks as the other con
 | `resolveFileInput` | function | `(name: string) => HTMLInputElement`                                                      | Resolves one visible, enabled, focus-reachable native file input by its exact label.        |
 | `chooseAccessible` | function | `(name: string, files: readonly FixtureFile[], options?: ChoiceOptions) => Promise<void>` | Activates a labeled native file input and fulfills its observed chooser with fixture bytes. |
 
-Register the server entry's `chooseFiles` function under the same key in Vitest's
-`test.browser.commands`, in the authored browser-project wrapper. Pass fixture filenames, media
-types, and byte arrays to `chooseAccessible`; `keyboard: true` reaches the input through Tab before
-pressing Enter, and the default activates it with a native pointer click. Run selections sequentially
-on a page. The server arms its chooser observer before activation, checks the event's input identity,
-and supplies the bytes through the real Playwright chooser. A missing or wrong chooser rejects.
-Observers and input handles are released after success, activation failure, timeout, and page closure.
-Each provider wait defaults to a positive 1000 ms budget. An empty fixture selection clears the input;
-it does not prove a manual OS Cancel gesture. This proves browser-native chooser activation and
-fixture selection in Chromium, not manual OS dialog interaction, OS drag, or network upload.
+Register the server entry's `chooseFiles` function as the `chooseFiles` command in the workspace's
+`configs/commands.ts`, the module the root configuration passes to every browser project as
+Vitest's `test.browser.commands`. A package that declares `@orkestrel/test` imports `chooseFiles`
+from `@orkestrel/test/server` there and freezes `{ chooseFiles }` as its exported `commands`
+record. Pass fixture filenames, media types, and byte arrays to `chooseAccessible`; `keyboard: true`
+reaches the input through Tab before pressing Enter, and the default activates it with a native
+pointer click. Run selections sequentially on a page. The server arms its chooser observer before
+activation, checks the event's input identity, and supplies the bytes through the real Playwright
+chooser. A missing or wrong chooser rejects. Observers and input handles are released after
+success, activation failure, timeout, and page closure. Each provider wait defaults to a positive
+1000 ms budget. An empty fixture selection clears the input; it does not prove a manual OS Cancel
+gesture. This proves browser-native chooser activation and fixture selection in Chromium, not
+manual OS dialog interaction, OS drag, or network upload.
 
 The fixture builders, the readers, and the field writers do take an element, and none of them is a
 journey verb. `build` creates a node, `mount` attaches one, and `render` does both from
