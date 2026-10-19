@@ -1,6 +1,12 @@
 import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@src/core'
-import type { AnimationReading, SettleOptions, StateOptions } from './types.js'
-import { isError, isString } from '@orkestrel/contract'
+import type {
+	AccessibilityNode,
+	AnimationReading,
+	ProtocolPoint,
+	SettleOptions,
+	StateOptions,
+} from './types.js'
+import { isArray, isError, isNumber, isRecord, isString, resolveField } from '@orkestrel/contract'
 import {
 	checkBounds,
 	invokeUnchecked,
@@ -674,9 +680,10 @@ export async function holdAccessibleWithin(
  * @remarks
  * This is the one pointer drive every hold verb shares: the held-marker refusal, a scroll that
  * brings a wholly off-viewport target into view and a refusal for one that stays outside, the
- * centre mapped through the tester iframe's painted scale into page coordinates, the trusted move
- * and press, the marker, and the frame wait and the `:active` read-back that both release before
- * refusing. The refusal precedes resolution, so a double hold is refused before an absent name is.
+ * centre projected through every frame into page coordinates by {@link readProtocolPoint}, the
+ * trusted move and press, the marker, and the frame wait and the `:active` read-back that both
+ * release before refusing. The refusal precedes resolution, so a double hold is refused before an
+ * absent name is.
  *
  * @example
  * ```ts
@@ -695,10 +702,7 @@ export async function driveHold(resolve: () => HTMLElement, name: string): Promi
 	if (isOutsideViewport(box)) {
 		throw new Error(`Interactive target "${name}" is unreachable after scrolling`)
 	}
-	const frame = window.frameElement?.getBoundingClientRect()
-	const scale = frame === undefined ? 1 : frame.width / window.innerWidth
-	const x = (frame?.left ?? 0) + (box.left + box.width / 2) * scale
-	const y = (frame?.top ?? 0) + (box.top + box.height / 2) * scale
+	const { x, y } = readProtocolPoint(target)
 	await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
 	await sendProtocol('Input.dispatchMouseEvent', {
 		type: 'mousePressed',
@@ -804,6 +808,159 @@ export async function releasePointer(): Promise<void> {
 		throw cause
 	}
 	if (!released) throw rejection
+}
+
+/**
+ * Projects a point of one element through every frame that holds it into the browser's top-level
+ * viewport.
+ *
+ * @param element - The connected element the point is relative to.
+ * @param offset - The offset from the element's top-left corner, in the element's own pixels.
+ * Default: the centre of its box.
+ * @returns The point in the top-level viewport's coordinates, which is where a DevTools input
+ * command addresses.
+ *
+ * @remarks
+ * Each frame on the way up scales the point by the ratio of its painted width to its layout width
+ * and adds its own position, so a tester iframe the runner scales or offsets is accounted for, and so
+ * is an iframe the page itself nests. The reading is of the layout now: a box that moves afterwards
+ * moves the point it names. An element in a document no frame holds reads its own client point.
+ *
+ * @example
+ * ```ts
+ * const point = readProtocolPoint(button)
+ * await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+ * ```
+ */
+export function readProtocolPoint(element: Element, offset?: ProtocolPoint): ProtocolPoint {
+	const box = element.getBoundingClientRect()
+	const x = box.x + (offset?.x ?? box.width / 2)
+	const y = box.y + (offset?.y ?? box.height / 2)
+	const frame = element.ownerDocument.defaultView?.frameElement
+	if (frame === null || frame === undefined) return { x, y }
+	// The point is now in the frame's own viewport. Its distance from the frame's corner, scaled by
+	// how much wider the frame paints than it lays out, is the offset the frame itself is read at.
+	const bounds = frame.getBoundingClientRect()
+	return readProtocolPoint(frame, {
+		x: (x * bounds.width) / frame.clientWidth,
+		y: (y * bounds.height) / frame.clientHeight,
+	})
+}
+
+/**
+ * Resolves one element to the node the browser's DOM tree holds for it.
+ *
+ * @param element - The element to find.
+ * @returns A promise resolving to the DevTools node id of the element.
+ * @throws Thrown when the provider exposes no DevTools session, a command fails, or the element is
+ * not the one connected element its marker finds.
+ *
+ * @remarks
+ * The browser's DOM domain cannot be handed an element, so the element wears a marker attribute while
+ * the browser searches the document, shadow roots included, for it. The search is discarded and the
+ * marker is put back before this resolves: an attribute the element already carried under that name
+ * keeps its value, and an absent one is removed again, on a refusal as much as on success.
+ *
+ * Use the id before calling again, because each call asks the browser for the document afresh. A
+ * twin of the element, left unmarked, is never the node returned.
+ *
+ * @example
+ * ```ts
+ * const nodeId = await readProtocolNode(button)
+ * const described = await sendProtocol('DOM.describeNode', { nodeId })
+ * ```
+ */
+export async function readProtocolNode(element: Element): Promise<number> {
+	const marker = 'data-protocol-node'
+	const key = crypto.randomUUID()
+	const previous = element.getAttribute(marker)
+	element.setAttribute(marker, key)
+	try {
+		await sendProtocol('DOM.getDocument', { depth: -1, pierce: true })
+		const search = await sendProtocol('DOM.performSearch', {
+			query: `[${marker}="${key}"]`,
+			includeUserAgentShadowDOM: true,
+		})
+		const searchId = isRecord(search) ? resolveField(search, 'searchId') : undefined
+		if (!isString(searchId)) throw new Error('Protocol search returned no search id')
+		try {
+			const count = isRecord(search) ? resolveField(search, 'resultCount') : undefined
+			if (count !== 1) {
+				throw new Error(`Protocol search found ${String(count)} elements where one is required`)
+			}
+			const results = await sendProtocol('DOM.getSearchResults', {
+				searchId,
+				fromIndex: 0,
+				toIndex: 1,
+			})
+			const ids = isRecord(results) ? resolveField(results, 'nodeIds') : undefined
+			const [nodeId] = isArray(ids) ? ids : []
+			if (!isNumber(nodeId)) throw new Error('Protocol search returned no node id')
+			return nodeId
+		} finally {
+			await sendProtocol('DOM.discardSearchResults', { searchId })
+		}
+	} finally {
+		if (previous === null) element.removeAttribute(marker)
+		else element.setAttribute(marker, previous)
+	}
+}
+
+/**
+ * Reads the accessibility node the browser computed for one element.
+ *
+ * @param element - The connected element to read.
+ * @returns A promise resolving to the node's role, name, and properties.
+ * @throws Thrown when the provider exposes no DevTools session, a command fails, or the element is
+ * not the one connected element {@link readProtocolNode} finds.
+ *
+ * @remarks
+ * This is the browser's own computation, which complements the DOM-based `readRole`, `readName`, and
+ * `readStates`: those apply this package's mapping to the markup, and this asks the browser what it
+ * published. A property whose value names other nodes reads as the list of their ids, and a value the
+ * browser states plainly reads as that value.
+ *
+ * @example
+ * ```ts
+ * const node = await readAccessibilityNode(input)
+ * node.name // 'Port'
+ * ```
+ */
+export async function readAccessibilityNode(element: Element): Promise<AccessibilityNode> {
+	const nodeId = await readProtocolNode(element)
+	const tree = await sendProtocol('Accessibility.getPartialAXTree', {
+		nodeId,
+		fetchRelatives: false,
+	})
+	const list = isRecord(tree) ? resolveField(tree, 'nodes') : undefined
+	const [node] = isArray(list) ? list : []
+	const entries = isRecord(node) ? resolveField(node, 'properties') : undefined
+	const role = isRecord(node) ? resolveField(node, ['role', 'value']) : undefined
+	const name = isRecord(node) ? resolveField(node, ['name', 'value']) : undefined
+	return Object.freeze({
+		role: isString(role) ? role : undefined,
+		name: isString(name) ? name : undefined,
+		properties: Object.freeze(
+			Object.fromEntries(
+				(isArray(entries) ? entries : []).filter(isRecord).flatMap((entry) => {
+					const property = resolveField(entry, 'name')
+					const related = resolveField(entry, ['value', 'relatedNodes'])
+					return isString(property)
+						? [
+								[
+									property,
+									isArray(related)
+										? related.map((reference) =>
+												isRecord(reference) ? resolveField(reference, 'idref') : undefined,
+											)
+										: resolveField(entry, ['value', 'value']),
+								] as const,
+							]
+						: []
+				}),
+			),
+		),
+	})
 }
 
 /**

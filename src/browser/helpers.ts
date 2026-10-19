@@ -6,9 +6,13 @@ import { cdp } from 'vitest/browser'
  * Sends one DevTools protocol command through the browser provider.
  *
  * @param method - The protocol method name.
- * @param params - The protocol parameters.
- * @returns A promise resolving after the command completes, discarding its response.
+ * @param params - The protocol parameters. Omit them for a command that takes none.
+ * @returns A promise resolving to the browser's reply once the command completes.
  * @throws Thrown when the provider exposes no DevTools session, or the command fails.
+ *
+ * @remarks
+ * The reply is typed `unknown`, because its shape is the command's and the provider's types stay out
+ * of a browser file. Narrow it with guards before reading a field.
  *
  * @example
  * ```ts
@@ -17,8 +21,8 @@ import { cdp } from 'vitest/browser'
  */
 export async function sendProtocol(
 	method: string,
-	params: Readonly<Record<string, unknown>>,
-): Promise<void> {
+	params?: Readonly<Record<string, unknown>>,
+): Promise<unknown> {
 	let session: unknown
 	let send: unknown
 	try {
@@ -30,7 +34,8 @@ export async function sendProtocol(
 	if (typeof send !== 'function') {
 		throw new Error('Browser provider exposes no DevTools session')
 	}
-	await invokeUnchecked<Promise<unknown>>(session, send, [method, params])
+	const reply = await invokeUnchecked<Promise<unknown>>(session, send, [method, params])
+	return reply
 }
 
 /**

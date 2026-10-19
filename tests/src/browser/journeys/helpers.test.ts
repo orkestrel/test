@@ -28,6 +28,7 @@ import {
 	parkPointer,
 	POINTER_HOLD,
 	pressKeys,
+	readAccessibilityNode,
 	readAnimations,
 	readContrast,
 	readFocus,
@@ -36,6 +37,8 @@ import {
 	readPage,
 	readPerception,
 	readPixels,
+	readProtocolNode,
+	readProtocolPoint,
 	readRefusal,
 	readRole,
 	readRows,
@@ -61,7 +64,7 @@ import {
 	waitForState,
 	walkFocus,
 } from '@src/browser'
-import { createRecorder, requireValue } from '@src/core'
+import { createRecorder, requireValue, retryUntil, waitForCondition } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import {
@@ -1363,6 +1366,154 @@ describe('driveHold', () => {
 		await driveHold(() => nextButton, 'Retry')
 		expect(nextButton.matches(':active')).toBe(true)
 		await releasePointer()
+	})
+})
+
+describe('readProtocolPoint', () => {
+	it('maps the centre of a tester-document element through the tester frame', () => {
+		buildStylesheet(
+			'.journey-point { position: fixed; left: 140px; top: 90px; width: 80px; height: 40px }',
+		)
+		buildFixture('<button class="journey-point">Mapped</button>')
+		const button = resolveAccessible('Mapped')
+		const box = button.getBoundingClientRect()
+		const frame = requireValue(window.frameElement).getBoundingClientRect()
+		const scale = frame.width / window.innerWidth
+		expect(scale).not.toBe(1)
+		const point = readProtocolPoint(button)
+		// The second mechanism: the frame's position plus the centre at the frame's painted scale. The
+		// scale here comes from the widths alone, and the projection reads each axis from its own
+		// frame size, so the two agree to a few millionths of a pixel and not to the last bit.
+		expect(point.x).toBeCloseTo(frame.left + (box.left + box.width / 2) * scale, 3)
+		expect(point.y).toBeCloseTo(frame.top + (box.top + box.height / 2) * scale, 3)
+		expect(point.x).not.toBeCloseTo(box.left + box.width / 2, 0)
+	})
+
+	it('names the centre by default and an offset from the top-left corner when given', async () => {
+		buildStylesheet(
+			'.journey-offset { position: fixed; left: 140px; top: 90px; width: 80px; height: 40px }',
+		)
+		buildFixture('<button class="journey-offset">Offset</button>')
+		const button = resolveAccessible('Offset')
+		expect(readProtocolPoint(button)).toEqual(readProtocolPoint(button, { x: 40, y: 20 }))
+		const inside = readProtocolPoint(button, { x: 4, y: 4 })
+		const beyond = readProtocolPoint(button, { x: 110, y: 20 })
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...inside })
+		await waitForCondition('the offset inside the box hovers it', () => button.matches(':hover'))
+		await parkPointer()
+		expect(button.matches(':hover')).toBe(false)
+		// The control: an offset past the box edge is a real point that misses the element.
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...beyond })
+		await waitForFrame()
+		expect(button.matches(':hover')).toBe(false)
+	})
+
+	it('hovers a control inside a child frame at the projected centre and not at its own client point', async () => {
+		const container = buildFixture(
+			'<iframe title="Nested" style="position: fixed; left: 200px; top: 100px; width: 300px; height: 200px; border: 0" srcdoc="<style>body { margin: 0 } button { position: fixed; left: 20px; top: 20px; width: 80px; height: 40px }</style><button>Nested</button>"></iframe>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		const inner = requireValue(
+			await retryUntil(
+				'the child frame renders its button',
+				() => frame.contentDocument?.querySelector('button') ?? undefined,
+				(found) => found !== undefined,
+			),
+		)
+		const box = inner.getBoundingClientRect()
+		const own = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+		expect(own).toEqual({ x: 60, y: 40 })
+		const point = readProtocolPoint(inner)
+		expect(point).not.toEqual(own)
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+		await waitForCondition('the projected centre hovers the nested button', () =>
+			inner.matches(':hover'),
+		)
+		await parkPointer()
+		expect(inner.matches(':hover')).toBe(false)
+		// The control: the same move at the element's own client point lands in the runner, not in it.
+		await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...own })
+		await waitForFrame()
+		await waitForFrame()
+		expect(inner.matches(':hover')).toBe(false)
+	})
+})
+
+describe('readProtocolNode', () => {
+	it('resolves the element it was given and never its unmarked twin', async () => {
+		const container = buildFixture('<p id="journey-first">Twin</p><p id="journey-second">Twin</p>')
+		const [first, second] = container.querySelectorAll('p')
+		const secondId = await readProtocolNode(requireValue(second))
+		expect(await sendProtocol('DOM.describeNode', { nodeId: secondId })).toMatchObject({
+			node: { nodeName: 'P', attributes: ['id', 'journey-second'] },
+		})
+		const firstId = await readProtocolNode(requireValue(first))
+		expect(await sendProtocol('DOM.describeNode', { nodeId: firstId })).toMatchObject({
+			node: { nodeName: 'P', attributes: ['id', 'journey-first'] },
+		})
+	})
+
+	it('puts the marker back whether it was absent or preset, and when the search finds nothing', async () => {
+		const container = buildFixture('<p id="journey-marked">Marked</p>')
+		const element = requireValue(container.querySelector('p'))
+		const mutations =
+			createRecorder<readonly [records: MutationRecord[], observer: MutationObserver]>()
+		const observer = new MutationObserver(mutations.handler)
+		observer.observe(element, { attributes: true })
+		await readProtocolNode(element)
+		await waitForFrame()
+		observer.disconnect()
+		const names = new Set(
+			mutations.calls.flatMap(([records]) => records.map((record) => record.attributeName)),
+		)
+		expect(names.size).toBe(1)
+		const marker = requireValue([...names][0])
+		expect(marker).not.toBe('id')
+		// Set once and removed once, leaving the element as it was found.
+		expect(mutations.calls.flatMap(([records]) => records)).toHaveLength(2)
+		expect(element.getAttributeNames()).toEqual(['id'])
+
+		element.setAttribute(marker, 'preset')
+		await readProtocolNode(element)
+		expect(element.getAttribute(marker)).toBe('preset')
+
+		// The refusal path: a detached element is found by no search, and its attributes are untouched.
+		const detached = build('p', { attributes: { id: 'journey-detached' } })
+		await expect(readProtocolNode(detached)).rejects.toThrow(
+			'Protocol search found 0 elements where one is required',
+		)
+		expect(detached.getAttributeNames()).toEqual(['id'])
+		detached.setAttribute(marker, 'preset')
+		await expect(readProtocolNode(detached)).rejects.toThrow('where one is required')
+		expect(detached.getAttribute(marker)).toBe('preset')
+	})
+})
+
+describe('readAccessibilityNode', () => {
+	it('reads computed roles, names, and properties from the browser, with an unprojected control', async () => {
+		const root = buildFixture(
+			'<label for="journey-ax-field">Port</label><input id="journey-ax-field"><div role="combobox" aria-expanded="true" aria-label="Ports" aria-activedescendant="journey-ax-option" tabindex="0"></div><div role="listbox" aria-label="Choices"><div role="option" id="journey-ax-option" aria-selected="true">Kiel</div></div>',
+		)
+		const before = Array.from(root.querySelectorAll('*'), (node) => node.getAttributeNames())
+		const field = await readAccessibilityNode(requireValue(root.querySelector('input')))
+		expect([field.role, field.name]).toEqual(['textbox', 'Port'])
+		expect(field.properties).not.toHaveProperty('expanded')
+		const combobox = await readAccessibilityNode(
+			requireValue(root.querySelector('[role="combobox"]')),
+		)
+		expect([combobox.role, combobox.name]).toEqual(['combobox', 'Ports'])
+		expect(combobox.properties).toMatchObject({
+			expanded: true,
+			activedescendant: ['journey-ax-option'],
+		})
+		const option = await readAccessibilityNode(requireValue(root.querySelector('[role="option"]')))
+		expect([option.role, option.name, option.properties.selected]).toEqual(['option', 'Kiel', true])
+		expect(Array.from(root.querySelectorAll('*'), (node) => node.getAttributeNames())).toEqual(
+			before,
+		)
+		await expect(readAccessibilityNode(document.createElement('div'))).rejects.toThrow(
+			'Protocol search found 0 elements where one is required',
+		)
 	})
 })
 

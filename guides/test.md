@@ -270,7 +270,8 @@ back the root it mounted; `buildContrast`, `buildEscapes`, and `buildCensus` eac
 a detached control the caller appends where it is reading; `clearStorage` takes nothing at all, and
 `removeDatabase` takes a database name. The predicates, the element readers, and the describers name
 a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
-`readName`, `readStates`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
+`readName`, `readStates`, `readProtocolPoint`, `readProtocolNode`, `readAccessibilityNode`,
+`readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
 `readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readColorContrast`,
 `readLayers`, `readBackdrop`, `readRing`, `readAnimations`, `readClippedBlock`, and
 `collectScrollRegions` — and each reads that node rather than acting on a target it was handed.
@@ -308,6 +309,8 @@ a union's arms escaped as `\|`.
 | `AnimationReading`    | interface | `{ finite, endless }`                                                          | Represents the animations running on one element and its subtree, split by whether each one ends.                                               |
 | `MediaOptions`        | interface | `{ print?, motion?, forced? }`                                                 | Configures the tester's print medium, motion preference, and forced colours.                                                                    |
 | `StabilityOptions`    | interface | `WaitOptions` plus `{ frames? }`                                               | Configures how long a reading must hold still: the time bounds of `WaitOptions` and the frames it must agree across.                            |
+| `AccessibilityNode`   | interface | `{ role, name, properties }`                                                   | Represents the accessibility node the browser computed for one element.                                                                         |
+| `ProtocolPoint`       | interface | `{ x, y }`                                                                     | Represents one point in the coordinates of the browser's top-level viewport, the space a DevTools input command addresses.                      |
 | `StorageOptions`      | interface | `{ values?, reads?, writes?, quota? }`                                         | Configures an inert `Storage`: its seed, which operations the host permits, and its quota.                                                      |
 | `WebStorageInterface` | interface | `Storage` plus `{}` plus `permit`                                              | Holds a store the host can withhold and later grant.                                                                                            |
 | `CensusReading`       | interface | `{ elements, tokens, undeclared }`                                             | Reports an authored-class census: the population walked, the tokens found, and the undeclared.                                                  |
@@ -350,7 +353,10 @@ A `Shape` cell holds the constant's declared type.
 | `clickAccessible`          | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                                     | Clicks one visible, focus-reachable control by its accessible name through the browser provider.                                                                                                                                                                                |
 | `clickAccessibleWithin`    | function | `(region: string, role: string, name: string) => Promise<void>`                                                         | Clicks one human-reachable control by role and accessible-name text inside a named region.                                                                                                                                                                                      |
 | `clickDisclosure`          | function | `(name: string) => Promise<void>`                                                                                       | Opens or closes one native details disclosure by its rendered summary.                                                                                                                                                                                                          |
-| `sendProtocol`             | function | `(method: string, params: Readonly<Record<string, unknown>>) => Promise<void>`                                          | Sends one DevTools protocol command through the browser provider.                                                                                                                                                                                                               |
+| `sendProtocol`             | function | `(method: string, params?: Readonly<Record<string, unknown>>) => Promise<unknown>`                                      | Sends one DevTools protocol command through the browser provider.                                                                                                                                                                                                               |
+| `readProtocolPoint`        | function | `(element: Element, offset?: ProtocolPoint) => ProtocolPoint`                                                           | Projects a point of one element through every frame that holds it into the browser's top-level viewport.                                                                                                                                                                        |
+| `readProtocolNode`         | function | `(element: Element) => Promise<number>`                                                                                 | Resolves one element to the node the browser's DOM tree holds for it.                                                                                                                                                                                                           |
+| `readAccessibilityNode`    | function | `(element: Element) => Promise<AccessibilityNode>`                                                                      | Reads the accessibility node the browser computed for one element.                                                                                                                                                                                                              |
 | `hoverAccessible`          | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                                     | Hovers one visible, focus-reachable control by its accessible name through the browser provider.                                                                                                                                                                                |
 | `holdAccessible`           | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                                     | Holds the primary pointer button on one visible, focus-reachable control by its accessible name.                                                                                                                                                                                |
 | `holdAccessibleWithin`     | function | `(region: string, role: string, name: string) => Promise<void>`                                                         | Holds the primary pointer button on one control by role and accessible-name text inside a named region.                                                                                                                                                                         |
@@ -1286,20 +1292,26 @@ grows with every pane the capture stages.
 
 The pointer, pseudo-element, and media helpers add the following voices.
 
-| Voice                                                         | Thrown by      |
-| ------------------------------------------------------------- | -------------- |
-| `Browser provider exposes no DevTools session`                | `sendProtocol` |
-| `Pointer is already held at <x>x<y>`                          | `driveHold`    |
-| `Interactive target "<name>" did not enter the pressed state` | `driveHold`    |
-| `Pseudo-element "<pseudo>" must start with "::"`              | `readStyle`    |
-| `Pseudo-element "<pseudo>" is not one this engine exposes`    | `readStyle`    |
-| `Media emulation was staged with nothing to emulate`          | `stageMedia`   |
-| `Media emulation did not reach the tester: <query>`           | `stageMedia`   |
-| `Media emulation did not clear from the tester`               | `releaseMedia` |
+| Voice                                                         | Thrown by          |
+| ------------------------------------------------------------- | ------------------ |
+| `Browser provider exposes no DevTools session`                | `sendProtocol`     |
+| `Pointer is already held at <x>x<y>`                          | `driveHold`        |
+| `Interactive target "<name>" did not enter the pressed state` | `driveHold`        |
+| `Protocol search returned no search id`                       | `readProtocolNode` |
+| `Protocol search found <n> elements where one is required`    | `readProtocolNode` |
+| `Protocol search returned no node id`                         | `readProtocolNode` |
+| `Pseudo-element "<pseudo>" must start with "::"`              | `readStyle`        |
+| `Pseudo-element "<pseudo>" is not one this engine exposes`    | `readStyle`        |
+| `Media emulation was staged with nothing to emulate`          | `stageMedia`       |
+| `Media emulation did not reach the tester: <query>`           | `stageMedia`       |
+| `Media emulation did not clear from the tester`               | `releaseMedia`     |
 
 The resolver's absent, gated, ambiguous, and unreachable voices stay unchanged. The DevTools-session
 and media-delivery refusals guard provider failures the managed Chromium suite doesn't induce.
 The suite exercises real delivery rather than substituting a provider that manufactures a failure.
+`readAccessibilityNode` raises the `readProtocolNode` voices unchanged. Of those, `found <n>
+elements` is driven, by a detached element, and the other two are narrowing: the browser replies
+to a search that way, so they guard a provider that does not.
 
 ### Refusals outside the journey layer
 
@@ -1886,8 +1898,14 @@ the helper rather than to the host, and each names what to reach for instead.
   `::` before the engine's selector-support check runs. A supported pseudo-element with no value for
   the requested property still reads as an empty string. `readPixels` uses the same guard.
 - **`sendProtocol` reaches a Chromium-family provider alone.** It needs the provider's DevTools
-  session, passes the named command and parameters through, and discards the response. Browser
-  termination cannot promise cleanup. Edge observations belong to a separate run.
+  session, passes the named command and parameters through, and resolves the reply as `unknown`.
+  Narrow the reply with guards before reading a field, and omit the parameters for a command that
+  takes none. Browser termination cannot promise cleanup. Edge observations belong to a separate run.
+- **`readProtocolPoint` reads the layout now, and `readProtocolNode` hands back an id to use at
+  once.** The point is the layout at the call, so a box that moves afterwards moves the point it
+  named. A node id comes from a document the browser is asked for afresh on every call, so use it
+  before the next call. Both leave `readHit` its own question, which is what the element's own
+  document hit-tests at the centre and never leaves that document.
 - **`parseCSSColor` resolves an undeclared token to the inherited color.** A `var()` naming a custom
   property nothing declares is not a parse failure: the cascade accepts it and computes the
   inherited color, so `parseCSSColor('var(--absent)')` hands back channels rather than `undefined`.

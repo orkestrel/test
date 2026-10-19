@@ -8,6 +8,7 @@ import {
 	readStyle,
 	render,
 	resolveAccessible,
+	sendProtocol,
 	waitForFrame,
 } from '@src/browser'
 import { createTeardown, requireValue } from '@src/core'
@@ -24,6 +25,29 @@ describe('waitForFrame', () => {
 		})
 		await waitForFrame()
 		expect(painted).toBe(true)
+	})
+})
+
+describe('sendProtocol', () => {
+	it('resolves the reply the browser gave the command', async () => {
+		const reply = await sendProtocol('Runtime.evaluate', { expression: '1 + 1' })
+		expect(reply).toMatchObject({ result: { type: 'number', value: 2 } })
+	})
+
+	it('sends a command that takes no parameters', async () => {
+		const reply = await sendProtocol('Runtime.getIsolateId')
+		expect(reply).toMatchObject({ id: expect.any(String) })
+	})
+
+	// The control: a reply the page cannot have produced by accident. The same call over a different
+	// expression replies differently, so the 2 above is this command's own answer and not a stale one.
+	it('replies to each command with its own answer', async () => {
+		const reply = await sendProtocol('Runtime.evaluate', { expression: '"a" + "b"' })
+		expect(reply).toMatchObject({ result: { type: 'string', value: 'ab' } })
+	})
+
+	it('rejects a command the browser does not know', async () => {
+		await expect(sendProtocol('Nowhere.missing', {})).rejects.toThrow('Nowhere.missing')
 	})
 })
 

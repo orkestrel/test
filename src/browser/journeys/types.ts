@@ -66,6 +66,38 @@ export interface StateOptions extends WaitOptions {
 }
 
 /**
+ * Represents one point in the coordinates of the browser's top-level viewport, the space a DevTools
+ * input command addresses.
+ *
+ * @remarks
+ * As an input to {@link readProtocolPoint}, the same shape names an offset from the element's
+ * top-left corner, in the element's own pixels.
+ */
+export interface ProtocolPoint {
+	/** Holds the distance from the left edge, in CSS pixels. */
+	readonly x: number
+	/** Holds the distance from the top edge, in CSS pixels. */
+	readonly y: number
+}
+
+/**
+ * Represents the accessibility node the browser computed for one element.
+ *
+ * @remarks
+ * The values are the browser's own computation, which is what separates this from the DOM-based
+ * `readRole`, `readName`, and `readStates` readings: the browser applies every naming and role rule
+ * itself, so the node is what an assistive technology is handed.
+ */
+export interface AccessibilityNode {
+	/** Holds the computed role, or `undefined` when the node states none. */
+	readonly role: string | undefined
+	/** Holds the computed accessible name, or `undefined` when the node states none. */
+	readonly name: string | undefined
+	/** Maps each property name to its value; an ID reference reads as the list of referenced IDs. */
+	readonly properties: Readonly<Record<string, unknown>>
+}
+
+/**
  * Configures one capture settle: the time bounds of {@link WaitOptions} and whether the pointer
  * parks first.
  *
