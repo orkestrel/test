@@ -1,4 +1,5 @@
 import {
+	build,
 	CAPTURE_PANE,
 	captureFrame,
 	clipsOverflow,
@@ -8,6 +9,7 @@ import {
 	hoverAccessible,
 	measureContent,
 	MEDIA_STAGE,
+	paintImage,
 	readClipEdge,
 	readClipMargin,
 	readClippedBlock,
@@ -118,6 +120,44 @@ describe('collectClippingAncestors', () => {
 		expect(collectClippingAncestors(outer)).toStrictEqual([])
 		expect(collectClippingAncestors(document.documentElement)).toStrictEqual([])
 	})
+
+	it('climbs out of an open shadow tree through its host, nearest first', () => {
+		const root = buildFixture(
+			'<div data-frame style="overflow: hidden; height: 50px"><div data-host></div></div>',
+		)
+		const host = requireValue(root.querySelector('[data-host]'))
+		const inner = document.createElement('div')
+		inner.style.overflow = 'clip'
+		const leaf = document.createElement('div')
+		inner.append(leaf)
+		host.attachShadow({ mode: 'open' }).append(inner)
+		expect(collectClippingAncestors(leaf)).toStrictEqual([
+			inner,
+			requireValue(root.querySelector('[data-frame]')),
+		])
+	})
+
+	it('climbs from a slotted child into the shadow tree around its slot before its light ancestors', () => {
+		const root = buildFixture(
+			'<div data-frame style="overflow: hidden"><div data-host><div data-slotted></div></div></div>',
+		)
+		const host = requireValue(root.querySelector('[data-host]'))
+		const wrapper = document.createElement('div')
+		wrapper.style.overflow = 'clip'
+		wrapper.append(document.createElement('slot'))
+		host.attachShadow({ mode: 'open' }).append(wrapper)
+		expect(
+			collectClippingAncestors(requireValue(root.querySelector('[data-slotted]'))),
+		).toStrictEqual([wrapper, requireValue(root.querySelector('[data-frame]'))])
+	})
+
+	it('refuses a disconnected element, which has no computed style to read', () => {
+		const span = build('span')
+		build('div', { attributes: { style: 'overflow: hidden' } }).append(span)
+		expect(() => collectClippingAncestors(span)).toThrow(
+			'The element is not connected to a document, so it has no clipping ancestors to read',
+		)
+	})
 })
 
 describe('readClippedBlock', () => {
@@ -146,6 +186,36 @@ describe('readClippedBlock', () => {
 		expect(readClippedBlock(requireValue(root.querySelector('[data-outer]')))).toBe(0)
 		// Control: a parent that clips nothing leaves the full box.
 		expect(readClippedBlock(requireValue(root.querySelector('[data-free]')))).toBe(200)
+	})
+
+	it('reads the height a clipping wrapper leaves of a block in an open shadow tree', () => {
+		const root = buildFixture(
+			'<div style="overflow: hidden; height: 50px"><div data-host></div></div>',
+		)
+		const inner = document.createElement('div')
+		inner.style.height = '200px'
+		requireValue(root.querySelector('[data-host]')).attachShadow({ mode: 'open' }).append(inner)
+		expect(inner.getBoundingClientRect().height).toBe(200)
+		expect(readClippedBlock(inner)).toBe(50)
+	})
+
+	it('reads the height a shadow wrapper around a slot leaves of a slotted child', () => {
+		const root = buildFixture('<div data-host><div data-slotted style="height: 200px"></div></div>')
+		const wrapper = document.createElement('div')
+		wrapper.style.cssText = 'overflow: hidden; height: 50px'
+		wrapper.append(document.createElement('slot'))
+		requireValue(root.querySelector('[data-host]')).attachShadow({ mode: 'open' }).append(wrapper)
+		const slotted = requireValue(root.querySelector('[data-slotted]'))
+		expect(slotted.getBoundingClientRect().height).toBe(200)
+		expect(readClippedBlock(slotted)).toBe(50)
+	})
+
+	it('refuses a disconnected element rather than reading it as clipped', () => {
+		const span = build('span')
+		build('div', { attributes: { style: 'overflow: hidden; height: 10px' } }).append(span)
+		expect(() => readClippedBlock(span)).toThrow(
+			'The element is not connected to a document, so it has no clipping ancestors to read',
+		)
 	})
 
 	// The clip edge is read in document coordinates and the box in viewport ones, so only a scrolled
@@ -253,6 +323,23 @@ describe('measureContent', () => {
 		await releasePane()
 
 		expect([short, tall]).toStrictEqual([500, 500])
+	})
+
+	it('ends a slotted child at the shadow wrapper that clips around its slot', async () => {
+		// The child is 600 rows tall in the light tree, whose own ancestors clip nothing, and the
+		// shadow wrapper around its slot clips at 400, so the document ends at the wrapper.
+		const root = buildFixture('<div data-host><div style="height: 600px">Slotted</div></div>')
+		const wrapper = document.createElement('div')
+		wrapper.style.cssText = 'height: 400px; overflow: clip'
+		wrapper.append(document.createElement('slot'))
+		requireValue(root.querySelector('[data-host]')).attachShadow({ mode: 'open' }).append(wrapper)
+		await stagePane(390, 844)
+		const short = measureContent()
+		await stagePane(390, 2356)
+		const tall = measureContent()
+		await releasePane()
+
+		expect([short, tall]).toStrictEqual([400, 400])
 	})
 
 	it('expands a clip margin from the padding box rather than from the border box', async () => {
@@ -1321,6 +1408,29 @@ describe('readFrame', () => {
 	})
 })
 
+describe('paintImage', () => {
+	it('paints a decoded PNG at its natural size and hands back the context holding it', async () => {
+		const source = new OffscreenCanvas(3, 2)
+		const painter = requireValue(source.getContext('2d'))
+		painter.fillStyle = 'rgb(255, 0, 0)'
+		painter.fillRect(0, 0, 1, 2)
+		painter.fillStyle = 'rgb(0, 0, 255)'
+		painter.fillRect(1, 0, 2, 2)
+		const bytes = new Uint8Array(
+			await (await source.convertToBlob({ type: 'image/png' })).arrayBuffer(),
+		)
+		const context = requireValue(await paintImage(btoa(String.fromCodePoint(...bytes))))
+		expect([context.canvas.width, context.canvas.height]).toStrictEqual([3, 2])
+		expect([...context.getImageData(0, 1, 1, 1).data]).toStrictEqual([255, 0, 0, 255])
+		expect([...context.getImageData(2, 0, 1, 1).data]).toStrictEqual([0, 0, 255, 255])
+	})
+
+	it('hands the browser decode failure on unchanged for bytes that are not an image', async () => {
+		await expect(paintImage(btoa('not an image'))).rejects.toHaveProperty('name', 'EncodingError')
+		await expect(paintImage('')).rejects.toHaveProperty('name', 'EncodingError')
+	})
+})
+
 describe('readShotPixel', () => {
 	it('reads one painted pixel of an element shot at a fraction of the shot, clamped to its last pixel, beside the opposite half', async () => {
 		const root = buildFixture(
@@ -1337,6 +1447,25 @@ describe('readShotPixel', () => {
 		const [first, last] = [await readShotPixel(shot, 0, 0), await readShotPixel(shot, 1, 1)]
 		expect(first[0]).toBeGreaterThan(first[2])
 		expect(last[2]).toBeGreaterThan(last[0])
+	})
+
+	// A fraction outside the shot would read off the canvas as a transparent black nothing painted,
+	// and `NaN` would coerce to the left or top edge, so each is refused rather than read.
+	it('refuses a fraction that is not finite or lies outside 0 to 1, on either axis', async () => {
+		const root = buildFixture(
+			'<div data-shot style="width: 40px; height: 40px; background: red"></div>',
+		)
+		const shot = requireValue(root.querySelector<HTMLElement>('[data-shot]'))
+		for (const fraction of [-0.25, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await expect(readShotPixel(shot, fraction, 0.5)).rejects.toThrow(
+				'Shot pixel position must be a fraction from 0 to 1',
+			)
+			await expect(readShotPixel(shot, 0.5, fraction)).rejects.toThrow(
+				'Shot pixel position must be a fraction from 0 to 1',
+			)
+		}
+		// Control: the edges themselves are fractions.
+		expect(await readShotPixel(shot, 0, 1)).toHaveLength(4)
 	})
 })
 
@@ -1627,6 +1756,25 @@ describe('waitForStability', () => {
 			)
 			expect(reads.count).toBe(expected)
 		}
+	})
+
+	// The first read is immediate and the second follows one frame, but each read after that also
+	// follows the interval, so reads are not on consecutive frames when the interval is longer than one.
+	it('spaces every read after the second by the interval, not by a frame', async () => {
+		const times: number[] = []
+		await waitForStability(
+			'the reading settles',
+			() => {
+				times.push(performance.now())
+				return String(Math.min(times.length, 3))
+			},
+			{ frames: 1, interval: 100 },
+		)
+		expect(times).toHaveLength(4)
+		const [first = 0, second = 0, third = 0, fourth = 0] = times
+		expect(second - first).toBeLessThan(90)
+		expect(third - second).toBeGreaterThanOrEqual(90)
+		expect(fourth - third).toBeGreaterThanOrEqual(90)
 	})
 
 	// The control: a reading that moves on every frame never agrees with itself, so the budget runs

@@ -162,42 +162,6 @@ describe('mount', () => {
 	})
 })
 
-describe('render', () => {
-	it('attaches parsed fixture markup to the document', () => {
-		const container = render('<button type="button">Save</button>')
-		try {
-			expect(container.parentElement).toBe(document.body)
-			expect(container.tagName).toBe('DIV')
-			expect(requireValue(container.querySelector('button')).textContent).toBe('Save')
-		} finally {
-			container.remove()
-		}
-	})
-
-	it('attaches the element itself for a tag and its classes', () => {
-		const panel = render('section', 'surface muted')
-		try {
-			expect(panel.tagName).toBe('SECTION')
-			expect(panel.className).toBe('surface muted')
-			expect(panel.parentElement).toBe(document.body)
-			expect(panel.isConnected).toBe(true)
-		} finally {
-			panel.remove()
-		}
-	})
-
-	it('reads a lone argument as markup even when it spells a tag name', () => {
-		const container = render('section')
-		try {
-			expect(container.tagName).toBe('DIV')
-			expect(container.childElementCount).toBe(0)
-			expect(container.textContent).toBe('section')
-		} finally {
-			container.remove()
-		}
-	})
-})
-
 describe('readStyle', () => {
 	// guides/test.md → Patterns → "Read a pseudo-element's paint"
 	it('distinguishes pseudo-element paint from its originating element', () => {

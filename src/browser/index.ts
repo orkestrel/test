@@ -24,7 +24,6 @@
  */
 export * from './types.js'
 export * from './helpers.js'
-export * from './factories.js'
 export * from './journeys/index.js'
 export * from './captures/index.js'
 export * from './colors/index.js'

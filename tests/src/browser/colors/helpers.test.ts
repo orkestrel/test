@@ -1,6 +1,7 @@
 import type { Color } from '@src/browser'
 import {
 	blendColor,
+	build,
 	buildContrast,
 	buildEscapes,
 	CANVAS_COLOR,
@@ -113,6 +114,44 @@ describe('parseCSSColor', () => {
 		expect(parseCSSColor('not-a-color')).toBeUndefined()
 		expect(document.body.childElementCount).toBe(before)
 		expect(document.body.querySelector(':scope > span')).toBeNull()
+	})
+
+	it('resolves an expression at the scope it is handed, and at the document without one', () => {
+		const container = buildFixture(
+			'<div data-scope style="--grip: rgb(255, 255, 255); color: rgb(1, 2, 3)"><span>Mark</span></div>',
+		)
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
+		// Control: the body declares no `--grip`, so the document-scope reading falls back to the
+		// inherited color and only a reading taken at the scope sees the token.
+		expect(readStyle(document.body, '--grip')).toBe('')
+		expect(parseCSSColor('var(--grip)')).not.toStrictEqual([255, 255, 255, 1])
+		expect(parseCSSColor('var(--grip)', scope)).toStrictEqual([255, 255, 255, 1])
+		expect(parseCSSColor('currentColor', scope)).toStrictEqual([1, 2, 3, 1])
+		expect(parseCSSColor('not-a-color', scope)).toBeUndefined()
+	})
+
+	it('leaves no probe in the scope it read, on the refusing path as well as the reading one', () => {
+		const container = buildFixture('<div data-scope><b>Kept</b></div>')
+		const scope = requireValue(container.querySelector<HTMLElement>('[data-scope]'))
+		expect(parseCSSColor('rebeccapurple', scope)).toStrictEqual([102, 51, 153, 1])
+		expect(parseCSSColor('not-a-color', scope)).toBeUndefined()
+		expect(scope.innerHTML).toBe('<b>Kept</b>')
+	})
+
+	it('refuses a scope whose children compute no style, and leaves no probe in it', () => {
+		const container = buildFixture(
+			'<div><input data-scope style="--grip: rgb(255, 255, 255)"></div>',
+		)
+		const scope = requireValue(container.querySelector<HTMLInputElement>('[data-scope]'))
+		const detached = build('div')
+		expect(() => parseCSSColor('var(--grip)', scope)).toThrow(
+			'Color "var(--grip)" cannot be resolved at <input>: a child there computes no style',
+		)
+		expect(() => parseCSSColor('red', detached)).toThrow(
+			'Color "red" cannot be resolved at <div>: a child there computes no style',
+		)
+		expect(scope.childNodes.length).toBe(0)
+		expect(detached.childNodes.length).toBe(0)
 	})
 })
 
@@ -387,12 +426,43 @@ describe('readColorContrast', () => {
 	})
 
 	it('resolves a keyword and a token reference through the cascade', () => {
+		// The token is white and declared on the surface, never on the body, whose text paints black:
+		// a reading taken at the body would fall back to that black and read the token as invisible.
 		const container = buildFixture(
-			'<div style="background: #fff; --journey-ink: #000"><span>Mark</span></div>',
+			'<div style="background: #000; --grip: #fff"><span>Mark</span></div>',
 		)
 		const mark = requireValue(container.querySelector('span'))
-		expect(readColorContrast(mark, 'black')).toBeCloseTo(21, 5)
-		expect(readColorContrast(mark, 'var(--journey-ink)')).toBeCloseTo(21, 5)
+		expect(readStyle(document.body, '--grip')).toBe('')
+		expect(readColorContrast(mark, 'white')).toBeCloseTo(21, 5)
+		expect(readColorContrast(mark, 'black')).toBeCloseTo(1, 5)
+		expect(readColorContrast(mark, 'var(--grip)')).toBeCloseTo(21, 5)
+	})
+
+	it('resolves currentColor and a token the element declares itself at the element', () => {
+		const container = buildFixture(
+			'<div style="background: #000; color: #fff"><span>Inherits</span></div>' +
+				'<div style="background: #000"><span style="--grip: #fff">Declares</span></div>',
+		)
+		const [inherits, declares] = container.querySelectorAll('span')
+		// The body paints black, so a reading taken there would measure `currentColor` as black on black.
+		expect(readColorContrast(requireValue(inherits), 'currentColor')).toBeCloseTo(21, 5)
+		expect(readColorContrast(requireValue(declares), 'var(--grip)')).toBeCloseTo(21, 5)
+	})
+
+	it('refuses an expression it cannot resolve at an element that renders no child', () => {
+		const container = buildFixture(
+			'<div style="background: #000"><input style="--grip: #fff; color: #fff; background: transparent"></div>',
+		)
+		const field = requireValue(container.querySelector('input'))
+		// A computed color needs no scope, so the control reads as it did before.
+		expect(readColorContrast(field, 'rgb(255, 255, 255)')).toBeCloseTo(21, 5)
+		expect(() => readColorContrast(field, 'var(--grip)')).toThrow(
+			'Color "var(--grip)" cannot be resolved at <input>: a child there computes no style',
+		)
+		expect(field.childNodes.length).toBe(0)
+		expect(() => readColorContrast(build('span'), 'white', { floor: CANVAS_COLOR })).toThrow(
+			'Color "white" cannot be resolved at <span>: a child there computes no style',
+		)
 	})
 
 	it('refuses a stack ending translucent unless a floor is named, and composites onto that floor', () => {

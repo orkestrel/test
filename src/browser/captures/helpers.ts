@@ -117,11 +117,14 @@ export function readClipMargin(element: Element): number {
  * @param element - The element to read.
  * @returns The height in CSS pixels of the part of the element's box that lies inside the clip of
  * every ancestor that clips its overflow, and `0` where none of it does.
+ * @throws Thrown when the element is not connected to a document.
  *
  * @remarks
  * The `getBoundingClientRect` method reports the whole box of a clipped element, so a bar taller
  * than its frame still reads its own height there; this reading is the height a person sees. An
- * ancestor clips where the {@link clipsOverflow} helper says so. Its top edge is the top of its
+ * ancestor clips where the {@link clipsOverflow} helper says so, and the {@link collectClippingAncestors}
+ * helper finds it through the flat tree, so a wrapper in a shadow tree around the element or around
+ * its slot counts. Its top edge is the top of its
  * padding box, and its bottom edge is the one the {@link readClipEdge} helper measures, so a paint
  * containment and an `overflow-clip-margin` length count. That edge comes in document coordinates
  * and is converted into the viewport coordinates the box is read in, so a scrolled page reads the
@@ -155,12 +158,18 @@ export function readClippedBlock(element: Element): number {
  * @param element - The element whose ancestors to read.
  * @returns Every ancestor element for which the {@link clipsOverflow} helper reports true, nearest
  * first, and an empty list where the element has none.
+ * @throws Thrown when the element is not connected to a document, because a disconnected element
+ * resolves no style and its ancestors would all read as clipping.
  *
  * @remarks
- * The walk climbs through the `parentElement` property, so it ends at the root element, which has
- * no parent element, and the element itself is not one of its own ancestors. Each step returns its
- * own parent's frame, if it is one, ahead of the frames above it, so the depth of the tree bounds
- * the recursion.
+ * The walk climbs the flat tree, the tree a browser paints. A step goes to the slot an element is
+ * assigned to, else to its parent element, else to the host of the shadow root it stands in. So the
+ * wrapper around a slot clips the child assigned to that slot, a shadow tree's wrappers clip what
+ * stands in it and then what its host stands in, and the walk ends at the root element, which has
+ * none of the three. The `assignedSlot` property reports no slot of a closed shadow root, so a
+ * child assigned into one climbs through its light parent instead. The element itself is not one of
+ * its own ancestors. Each step returns its own parent's frame, if it is one, ahead of the frames
+ * above it, so the depth of the flat tree bounds the recursion.
  *
  * @example
  * ```ts
@@ -168,7 +177,17 @@ export function readClippedBlock(element: Element): number {
  * ```
  */
 export function collectClippingAncestors(element: Element): readonly Element[] {
-	const parent = element.parentElement
+	if (!element.isConnected) {
+		throw new Error(
+			'The element is not connected to a document, so it has no clipping ancestors to read',
+		)
+	}
+	const realm = element.ownerDocument.defaultView
+	const scope = element.getRootNode()
+	const parent =
+		element.assignedSlot ??
+		element.parentElement ??
+		(realm !== null && scope instanceof realm.ShadowRoot ? scope.host : null)
 	if (parent === null) return []
 	return [...(clipsOverflow(parent) ? [parent] : []), ...collectClippingAncestors(parent)]
 }
@@ -220,8 +239,9 @@ export function clipsOverflow(element: Element): boolean {
  *
  * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
  * bottom margin, which sits outside that rectangle, and the largest contribution wins. An ancestor
- * that clips its overflow caps the contribution at that ancestor's clip edge, which the
- * {@link readClipEdge} helper measures, because the rows a descendant lays out past a clipping
+ * that clips its overflow, which the {@link collectClippingAncestors} helper finds through the flat
+ * tree and so reaches a shadow wrapper around a slot, caps the contribution at that ancestor's clip
+ * edge, which the {@link readClipEdge} helper measures, because the rows a descendant lays out past a clipping
  * frame are cut, scrolled, or discarded rather than added to the document: a viewport-height
  * specimen inside a bounded frame ends, for this reading, where the frame ends, so a taller pane
  * does not read back as a taller document. The clip edge of a `clip` overflow, and of a paint
@@ -246,16 +266,18 @@ export function clipsOverflow(element: Element): boolean {
 export function measureContent(): number {
 	let edge = 0
 	for (const element of document.body.querySelectorAll('*')) {
-		let bottom =
-			element.getBoundingClientRect().bottom + window.scrollY + readPixels(element, 'margin-bottom')
-		for (
-			let frame = element.parentElement;
-			frame !== null && frame !== document.body;
-			frame = frame.parentElement
-		) {
-			const limit = readClipEdge(frame)
-			if (limit !== undefined && limit < bottom) bottom = limit
-		}
+		const limits = collectClippingAncestors(element)
+			.filter((frame) => frame !== document.body && frame !== document.documentElement)
+			.flatMap((frame) => {
+				const limit = readClipEdge(frame)
+				return limit === undefined ? [] : [limit]
+			})
+		const bottom = Math.min(
+			element.getBoundingClientRect().bottom +
+				window.scrollY +
+				readPixels(element, 'margin-bottom'),
+			...limits,
+		)
 		if (bottom > edge) edge = bottom
 	}
 	return Math.ceil(
@@ -518,19 +540,27 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 }
 
 /**
- * Waits for a reading to hold across consecutive painted frames.
+ * Waits for a reading to hold across its last `frames + 1` reads, each later read taken after a
+ * painted frame, with the interval slept between polls. Checks the budget between reads, so a frame
+ * that never paints is not bounded by it.
  *
  * @param description - The wait described in a timeout error.
- * @param read - The reading to compare from frame to frame, such as a scroll position or a box.
+ * @param read - The reading to compare from read to read, such as a scroll position or a box.
  * @param options - The frame count, the time bounds, and the abort signal.
- * @returns A promise resolving after the reading is unchanged across the frames asked for.
+ * @returns A promise resolving after the last `frames + 1` reads agree.
  * @throws Thrown when the frame count is not a positive integer, when `read` throws, or when the
  * reading keeps changing until the budget runs out. The timeout error names the description.
  *
  * @remarks
- * The first read is immediate, and each later read follows one painted frame. The wait ends when the
- * last `frames + 1` reads agree, so a reading that settles on read `n` resolves on read `n + frames`.
- * Default frames: `4`. Default budget: `1000` milliseconds. Default interval: `10` milliseconds.
+ * The first read is immediate. Each later read follows one painted frame, and every later read but
+ * the first also follows the interval, which `waitForCondition` sleeps between polls. The reads are
+ * therefore not on consecutive frames: an interval longer than a frame skips the frames in between.
+ * The wait ends when the last `frames + 1` reads agree, so a reading that settles on read `n`
+ * resolves on read `n + frames`.
+ *
+ * The abort signal is checked between reads too, so neither the budget nor the signal ends a wait
+ * parked on a frame that never paints. Default frames: `4`. Default budget: `1000` milliseconds.
+ * Default interval: `10` milliseconds.
  *
  * @example
  * ```ts
@@ -842,6 +872,40 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 }
 
 /**
+ * Decodes a base64 PNG and paints it, unscaled, onto a fresh offscreen 2D canvas.
+ *
+ * @param encoded - The image's bytes as base64 text, without a data-URL prefix.
+ * @returns The canvas's 2D context, whose `canvas` holds the image's size in device pixels, or
+ * `undefined` when the browser hands out no 2D context.
+ * @throws The decode failure, as the rejection of the image's own `decode` call, when the bytes are
+ * not an image this browser decodes.
+ *
+ * @remarks
+ * This is the decode and the draw that {@link readFrame} and {@link readShotPixel} share, which
+ * leaves each of them its own words for a refusal: a frame names the path it was read from and the
+ * size its header declares, and a shot names neither. The decode failure is handed on unchanged so
+ * the caller can read the bytes it rejected, and the missing context is a value rather than a throw
+ * for the same reason. The image is drawn at its natural size, so the canvas holds one canvas pixel
+ * for each device pixel of the image.
+ *
+ * @example
+ * ```ts
+ * const context = await paintImage(encoded)
+ * const [red, green, blue] = context?.getImageData(0, 0, 1, 1).data ?? []
+ * ```
+ */
+export async function paintImage(
+	encoded: string,
+): Promise<OffscreenCanvasRenderingContext2D | undefined> {
+	const image = new Image()
+	image.src = `data:image/png;base64,${encoded}`
+	await image.decode()
+	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')
+	context?.drawImage(image, 0, 0)
+	return context ?? undefined
+}
+
+/**
  * Reads one written frame back and reports its size and the color its bottom row paints.
  *
  * @param path - The frame's absolute path, as `captureFrame` returns it.
@@ -872,9 +936,7 @@ export async function readFrame(path: string): Promise<FrameReading> {
 	const encoded = await commands.readFile(path, 'base64').catch((cause: unknown) => {
 		throw new Error(`Capture frame at ${path} could not be read`, { cause })
 	})
-	const image = new Image()
-	image.src = `data:image/png;base64,${encoded}`
-	await image.decode().catch((cause: unknown) => {
+	const context = await paintImage(encoded).catch((cause: unknown) => {
 		// The PNG signature and the IHDR chunk's type fill the first 16 bytes, and the chunk opens
 		// with the width and the height as big-endian 32-bit integers.
 		const header = atob(encoded.slice(0, 32))
@@ -889,12 +951,11 @@ export async function readFrame(path: string): Promise<FrameReading> {
 		}
 		throw new Error(`Capture frame at ${path} is not an image this browser decodes`, { cause })
 	})
-	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')
-	if (context === null) {
+	if (context === undefined) {
 		throw new Error(`Capture frame at ${path} cannot be measured without a 2D canvas`)
 	}
-	context.drawImage(image, 0, 0)
-	const row = context.getImageData(0, image.height - 1, image.width, 1).data
+	const { width, height } = context.canvas
+	const row = context.getImageData(0, height - 1, width, 1).data
 	const red = row[0]
 	const green = row[1]
 	const blue = row[2]
@@ -908,8 +969,8 @@ export async function readFrame(path: string): Promise<FrameReading> {
 			row[pixel + 3] === alpha
 	}
 	return {
-		width: image.width,
-		height: image.height,
+		width,
+		height,
 		floor: single ? `rgb(${String(red)}, ${String(green)}, ${String(blue)})` : undefined,
 	}
 }
@@ -921,14 +982,18 @@ export async function readFrame(path: string): Promise<FrameReading> {
  * @param x - The pixel's horizontal position as a fraction of the shot's width, from `0` to `1`.
  * @param y - The pixel's vertical position as a fraction of the shot's height, from `0` to `1`.
  * @returns The pixel's frozen color: its channels from 0 to 255 and its alpha from 0 to 1.
- * @throws Thrown when the provider cannot shoot the element, when the shot is not an image this
- * browser decodes, and when the browser hands out no 2D canvas to measure it on.
+ * @throws Thrown when either position is not a finite fraction from `0` to `1`, when the provider
+ * cannot shoot the element, when the shot is not an image this browser decodes, and when the browser
+ * hands out no 2D canvas to measure it on.
  *
  * @remarks
  * The runner scales the tester to fit its window, so a shot's size in device pixels is not the
  * element's size in CSS pixels. The position is therefore a fraction of the shot rather than an
- * offset, and a fraction of `1` reads the last row or column rather than one past it. The shot is
- * not saved. The reading is what the provider painted, so it answers for compositing, stacking, and
+ * offset, and a fraction of `1` reads the last row or column rather than one past it. A position
+ * that is `NaN`, infinite, or outside `0` to `1` is refused before the shot is taken, because it
+ * would read outside the shot as a transparent black nothing painted, or coerce to an edge. The
+ * decode and the canvas come from {@link paintImage}, which {@link readFrame} reads through as well.
+ * The shot is not saved. The reading is what the provider painted, so it answers for compositing, stacking, and
  * clipping that a computed style cannot see; it composes with `matchesColor` and `measureContrast`.
  *
  * @example
@@ -937,18 +1002,18 @@ export async function readFrame(path: string): Promise<FrameReading> {
  * ```
  */
 export async function readShotPixel(element: Element, x: number, y: number): Promise<Color> {
+	if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) {
+		throw new Error('Shot pixel position must be a fraction from 0 to 1')
+	}
 	const encoded = await page.screenshot({ element, save: false })
-	const image = new Image()
-	image.src = `data:image/png;base64,${encoded}`
-	await image.decode().catch((cause: unknown) => {
+	const context = await paintImage(encoded).catch((cause: unknown) => {
 		throw new Error('Shot is not an image this browser decodes', { cause })
 	})
-	const context = new OffscreenCanvas(image.width, image.height).getContext('2d')
-	if (context === null) throw new Error('Shot cannot be measured without a 2D canvas')
-	context.drawImage(image, 0, 0)
+	if (context === undefined) throw new Error('Shot cannot be measured without a 2D canvas')
+	const { width, height } = context.canvas
 	const [red = 0, green = 0, blue = 0, alpha = 0] = context.getImageData(
-		Math.min(image.width - 1, Math.floor(image.width * x)),
-		Math.min(image.height - 1, Math.floor(image.height * y)),
+		Math.min(width - 1, Math.floor(width * x)),
+		Math.min(height - 1, Math.floor(height * y)),
 		1,
 		1,
 	).data

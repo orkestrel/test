@@ -375,8 +375,12 @@ export function parseColor(value: string): Color | undefined {
  *
  * @param value - Any value the `color` property accepts: a keyword, a hex triple, a `var()`
  * reference, a `color-mix()`, or a computed CSS Color 4 value.
+ * @param scope - The element whose cascade the expression resolves in. Omit it to resolve at the
+ * document's body.
  * @returns The resolved color's channels, or `undefined` when the CSSOM refuses the value or the
  * computed result names no color {@link parseColor} speaks.
+ * @throws Thrown when the scope's child computes no style, as under a disconnected element or an
+ * `input`, `textarea`, or `video` element, because no reading of that scope exists to give.
  *
  * @remarks
  * This is the live half of the pair {@link parseColor} opens. `parseColor` reads text and speaks
@@ -391,6 +395,15 @@ export function parseColor(value: string): Color | undefined {
  * token declared on `:root` would resolve to the initial value instead. It is removed in a `finally`,
  * so a value that throws on the way through leaves no node behind.
  *
+ * With no scope the probe is a child of `document.body`, so a `var()` reference or `currentColor`
+ * resolves against what the body declares and paints. With a scope the probe is appended inside that
+ * element and read there, so the expression resolves against the element's own declarations and
+ * the colors it inherits, which is what a mark painted inside the element would use. The probe is the
+ * scope's last child while it is read, so a rule keyed to the scope being empty, or to which child is
+ * last, sees it for that moment. A child of a disconnected element, and of the `input`,
+ * `textarea`, and `video` elements, computes no style, so those scopes are refused rather than read
+ * as the document: read the expression at an ancestor, or hand the caller a computed color.
+ *
  * Refusal is the CSSOM's: an expression it will not parse leaves the probe's inline `color` empty
  * and this returns `undefined`. A `var()` naming an undeclared custom property is not refused,
  * because the cascade accepts it and computes the inherited color, so a test that means to catch a
@@ -400,14 +413,23 @@ export function parseColor(value: string): Color | undefined {
  * ```ts
  * parseCSSColor('rebeccapurple') // [102, 51, 153, 1]
  * parseCSSColor('not-a-color') // undefined
+ * parseCSSColor('var(--ink)', panel) // the token as the panel declares it
  * ```
  */
-export function parseCSSColor(value: string): Color | undefined {
-	const probe = mount(build('span'))
+export function parseCSSColor(value: string, scope?: Element): Color | undefined {
+	const probe = build('span')
+	if (scope === undefined) mount(probe)
+	else scope.append(probe)
 	try {
 		probe.style.color = value
 		if (probe.style.color === '') return undefined
-		return parseColor(readStyle(probe, 'color'))
+		const computed = readStyle(probe, 'color')
+		if (scope !== undefined && computed === '') {
+			throw new Error(
+				`Color "${value}" cannot be resolved at <${scope.localName}>: a child there computes no style`,
+			)
+		}
+		return parseColor(computed)
 	} finally {
 		probe.remove()
 	}
@@ -603,12 +625,13 @@ export function readBackdrop(element: Element, floor: Color): Color {
  *
  * @param element - The element whose own and ancestor backgrounds paint the surface.
  * @param color - Any CSS color expression, such as the resolved `border-left-color` of a
- * pseudo-element.
+ * pseudo-element, resolved at the element's own scope.
  * @param options - The floor the backdrop walk ends on and the opacity the color is shown at.
  * @returns The ratio of the color composited over the backdrop, against that backdrop.
- * @throws Thrown when `color` names no readable color, when `opacity` lies outside `0` to `1`, when
- * a painted background layer is unreadable, and — with `floor` omitted — when the walk from the
- * element upwards reaches no opaque layer.
+ * @throws Thrown when `color` names no readable color, when `color` needs the element's cascade and
+ * the element gives a child no style, when `opacity` lies outside `0` to `1`, when a painted
+ * background layer is unreadable, and — with `floor` omitted — when the walk from the element
+ * upwards reaches no opaque layer.
  *
  * @remarks
  * This is the reading {@link readContrast} and {@link readRing} take for their own colors, with the
@@ -618,7 +641,12 @@ export function readBackdrop(element: Element, floor: Color): Color {
  * color reads at the strength a reader sees.
  *
  * A computed color value parses directly through {@link parseColor}; any other expression, such as
- * a keyword or a `var()` reference, resolves through {@link parseCSSColor}.
+ * a keyword or a `var()` reference, resolves through {@link parseCSSColor} at the element's own
+ * scope. A `var()` reference therefore reads the token as the element and its ancestors declare it,
+ * and `currentColor` reads the element's own text color, not the body's. An element that gives a
+ * child no style, as a disconnected element or an `input`, `textarea`, or `video` element does,
+ * refuses such an expression; hand it a computed color such as `rgb(255, 255, 255)`, or read the
+ * expression with {@link parseCSSColor} at an ancestor first.
  *
  * With `options.floor` omitted, the walk must reach a fully opaque layer, and the refusal shares
  * `readContrast`'s voice, because the number a stack the canvas shows through produces is as much a
@@ -640,7 +668,7 @@ export function readColorContrast(
 	color: string,
 	options?: ContrastOptions,
 ): number {
-	const painted = parseColor(color) ?? parseCSSColor(color)
+	const painted = parseColor(color) ?? parseCSSColor(color, element)
 	if (painted === undefined) throw new Error(`Color "${color}" is unreadable`)
 	const opacity = options?.opacity ?? 1
 	if (!(opacity >= 0 && opacity <= 1)) throw new Error('Contrast opacity must be between 0 and 1')

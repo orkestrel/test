@@ -112,10 +112,13 @@ export interface PortfolioInterface {
 
 /**
  * Configures how long a reading must hold still: the time bounds of {@link WaitOptions} and the
- * frames it must agree across.
+ * count of reads it must agree across.
  */
 export interface StabilityOptions extends WaitOptions {
-	/** Holds the count of consecutive painted frames the reading must hold across. Default: `4`. */
+	/**
+	 * Holds the count of reads, each taken after a painted frame, that must repeat the settled
+	 * reading, so the last `frames + 1` reads agree. Default: `4`.
+	 */
 	readonly frames?: number
 }
 

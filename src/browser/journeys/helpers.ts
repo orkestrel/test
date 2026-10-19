@@ -15,7 +15,7 @@ import {
 	waitForCondition,
 } from '@src/core'
 import { commands, page, userEvent } from 'vitest/browser'
-import { sendProtocol, waitForFrame } from '../helpers.js'
+import { build, mount, sendProtocol, waitForFrame } from '../helpers.js'
 import {
 	ACCESSIBLE_ROLES,
 	CONTENT_ROLES,
@@ -820,14 +820,17 @@ export async function releasePointer(): Promise<void> {
  * Default: the centre of its box.
  * @returns The point in the top-level viewport's coordinates, which is where a DevTools input
  * command addresses.
- * @throws Thrown when a frame on the way up is not an HTML element of a document a window holds.
+ * @throws Thrown when the element is not connected to a document, or a frame on the way up is not an
+ * HTML element of a document a window holds.
  *
  * @remarks
- * Each frame on the way up adds its border, scales the point by the ratio of its painted width to its
- * layout width, and adds its own position, so a tester iframe the runner scales or offsets is
- * accounted for, and so is an iframe the page itself nests, bordered or not. The reading is of the
- * layout now: a box that moves afterwards moves the point it names. An element in a document no frame
- * holds reads its own client point.
+ * Each frame on the way up adds its border and its padding, which is where its content starts,
+ * scales the point by the ratio of its painted width to its layout width, and adds its own position,
+ * so a tester iframe the runner scales or offsets is accounted for, and so is an iframe the page
+ * itself nests, bordered, padded, or neither. The reading is of the layout now: a box that moves
+ * afterwards moves the point it names. An element in a document no frame holds reads its own client
+ * point. A disconnected element has no layout, and its window still names the tester frame, so it is
+ * refused rather than read as that frame's corner.
  *
  * @example
  * ```ts
@@ -836,6 +839,9 @@ export async function releasePointer(): Promise<void> {
  * ```
  */
 export function readProtocolPoint(element: Element, offset?: ProtocolPoint): ProtocolPoint {
+	if (!element.isConnected) {
+		throw new Error('The element is not connected to a document, so it has no point to read')
+	}
 	const box = element.getBoundingClientRect()
 	const x = box.x + (offset?.x ?? box.width / 2)
 	const y = box.y + (offset?.y ?? box.height / 2)
@@ -847,13 +853,19 @@ export function readProtocolPoint(element: Element, offset?: ProtocolPoint): Pro
 	if (realm === null || !(frame instanceof realm.HTMLElement)) {
 		throw new Error('The frame holding the element is not an HTML element of a live document')
 	}
-	// The point is now in the frame's content viewport. The border sits between that viewport and the
-	// frame's corner, so the offset from the corner adds it. Scaling by how much wider the frame paints
-	// than it lays out turns that offset into the one the frame itself is read at.
+	// The point is now in the frame's content viewport. The border and the padding sit between that
+	// viewport and the frame's corner, so the offset from the corner adds both. Scaling by how much
+	// wider the frame paints than it lays out turns that offset into the one the frame itself is read
+	// at.
 	const bounds = frame.getBoundingClientRect()
+	const style = realm.getComputedStyle(frame)
 	return readProtocolPoint(frame, {
-		x: ((frame.clientLeft + x) * bounds.width) / frame.offsetWidth,
-		y: ((frame.clientTop + y) * bounds.height) / frame.offsetHeight,
+		x:
+			((frame.clientLeft + Number.parseFloat(style.paddingLeft) + x) * bounds.width) /
+			frame.offsetWidth,
+		y:
+			((frame.clientTop + Number.parseFloat(style.paddingTop) + y) * bounds.height) /
+			frame.offsetHeight,
 	})
 }
 
@@ -1095,6 +1107,136 @@ export async function traverseAccessibleWithin(
 }
 
 /**
+ * Reads the HTML element that holds focus, following it into open shadow roots and same-origin
+ * frames.
+ *
+ * @param root - The document or open shadow root to read from. Default: the page's document.
+ * @returns The innermost focused HTML element, or `undefined` when only a body, a non-HTML element,
+ * or nothing holds focus.
+ * @throws Thrown when focus sits in a frame from another origin, whose document the page cannot
+ * reach.
+ *
+ * @remarks
+ * `document.activeElement` stops at the first boundary: it names the host of a shadow root or the
+ * element of a frame, never the control focused inside. This follows `shadowRoot.activeElement` and
+ * a frame's `contentDocument.activeElement` until neither names a deeper element, so a host or a
+ * frame holding focus with nothing focused inside is itself the answer. A closed shadow root cannot
+ * be followed, so its host is the answer there.
+ *
+ * A frame from another origin is refused rather than answered with its element, because the answer
+ * would name a frame while focus sat on a control the page cannot see. The element comes back typed
+ * for its own window, so a control inside a frame passes the frame's `HTMLElement` check and not
+ * this window's.
+ *
+ * @example
+ * ```ts
+ * readActiveElement()?.textContent
+ * ```
+ */
+export function readActiveElement(root: Document | ShadowRoot = document): HTMLElement | undefined {
+	const active = root.activeElement
+	if (active === null || active === active.ownerDocument.body) return undefined
+	const realm = active.ownerDocument.defaultView
+	if (realm === null) return undefined
+	const framed = active instanceof realm.HTMLIFrameElement
+	if (framed && active.contentDocument === null) {
+		throw new Error('Focus sits in a frame from another origin, which cannot be read')
+	}
+	const scope = framed ? active.contentDocument : active.shadowRoot
+	const inner = scope === null ? undefined : readActiveElement(scope)
+	if (inner !== undefined) return inner
+	return active instanceof realm.HTMLElement ? active : undefined
+}
+
+/**
+ * Counts the elements a tree holds, descending into open shadow roots and same-origin frames.
+ *
+ * @param root - The document or open shadow root to count. Default: the page's document.
+ * @returns How many elements the tree holds, each host and frame element included.
+ *
+ * @remarks
+ * `querySelectorAll('*')` stops at the first boundary, so it undercounts a page built from shadow
+ * roots. A frame from another origin and a closed shadow root hold nothing the page can count, so
+ * each counts as its own element only. The number bounds a walk that visits each element once, which
+ * is how {@link walkFocus} knows a Tab order that never ends.
+ *
+ * @example
+ * ```ts
+ * countElements(host.shadowRoot)
+ * ```
+ */
+export function countElements(root: Document | ShadowRoot = document): number {
+	return [...root.querySelectorAll('*')].reduce((total, element) => {
+		const realm = element.ownerDocument.defaultView
+		const inner =
+			realm !== null && element instanceof realm.HTMLIFrameElement
+				? element.contentDocument
+				: element.shadowRoot
+		return total + 1 + (inner === null ? 0 : countElements(inner))
+	}, 0)
+}
+
+/**
+ * Determines whether a node sits inside a root, through open shadow roots and frames.
+ *
+ * @param root - The node that bounds the region.
+ * @param node - The node to place.
+ * @returns `true` when `node` is `root` or a descendant of it, counting a shadow root's content as
+ * its host's and a frame's content as its frame element's.
+ *
+ * @remarks
+ * `contains` stops at a shadow root and at a frame, so a control inside a component reads as outside
+ * the region that holds the component. This climbs from the node to its host or its frame element
+ * until `contains` answers or the page's top is reached.
+ *
+ * @example
+ * ```ts
+ * isWithin(region, readActiveElement() ?? region)
+ * ```
+ */
+export function isWithin(root: Node, node: Node): boolean {
+	if (root.contains(node)) return true
+	const owner = node.ownerDocument
+	if (owner === null) return false
+	const realm = owner.defaultView
+	if (realm === null) return false
+	const scope = node.getRootNode()
+	if (scope === owner) return realm.frameElement !== null && isWithin(root, realm.frameElement)
+	return scope instanceof realm.ShadowRoot && isWithin(root, scope.host)
+}
+
+/**
+ * Presses Tab and yields the element focus lands on, once per press, up to a limit.
+ *
+ * @param limit - The most presses to make.
+ * @returns An async generator of the element each press landed on, `undefined` where only a body, a
+ * non-HTML element, or nothing took focus.
+ * @throws Thrown when a press rejects, or focus lands in a frame from another origin.
+ *
+ * @remarks
+ * This is the one Tab loop {@link driveTraversal} and {@link walkFocus} share. It makes a real press
+ * through the provider, reads the landing with {@link readActiveElement}, and leaves every decision
+ * to the caller: what counts as an end, a revisit, or a stop is the consumer's, because the two
+ * consumers disagree. The press is the next one only after the consumer asks for the next landing, so
+ * a consumer that stops reading stops pressing.
+ *
+ * @example
+ * ```ts
+ * for await (const focused of stepFocus(10)) {
+ * 	if (focused?.id === 'save') break
+ * }
+ * ```
+ */
+export async function* stepFocus(
+	limit: number,
+): AsyncGenerator<HTMLElement | undefined, void, undefined> {
+	for (const _ of Array.from({ length: limit })) {
+		await userEvent.tab()
+		yield readActiveElement()
+	}
+}
+
+/**
  * Reaches the control a resolver returns, only through natural forward Tab traversal from the
  * current focus.
  *
@@ -1105,9 +1247,9 @@ export async function traverseAccessibleWithin(
  * @throws When the resolver refuses, or one complete traversal cannot reach the target.
  *
  * @remarks
- * This is the one loop every traversal verb shares. A step counts only when focus lands on an
- * element, the traversal is over when focus revisits one, and the cap is counted off
- * {@link FOCUSABLE_SELECTOR}.
+ * This is the one loop every traversal verb shares, over {@link stepFocus}. A step counts only when
+ * focus lands on an element, the traversal is over when focus revisits one, and the cap is counted
+ * off {@link FOCUSABLE_SELECTOR}.
  *
  * @example
  * ```ts
@@ -1129,17 +1271,14 @@ export async function driveTraversal(
 	const cap = document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * 3 + 10
 	const visited = new Set<Element>()
 	const trail: string[] = []
-	for (let attempt = 0; attempt < cap; attempt += 1) {
-		await userEvent.tab()
-		const focused = document.activeElement
-		if (!(focused instanceof HTMLElement) || focused === document.body) continue
-		let current: HTMLElement | undefined
+	for await (const focused of stepFocus(cap)) {
+		if (focused === undefined) continue
 		try {
-			current = resolve()
+			const current = resolve()
+			if (focused === current) return current
 		} catch {
 			continue
 		}
-		if (focused === current) return current
 		if (visited.has(focused)) break
 		visited.add(focused)
 		trail.push(`${focused.tagName}:${focused.innerText.slice(0, 20)}`)
@@ -1155,16 +1294,21 @@ export async function driveTraversal(
  *
  * @param stop - Accepts the destination. Omit it to census the remaining document.
  * @returns Every element focus reached, in order and each once, the accepted stop last.
- * @throws Thrown when the walk outlasts every element the document holds, or a key press rejects.
+ * @throws Thrown when the walk outlasts every element the page holds, a key press rejects, or focus
+ * lands in a frame from another origin.
  *
  * @remarks
- * The walk records the focused element and then presses Tab, so it reaches what the browser's own
- * sequential navigation reaches, including a scroll container Chromium focuses without a
- * `tabindex`. The static
- * {@link describeFocus} sort does not. The walk ends with an empty list when only the body holds
- * focus, and where focus revisits a stop or returns to the body. It applies no rule about which stop
- * counts: the predicate sees each one and decides, so a consumer that refuses a hidden stop throws
- * from its own predicate.
+ * The walk records the focused element and then presses Tab through {@link stepFocus}, so it reaches
+ * what the browser's own sequential navigation reaches, including a scroll container Chromium
+ * focuses without a `tabindex`. The static {@link describeFocus} sort does not. Each stop is the
+ * innermost focused element {@link readActiveElement} reads, so a control inside an open shadow root
+ * or a same-origin frame is a stop of its own, and its host or frame element is not. The walk ends
+ * with an empty list when only the body holds focus, and where focus revisits a stop or returns to
+ * the body. It applies no rule about which stop counts: the predicate sees each one and decides, so
+ * a consumer that refuses a hidden stop throws from its own predicate.
+ *
+ * A closed shadow root cannot be entered, so its host stands for everything inside it, and a frame
+ * from another origin is refused because its controls cannot be named.
  *
  * @example
  * ```ts
@@ -1174,16 +1318,14 @@ export async function driveTraversal(
 export async function walkFocus(
 	stop?: (element: HTMLElement) => boolean,
 ): Promise<readonly HTMLElement[]> {
-	const reached: HTMLElement[] = []
-	const limit = document.getElementsByTagName('*').length
-	while (reached.length <= limit) {
-		const active = document.activeElement
-		if (!(active instanceof HTMLElement) || active === document.body || reached.includes(active)) {
-			return reached
-		}
-		reached.push(active)
-		if (stop?.(active) === true) return reached
-		await pressKeys('{Tab}')
+	const first = readActiveElement()
+	if (first === undefined) return []
+	const reached: HTMLElement[] = [first]
+	if (stop?.(first) === true) return reached
+	for await (const focused of stepFocus(countElements())) {
+		if (focused === undefined || reached.includes(focused)) return reached
+		reached.push(focused)
+		if (stop?.(focused) === true) return reached
 	}
 	throw new Error('Focus traversal did not end')
 }
@@ -1195,11 +1337,13 @@ export async function walkFocus(
  * @param start - The element that takes focus first. It is not a stop.
  * @returns The region's Tab stops in order, including a scroll container Chromium focuses
  * automatically.
- * @throws Thrown when `start` cannot take focus.
+ * @throws Thrown when `start` cannot take focus, and whatever {@link walkFocus} throws.
  *
  * @remarks
- * The walk is {@link walkFocus} with the region's edge as its stop, so a stop outside `root` ends the
- * walk and is left out of the result.
+ * The walk is {@link walkFocus} from `start` with the region's edge as its stop, so a stop outside
+ * `root` ends the walk and is left out of the result. A stop belongs to the region by
+ * {@link isWithin}, so a control inside an open shadow root or a same-origin frame that `root` holds
+ * is in the region, and `start` may sit inside one.
  *
  * @example
  * ```ts
@@ -1211,10 +1355,9 @@ export async function collectTabStops(
 	start: HTMLElement,
 ): Promise<readonly HTMLElement[]> {
 	start.focus()
-	if (document.activeElement !== start) throw new Error('The start element cannot take focus')
-	await pressKeys('{Tab}')
-	const reached = await walkFocus((focused) => !root.contains(focused))
-	return reached.filter((stop) => stop !== start && root.contains(stop))
+	if (readActiveElement() !== start) throw new Error('The start element cannot take focus')
+	const reached = await walkFocus((focused) => !isWithin(root, focused))
+	return reached.filter((stop) => stop !== start && isWithin(root, stop))
 }
 
 /**
@@ -1288,6 +1431,11 @@ export function readPage(): string {
  * @returns The focused HTML element's trimmed rendered text, including an empty string, or
  * `undefined` when focus rests on a non-HTML element. When nothing holds focus, the browser
  * reports the document body as active, so the whole page's rendered text returns.
+ * @throws Thrown when focus sits in a frame from another origin, as {@link readActiveElement} refuses.
+ *
+ * @remarks
+ * The focused element is read through {@link readActiveElement}, so a control focused inside an open
+ * shadow root or a same-origin frame answers, not its host or its frame.
  *
  * @example
  * ```ts
@@ -1296,6 +1444,8 @@ export function readPage(): string {
  * ```
  */
 export function readFocus(): string | undefined {
+	const deep = readActiveElement()
+	if (deep !== undefined) return deep.innerText.trim()
 	const focused = document.activeElement
 	return focused instanceof HTMLElement ? focused.innerText.trim() : undefined
 }
@@ -2055,6 +2205,65 @@ export function typeInput(element: HTMLInputElement | HTMLTextAreaElement, text:
 export function commitInput(element: HTMLInputElement | HTMLTextAreaElement, text: string): void {
 	typeInput(element, text)
 	element.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
+/**
+ * Renders one fixture into the document from trusted markup.
+ *
+ * @param markup - The fixture markup to parse.
+ * @returns The attached container holding the fixture's own nodes.
+ *
+ * @remarks
+ * The class list is required in the tag form, which is what keeps the two forms apart: a
+ * one-argument call is always markup.
+ *
+ * This form parses `markup` into a fresh container and returns that container, so the fixture's own
+ * nodes are its children. It attaches to `document.body` and records nothing, so removal is the
+ * caller's, exactly as it is for {@link mount}.
+ *
+ * @example
+ * ```ts
+ * const container = render('<button type="button">Save</button>')
+ * container.remove()
+ * ```
+ */
+export function render(markup: string): HTMLDivElement
+/**
+ * Renders one fixture into the document from a tag name and its class list.
+ *
+ * @param tag - The HTML tag name to create.
+ * @param classes - The class list to place on the created element.
+ * @returns The attached element itself, typed as exactly that tag.
+ *
+ * @remarks
+ * The class list is required in the tag form, which is what keeps the two forms apart: a
+ * one-argument call is always markup. A tag with no classes is `mount(build(tag))`.
+ *
+ * This form returns the element itself rather than a container. It attaches to `document.body` and
+ * records nothing, so removal is the caller's, exactly as it is for {@link mount}.
+ *
+ * @example
+ * ```ts
+ * const panel = render('section', 'surface muted')
+ * panel.remove()
+ * ```
+ */
+export function render<K extends keyof HTMLElementTagNameMap>(
+	tag: K,
+	classes: string,
+): HTMLElementTagNameMap[K]
+export function render(first: string, second?: string): HTMLElement {
+	if (second === undefined) {
+		const container = build('div')
+		container.innerHTML = first
+		return mount(container)
+	}
+	// `build` is generic over the known tag names and this signature carries a plain string, so the
+	// tag branch cannot route through it without an assertion. It applies the class list the one way
+	// `build` applies it, so the two forms stay one behaviour.
+	const element = document.createElement(first)
+	element.className = second
+	return mount(element)
 }
 
 /**

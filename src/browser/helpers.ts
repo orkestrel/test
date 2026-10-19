@@ -118,65 +118,6 @@ export function mount<T extends Element>(element: T): T {
 }
 
 /**
- * Renders one fixture into the document from trusted markup.
- *
- * @param markup - The fixture markup to parse.
- * @returns The attached container holding the fixture's own nodes.
- *
- * @remarks
- * The class list is required in the tag form, which is what keeps the two forms apart: a
- * one-argument call is always markup.
- *
- * This form parses `markup` into a fresh container and returns that container, so the fixture's own
- * nodes are its children. It attaches to `document.body` and records nothing, so removal is the
- * caller's, exactly as it is for {@link mount}.
- *
- * @example
- * ```ts
- * const container = render('<button type="button">Save</button>')
- * container.remove()
- * ```
- */
-export function render(markup: string): HTMLDivElement
-/**
- * Renders one fixture into the document from a tag name and its class list.
- *
- * @param tag - The HTML tag name to create.
- * @param classes - The class list to place on the created element.
- * @returns The attached element itself, typed as exactly that tag.
- *
- * @remarks
- * The class list is required in the tag form, which is what keeps the two forms apart: a
- * one-argument call is always markup. A tag with no classes is `mount(build(tag))`.
- *
- * This form returns the element itself rather than a container. It attaches to `document.body` and
- * records nothing, so removal is the caller's, exactly as it is for {@link mount}.
- *
- * @example
- * ```ts
- * const panel = render('section', 'surface muted')
- * panel.remove()
- * ```
- */
-export function render<K extends keyof HTMLElementTagNameMap>(
-	tag: K,
-	classes: string,
-): HTMLElementTagNameMap[K]
-export function render(first: string, second?: string): HTMLElement {
-	if (second === undefined) {
-		const container = build('div')
-		container.innerHTML = first
-		return mount(container)
-	}
-	// `build` is generic over the known tag names and this signature carries a plain string, so the
-	// tag branch cannot route through it without an assertion. It applies the class list the one way
-	// `build` applies it, so the two forms stay one behaviour.
-	const element = document.createElement(first)
-	element.className = second
-	return mount(element)
-}
-
-/**
  * Reads one resolved CSS property from a real browser element or a named pseudo-element.
  *
  * @param element - The element whose resolved style to inspect.

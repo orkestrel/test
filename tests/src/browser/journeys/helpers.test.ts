@@ -11,6 +11,7 @@ import {
 	collectTabStops,
 	commitInput,
 	computeNamePattern,
+	countElements,
 	describeFocus,
 	describeScrollRegions,
 	describeTree,
@@ -25,10 +26,12 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	isWithin,
 	parkPointer,
 	POINTER_HOLD,
 	pressKeys,
 	readAccessibilityNode,
+	readActiveElement,
 	readAnimations,
 	readContrast,
 	readFocus,
@@ -55,6 +58,7 @@ import {
 	resolveRendered,
 	sendProtocol,
 	settleCapture,
+	stepFocus,
 	traverseAccessible,
 	traverseAccessibleWithin,
 	typeAccessible,
@@ -1484,6 +1488,57 @@ describe('readProtocolPoint', () => {
 			await parkPointer()
 		}
 	})
+
+	// The content starts inside the padding as well, so the point must clear it. The button is smaller
+	// than the padding is wide, so a point measured from the border-box corner lands in the padding.
+	it('hovers a control inside a padded child frame at the content point and not in the padding', async () => {
+		const container = buildFixture(
+			'<iframe title="Padded" style="position: fixed; left: 200px; top: 100px; width: 300px; height: 200px; padding: 20px; border: 0" srcdoc="<style>body { margin: 0 } button { position: fixed; left: 0; top: 0; width: 12px; height: 12px; padding: 0 }</style><button>Padded</button>"></iframe>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		const inner = requireValue(
+			await retryUntil(
+				'the padded frame renders its button',
+				() => frame.contentDocument?.querySelector('button') ?? undefined,
+				(found) => found !== undefined,
+			),
+		)
+		expect(frame.clientLeft).toBe(0)
+		const box = inner.getBoundingClientRect()
+		const own = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+		expect(own).toEqual({ x: 6, y: 6 })
+		const point = readProtocolPoint(inner)
+		// The control: the same child point measured from the frame's border-box corner, which is where
+		// a padding-blind projection lands. It is a real point in the padding that misses the button.
+		const inPadding = readProtocolPoint(frame, own)
+		expect(point).not.toEqual(inPadding)
+		try {
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+			await waitForCondition('the content point hovers the padded button', () =>
+				inner.matches(':hover'),
+			)
+			await parkPointer()
+			expect(inner.matches(':hover')).toBe(false)
+			await sendProtocol('Input.dispatchMouseEvent', { type: 'mouseMoved', ...inPadding })
+			await waitForFrame()
+			await waitForFrame()
+			expect(inner.matches(':hover')).toBe(false)
+		} finally {
+			await parkPointer()
+		}
+	})
+
+	it('refuses an element that no document holds', () => {
+		const detached = build('span')
+		const parent = build('div')
+		parent.append(detached)
+		expect(() => readProtocolPoint(detached)).toThrow(
+			'The element is not connected to a document, so it has no point to read',
+		)
+		expect(() => readProtocolPoint(parent)).toThrow(
+			'The element is not connected to a document, so it has no point to read',
+		)
+	})
 })
 
 describe('readProtocolNode', () => {
@@ -1646,6 +1701,234 @@ describe('traverseAccessibleWithin', () => {
 	})
 })
 
+describe('readActiveElement', () => {
+	it('reads the focused control of the page, and nothing when only the body holds focus', () => {
+		const container = buildFixture('<button type="button">One</button>')
+		const button = requireValue(container.querySelector('button'))
+		button.focus()
+		expect(readActiveElement()).toBe(button)
+		button.blur()
+		expect(document.activeElement).toBe(document.body)
+		expect(readActiveElement()).toBeUndefined()
+	})
+
+	it('follows focus into an open shadow root that document.activeElement stops at', () => {
+		const container = buildFixture('<div></div>')
+		const host = requireValue(container.querySelector('div'))
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML = '<button type="button">Inner</button>'
+		const inner = requireValue(root.querySelector('button'))
+		inner.focus()
+		expect(document.activeElement).toBe(host)
+		expect(readActiveElement()).toBe(inner)
+		expect(readActiveElement(root)).toBe(inner)
+	})
+
+	it('follows focus through nested shadow roots', () => {
+		const container = buildFixture('<div></div>')
+		const outer = requireValue(container.querySelector('div')).attachShadow({ mode: 'open' })
+		outer.innerHTML = '<section></section>'
+		const inner = requireValue(outer.querySelector('section')).attachShadow({ mode: 'open' })
+		inner.innerHTML = '<button type="button">Deep</button>'
+		const deep = requireValue(inner.querySelector('button'))
+		deep.focus()
+		expect(readActiveElement()).toBe(deep)
+	})
+
+	it('answers the host when it holds focus with nothing focused inside, and when its root is closed', () => {
+		const container = buildFixture('<div tabindex="0"></div><p tabindex="0"></p>')
+		const open = requireValue(container.querySelector('div'))
+		open.attachShadow({ mode: 'open' }).innerHTML = '<button type="button">Inner</button>'
+		open.focus()
+		expect(readActiveElement()).toBe(open)
+		const closed = requireValue(container.querySelector('p'))
+		closed.attachShadow({ mode: 'closed' }).innerHTML = '<button type="button">Hidden</button>'
+		closed.focus()
+		expect(readActiveElement()).toBe(closed)
+	})
+
+	it('follows focus into a same-origin frame and answers the control typed for the frame', async () => {
+		const container = buildFixture(
+			'<iframe title="Nested" srcdoc="<button>Frame</button>"></iframe>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		const inner = requireValue(
+			await retryUntil(
+				'the frame renders its button',
+				() => frame.contentDocument?.querySelector('button') ?? undefined,
+				(found) => found !== undefined,
+			),
+		)
+		inner.focus()
+		expect(document.activeElement).toBe(frame)
+		const read = readActiveElement()
+		expect(read).toBe(inner)
+		// The control belongs to the frame's window, so this window's constructor does not know it.
+		expect(read instanceof HTMLElement).toBe(false)
+		expect(read?.ownerDocument).toBe(frame.contentDocument)
+	})
+
+	it('answers the frame element when it holds focus with nothing focused inside', async () => {
+		const container = buildFixture('<iframe title="Empty" srcdoc="<p>Static</p>"></iframe>')
+		const frame = requireValue(container.querySelector('iframe'))
+		await retryUntil(
+			'the frame renders its text',
+			() => frame.contentDocument?.querySelector('p') ?? undefined,
+			(found) => found !== undefined,
+		)
+		frame.focus()
+		expect(document.activeElement).toBe(frame)
+		expect(readActiveElement()).toBe(frame)
+	})
+
+	it('refuses focus that sits in a frame from another origin', async () => {
+		const container = buildFixture(
+			'<iframe title="Foreign" src="data:text/html,<button>Foreign</button>"></iframe>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		await retryUntil(
+			'the foreign frame leaves its blank document',
+			() => frame.contentDocument,
+			(reached) => reached === null,
+		)
+		await retryUntil(
+			'the foreign frame takes focus',
+			() => {
+				frame.focus()
+				return document.activeElement
+			},
+			(active) => active === frame,
+		)
+		expect(() => readActiveElement()).toThrow(
+			'Focus sits in a frame from another origin, which cannot be read',
+		)
+	})
+})
+
+describe('countElements', () => {
+	it('counts the elements of a tree, and of a shadow root on its own', () => {
+		const container = buildFixture('<div><span></span></div>')
+		const host = requireValue(container.querySelector('span'))
+		const before = countElements()
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML = '<b></b><i></i>'
+		expect(countElements(root)).toBe(2)
+		expect(countElements() - before).toBe(2)
+		// The control: the plain query stops at the boundary and sees none of them.
+		expect(document.querySelectorAll('b, i')).toHaveLength(0)
+	})
+
+	it('descends into open shadow roots and same-origin frames, and counts a foreign frame as itself', async () => {
+		const before = countElements()
+		const container = buildFixture(
+			'<iframe title="Nested" srcdoc="<p>One</p><p>Two</p>"></iframe>' +
+				'<iframe title="Foreign" src="data:text/html,<p>One</p>"></iframe>',
+		)
+		const [frame, foreign] = container.querySelectorAll('iframe')
+		await retryUntil(
+			'the frames settle',
+			() => [frame?.contentDocument?.body.childElementCount, foreign?.contentDocument],
+			([paragraphs, reached]) => paragraphs === 2 && reached === null,
+		)
+		// The container, two frames, and the nested document's html, head, body, and two paragraphs.
+		expect(countElements() - before).toBe(1 + 2 + 5)
+	})
+})
+
+describe('isWithin', () => {
+	it('places a node in a region by containment, and the region itself', () => {
+		const container = buildFixture('<section><button type="button">In</button></section><p>Out</p>')
+		const section = requireValue(container.querySelector('section'))
+		expect(isWithin(section, requireValue(section.querySelector('button')))).toBe(true)
+		expect(isWithin(section, section)).toBe(true)
+		expect(isWithin(section, requireValue(container.querySelector('p')))).toBe(false)
+	})
+
+	it('places a control inside an open shadow root in the region that holds its host', () => {
+		const container = buildFixture('<section><div></div></section><p>Out</p>')
+		const section = requireValue(container.querySelector('section'))
+		const root = requireValue(section.querySelector('div')).attachShadow({ mode: 'open' })
+		root.innerHTML = '<button type="button">In</button>'
+		const inner = requireValue(root.querySelector('button'))
+		// The control: containment stops at the shadow boundary, which is the reading being replaced.
+		expect(section.contains(inner)).toBe(false)
+		expect(isWithin(section, inner)).toBe(true)
+		expect(isWithin(requireValue(container.querySelector('p')), inner)).toBe(false)
+	})
+
+	it('places a control inside a same-origin frame in the region that holds its frame', async () => {
+		const container = buildFixture(
+			'<section><iframe title="Nested" srcdoc="<button>In</button>"></iframe></section><p>Out</p>',
+		)
+		const section = requireValue(container.querySelector('section'))
+		const frame = requireValue(section.querySelector('iframe'))
+		const inner = requireValue(
+			await retryUntil(
+				'the frame renders its button',
+				() => frame.contentDocument?.querySelector('button') ?? undefined,
+				(found) => found !== undefined,
+			),
+		)
+		expect(section.contains(inner)).toBe(false)
+		expect(isWithin(section, inner)).toBe(true)
+		expect(isWithin(requireValue(container.querySelector('p')), inner)).toBe(false)
+	})
+
+	it('places a detached node and a document outside a region', () => {
+		const container = buildFixture('<section></section>')
+		const section = requireValue(container.querySelector('section'))
+		expect(isWithin(section, build('span'))).toBe(false)
+		expect(isWithin(document, document)).toBe(true)
+		expect(isWithin(section, document)).toBe(false)
+	})
+})
+
+describe('stepFocus', () => {
+	it('presses Tab once per landing and yields the element focus reached, then nothing past the last', async () => {
+		const container = buildFixture(
+			'<button type="button">One</button><button type="button">Two</button>',
+		)
+		const [one, two] = container.querySelectorAll('button')
+		requireValue(one).focus()
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(2)) landings.push(focused)
+		expect(landings).toStrictEqual([two, undefined])
+	})
+
+	it('presses no further than the consumer reads', async () => {
+		const container = buildFixture(
+			'<button type="button">One</button><button type="button">Two</button><button type="button">Three</button>',
+		)
+		const [one, two] = container.querySelectorAll('button')
+		requireValue(one).focus()
+		for await (const focused of stepFocus(3)) {
+			expect(focused).toBe(two)
+			break
+		}
+		expect(document.activeElement).toBe(two)
+	})
+
+	it('yields nothing for a limit of zero and never presses', async () => {
+		const container = buildFixture('<button type="button">One</button>')
+		const button = requireValue(container.querySelector('button'))
+		button.focus()
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(0)) landings.push(focused)
+		expect(landings).toStrictEqual([])
+		expect(document.activeElement).toBe(button)
+	})
+
+	it('yields undefined where focus lands on nothing', async () => {
+		const container = buildFixture('<button type="button">Ghost</button>')
+		const ghost = requireValue(container.querySelector('button'))
+		ghost.addEventListener('focus', () => ghost.blur())
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(1)) landings.push(focused)
+		expect(landings).toStrictEqual([undefined])
+		expect(document.activeElement).toBe(document.body)
+	})
+})
+
 describe('driveTraversal', () => {
 	it('reaches the control a resolver returns, re-resolving on every step', async () => {
 		const container = buildFixture(
@@ -1704,6 +1987,69 @@ describe('walkFocus', () => {
 		// Control: the static selector sort is a second mechanism, and it disagrees about the scroller.
 		expect(describeFocus(container)).toBe('1. button "One"')
 	})
+
+	it('reaches the buttons inside an open shadow root and the control after it', async () => {
+		const container = buildFixture(
+			'<button type="button">A</button><div></div><button type="button">B</button>',
+		)
+		requireValue(container.querySelector('div')).attachShadow({ mode: 'open' }).innerHTML =
+			'<button type="button">Inner one</button><button type="button">Inner two</button>'
+		requireValue(container.querySelector('button')).focus()
+		const stops = await walkFocus()
+		expect(stops.map((stop) => stop.textContent)).toStrictEqual([
+			'A',
+			'Inner one',
+			'Inner two',
+			'B',
+		])
+	})
+
+	it('enters a same-origin frame and leaves it for the control after it', async () => {
+		const container = buildFixture(
+			'<button type="button">A</button>' +
+				'<iframe title="Nested" srcdoc="<button>Frame one</button><button>Frame two</button>"></iframe>' +
+				'<button type="button">B</button>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		await retryUntil(
+			'the frame renders its buttons',
+			() => frame.contentDocument?.querySelectorAll('button').length,
+			(count) => count === 2,
+		)
+		requireValue(container.querySelector('button')).focus()
+		const stops = await walkFocus()
+		expect(stops.map((stop) => stop.textContent)).toStrictEqual([
+			'A',
+			'Frame one',
+			'Frame two',
+			'B',
+		])
+	})
+
+	it('refuses focus that sits in a frame from another origin', async () => {
+		const container = buildFixture(
+			'<button type="button">A</button><iframe title="Foreign" src="data:text/html,<button>Foreign</button>"></iframe>',
+		)
+		const frame = requireValue(container.querySelector('iframe'))
+		// A frame starts on its own blank document and leaves it for the data URL's opaque origin, whose
+		// document the page cannot reach.
+		await retryUntil(
+			'the foreign frame leaves its blank document',
+			() => frame.contentDocument,
+			(reached) => reached === null,
+		)
+		await retryUntil(
+			'the foreign frame takes focus',
+			() => {
+				frame.focus()
+				return document.activeElement
+			},
+			(active) => active === frame,
+		)
+		await expect(walkFocus()).rejects.toThrow(
+			'Focus sits in a frame from another origin, which cannot be read',
+		)
+	})
 })
 
 describe('collectTabStops', () => {
@@ -1749,6 +2095,20 @@ describe('collectTabStops', () => {
 		await expect(collectTabStops(region, document.createElement('div'))).rejects.toThrow(
 			'The start element cannot take focus',
 		)
+	})
+
+	it('starts inside an open shadow root and collects the region past its edge', async () => {
+		const container = buildFixture(
+			'<section data-region><div></div><button type="button">Light</button></section>' +
+				'<button type="button">After</button>',
+		)
+		const region = requireValue(container.querySelector<HTMLElement>('[data-region]'))
+		const root = requireValue(container.querySelector('div')).attachShadow({ mode: 'open' })
+		root.innerHTML =
+			'<h2 tabindex="-1">Heading</h2><button type="button">Inner</button><button type="button" tabindex="-1">Skipped</button>'
+		const start = requireValue(root.querySelector('h2'))
+		const stops = await collectTabStops(region, start)
+		expect(stops.map((stop) => stop.textContent)).toStrictEqual(['Inner', 'Light'])
 	})
 })
 
@@ -1806,6 +2166,16 @@ describe('readFocus', () => {
 		buildFixture('<button type="button">First</button><button type="button">Evaluate</button>')
 		await traverseAccessible('Evaluate')
 		expect(readFocus()).toBe('Evaluate')
+	})
+
+	it('reads the control focused inside an open shadow root, not its host', () => {
+		const container = buildFixture('<div>Host text</div>')
+		const host = requireValue(container.querySelector('div'))
+		const root = host.attachShadow({ mode: 'open' })
+		root.innerHTML = '<button type="button">Inner</button><slot></slot>'
+		requireValue(root.querySelector('button')).focus()
+		expect(document.activeElement).toBe(host)
+		expect(readFocus()).toBe('Inner')
 	})
 
 	it('reads nothing when focus rests on an element that renders no text', async () => {
@@ -2764,6 +3134,42 @@ describe('commitInput', () => {
 		container.addEventListener('change', () => seen.handler(field.value))
 		commitInput(field, 'Ada')
 		expect(seen.calls).toStrictEqual([['Ada'], ['Ada']])
+	})
+})
+
+describe('render', () => {
+	it('attaches parsed fixture markup to the document', () => {
+		const container = render('<button type="button">Save</button>')
+		try {
+			expect(container.parentElement).toBe(document.body)
+			expect(container.tagName).toBe('DIV')
+			expect(requireValue(container.querySelector('button')).textContent).toBe('Save')
+		} finally {
+			container.remove()
+		}
+	})
+
+	it('attaches the element itself for a tag and its classes', () => {
+		const panel = render('section', 'surface muted')
+		try {
+			expect(panel.tagName).toBe('SECTION')
+			expect(panel.className).toBe('surface muted')
+			expect(panel.parentElement).toBe(document.body)
+			expect(panel.isConnected).toBe(true)
+		} finally {
+			panel.remove()
+		}
+	})
+
+	it('reads a lone argument as markup even when it spells a tag name', () => {
+		const container = render('section')
+		try {
+			expect(container.tagName).toBe('DIV')
+			expect(container.childElementCount).toBe(0)
+			expect(container.textContent).toBe('section')
+		} finally {
+			container.remove()
+		}
 	})
 })
 
