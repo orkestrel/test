@@ -444,13 +444,13 @@ export function computeOffset(box: DOMRectReadOnly, width: number, height: numbe
 }
 
 /**
- * Stages the tester's print medium, motion preference, and forced colours through the browser
- * provider.
+ * Stages the tester's print medium, motion preference, forced colours, and pointer precision through
+ * the browser provider.
  *
  * @param options - The media axes to override.
  * @returns A promise resolving after a bounded read-back for `print: true`, either `motion` value,
- * and either `forced` value. A `print: false` stage is sent and followed by a frame wait without a
- * read-back.
+ * either `forced` value, and either `pointer` value. A `print: false` stage is sent and followed by
+ * a frame wait without a read-back.
  * @throws Thrown when no axis is supplied or a staged query does not reach the tester.
  *
  * @remarks
@@ -463,6 +463,14 @@ export function computeOffset(box: DOMRectReadOnly, width: number, height: numbe
  * budgets. A restoration failure is attached as the refusal's cause. Register
  * {@link releaseMedia} in teardown; it restores the readings observed before the first stage.
  *
+ * A coarse pointer enables single-point touch emulation; a fine pointer disables it. Chromium also
+ * changes `any-pointer` and the hover queries. An omitted pointer never sends a touch-emulation
+ * command. The first pointer stage appends its pre-call coarse reading to the media marker.
+ * {@link releaseTouch} disables a staged coarse pointer without changing that marker. Stage the
+ * pointer again after touch cleanup when later steps need coarse precision.
+ * A first pointer stage while {@link tapTouch} emulation is live records coarse. In teardown,
+ * call {@link releaseMedia} before {@link releaseTouch}; reversing the order ends coarse.
+ *
  * @example
  * ```ts
  * await stageMedia({ motion: false, print: true })
@@ -473,18 +481,29 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 	const print = options.print
 	const motion = options.motion
 	const forced = options.forced
-	if (print === undefined && motion === undefined && forced === undefined) {
+	const pointer = options.pointer
+	if (
+		print === undefined &&
+		motion === undefined &&
+		forced === undefined &&
+		pointer === undefined
+	) {
 		throw new Error('Media emulation was staged with nothing to emulate')
 	}
 	const media = matchMedia('print').matches ? 'print' : 'screen'
 	const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 	const dark = matchMedia('(prefers-color-scheme: dark)').matches
 	const active = matchMedia('(forced-colors: active)').matches
+	const coarse = matchMedia('(pointer: coarse)').matches
 	if (!document.documentElement.hasAttribute(MEDIA_STAGE)) {
 		document.documentElement.setAttribute(
 			MEDIA_STAGE,
 			[media === 'print', reduced, dark, active].map(Number).join(''),
 		)
+	}
+	const staged = document.documentElement.getAttribute(MEDIA_STAGE)
+	if (pointer !== undefined && staged?.length === 4) {
+		document.documentElement.setAttribute(MEDIA_STAGE, `${staged}${Number(coarse)}`)
 	}
 	const features = [
 		{
@@ -506,6 +525,7 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 		queries.push(`(prefers-reduced-motion: ${motion ? 'no-preference' : 'reduce'})`)
 	}
 	if (forced !== undefined) queries.push(`(forced-colors: ${forced ? 'active' : 'none'})`)
+	if (pointer !== undefined) queries.push(`(pointer: ${pointer})`)
 	await sendProtocol('Emulation.setEmulatedMedia', {
 		media: print === undefined ? media : print ? 'print' : 'screen',
 		features: features.map((feature) =>
@@ -516,6 +536,12 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 					: feature,
 		),
 	})
+	if (pointer !== undefined) {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', {
+			enabled: pointer === 'coarse',
+			maxTouchPoints: 1,
+		})
+	}
 	await waitForFrame()
 	for (const query of queries) {
 		try {
@@ -523,10 +549,18 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 		} catch (cause) {
 			try {
 				await sendProtocol('Emulation.setEmulatedMedia', { media, features })
+				if (pointer !== undefined) {
+					await sendProtocol('Emulation.setTouchEmulationEnabled', {
+						enabled: coarse,
+						maxTouchPoints: 1,
+					})
+				}
 				await waitForCondition(
 					'pre-call media readings restored',
 					() =>
 						matchMedia(media).matches &&
+						(pointer === undefined ||
+							matchMedia(`(pointer: ${coarse ? 'coarse' : 'fine'})`).matches) &&
 						features.every((feature) => matchMedia(`(${feature.name}: ${feature.value})`).matches),
 				)
 			} catch (restoration) {
@@ -604,6 +638,14 @@ export async function waitForStability(
  * waits per axis for the recorded value, and removes the marker after every axis agrees. With no
  * marker, sends the empty reset and compares readings taken strictly after that send. Each poll
  * waits for a frame; the interval is 10 milliseconds. The provider must expose a DevTools session.
+ * A fifth marker bit restores pointer precision through touch emulation. A four-bit marker or an
+ * unstaged release leaves touch emulation alone. Restoring coarse precision uses one touch point;
+ * the marker does not preserve a provider's earlier maximum touch-point count.
+ * {@link releaseTouch} leaves this marker intact even when it disables a staged coarse pointer,
+ * so media release still restores the reading recorded before the first pointer stage.
+ * A first pointer stage while {@link tapTouch} emulation is live records coarse. In teardown,
+ * call this release before {@link releaseTouch}; reversing the order restores coarse emulation
+ * after touch cleanup.
  *
  * @example
  * ```ts
@@ -620,6 +662,7 @@ export async function releaseMedia(): Promise<void> {
 	const staged = document.documentElement.getAttribute(MEDIA_STAGE)
 	if (staged !== null) {
 		const readings = staged.split('').map((value) => value === '1')
+		if (staged.length === 5) queries.push('(pointer: coarse)')
 		await sendProtocol('Emulation.setEmulatedMedia', {
 			media: readings[0] ? 'print' : 'screen',
 			features: [
@@ -628,6 +671,12 @@ export async function releaseMedia(): Promise<void> {
 				{ name: 'forced-colors', value: readings[3] ? 'active' : 'none' },
 			],
 		})
+		if (staged.length === 5) {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', {
+				enabled: readings[4],
+				maxTouchPoints: 1,
+			})
+		}
 		try {
 			await Promise.all(
 				queries.map((query, index) =>

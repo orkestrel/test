@@ -1,3 +1,5 @@
+import { isString } from '@orkestrel/contract'
+import * as browser from '@src/browser'
 import {
 	ACCESSIBLE_ROLES,
 	build,
@@ -68,9 +70,9 @@ import {
 	waitForState,
 	walkFocus,
 } from '@src/browser'
-import { createRecorder, requireValue, retryUntil, waitForCondition } from '@src/core'
+import { createRecorder, readProperty, requireValue, retryUntil, waitForCondition } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { page, userEvent } from 'vitest/browser'
+import { commands, page, userEvent } from 'vitest/browser'
 import {
 	buildFileFixture,
 	buildFixture,
@@ -109,6 +111,436 @@ afterAll(async () => {
 afterEach(resetFixtures)
 
 afterEach(releasePointer)
+
+describe('touch input', () => {
+	it('taps a moving target at its settled centre', async () => {
+		const target = requireValue(
+			buildFixture(
+				'<button style="position:fixed;left:32px;top:40px;width:80px;height:80px">Moving target</button>',
+			).querySelector('button'),
+		)
+		const clicks = createRecorder<readonly [MouseEvent]>()
+		const touches = createRecorder<readonly [TouchEvent]>()
+		target.addEventListener('click', clicks.handler)
+		target.addEventListener('touchstart', touches.handler)
+		try {
+			const movement = Array.from({ length: 12 }, (_, index) => index + 1).reduce(
+				async (previous, frame) => {
+					await previous
+					await waitForFrame()
+					target.style.left = `${32 + frame * 12}px`
+				},
+				Promise.resolve(),
+			)
+			await Promise.all([movement, browser.tapTouch(target)])
+			expect(target.getBoundingClientRect().left).toBe(176)
+			expect(clicks.count).toBe(1)
+			const touch = requireValue(touches.calls[0]?.[0].touches[0])
+			expect(touch.clientX).toBeCloseTo(216)
+			expect(touch.clientY).toBeCloseTo(80)
+		} finally {
+			await browser.releaseTouch()
+		}
+	})
+
+	it('refuses a tap when its supplied stability budget cannot cover the requested frames', async () => {
+		const target = requireValue(
+			buildFixture('<button>Budget target</button>').querySelector('button'),
+		)
+		const clicks = createRecorder<readonly [MouseEvent]>()
+		target.addEventListener('click', clicks.handler)
+		try {
+			await expect(browser.tapTouch(target, { frames: 20, budget: 1 })).rejects.toThrow(
+				'the tap target holds still',
+			)
+			expect(clicks.count).toBe(0)
+		} finally {
+			await browser.releaseTouch()
+		}
+	})
+
+	it('taps the coarse-layout target without hitting its flex sibling', async () => {
+		buildStylesheet(
+			'.touch-layout { display: flex } .touch-layout button { flex: none; width: 200px; height: 80px; padding: 0; border: 0 } @media (pointer: coarse) { .touch-layout button:first-child { width: 20px } }',
+		)
+		const root = buildFixture(
+			'<div class="touch-layout"><button>Target</button><button>Sibling</button></div>',
+		)
+		const [target, sibling] = root.querySelectorAll('button')
+		const hits = createRecorder<readonly [string]>()
+		requireValue(target).addEventListener('click', () => hits.handler('target'))
+		requireValue(sibling).addEventListener('click', () => hits.handler('sibling'))
+		try {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+			expect(requireValue(target).getBoundingClientRect().width).toBe(200)
+			await browser.tapTouch(requireValue(target))
+			expect(requireValue(target).getBoundingClientRect().width).toBe(20)
+			expect(hits.calls).toEqual([['target']])
+		} finally {
+			await browser.releaseTouch()
+		}
+	})
+
+	it('sends a trusted touch start at the requested element offset', async () => {
+		const target = requireValue(
+			buildFixture('<button style="width:160px;height:80px">Touch</button>').querySelector(
+				'button',
+			),
+		)
+		const events = createRecorder<readonly [TouchEvent]>()
+		target.addEventListener('touchstart', events.handler)
+		try {
+			await browser.sendTouch('touchStart', target, { x: 30, y: 25 })
+			expect(events.count).toBe(1)
+			expect(events.calls[0]?.[0].isTrusted).toBe(true)
+			expect(events.calls[0]?.[0].touches[0]?.clientX).toBeCloseTo(
+				target.getBoundingClientRect().x + 30,
+			)
+		} finally {
+			await sendProtocol('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(
+				() => undefined,
+			)
+		}
+	})
+
+	it('taps an element once with emulated touch while a sibling records nothing', async () => {
+		const root = buildFixture(
+			'<button style="width:120px;height:44px">Tap target</button><button style="width:120px;height:44px">Sibling</button>',
+		)
+		const [target, sibling] = root.querySelectorAll('button')
+		const taps = createRecorder<readonly [PointerEvent]>()
+		const others = createRecorder<readonly [Event]>()
+		requireValue(target).addEventListener('click', (event) => {
+			if (event instanceof PointerEvent) taps.handler(event)
+		})
+		requireValue(sibling).addEventListener('click', others.handler)
+		try {
+			await browser.tapTouch(requireValue(target))
+			await waitForCondition('the tap clicks', () => taps.count === 1)
+			expect(taps.calls[0]?.[0].pointerType).toBe('touch')
+			expect(taps.calls[0]?.[0].isTrusted).toBe(true)
+			expect(others.count).toBe(0)
+		} finally {
+			await browser.releaseTouch()
+		}
+	})
+
+	it('releases after a completed tap without clicking again', async () => {
+		const target = requireValue(buildFixture('<button>Tap</button>').querySelector('button'))
+		const clicks = createRecorder<readonly [Event]>()
+		target.addEventListener('click', clicks.handler)
+		try {
+			await browser.tapTouch(target)
+			await browser.releaseTouch()
+			expect(clicks.count).toBe(1)
+			expect(navigator.maxTouchPoints).toBe(0)
+			expect(matchMedia('(pointer: fine)').matches).toBe(true)
+		} finally {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		}
+	})
+
+	it('disables a staged coarse pointer after touch without changing its restoration marker', async () => {
+		const target = requireValue(buildFixture('<button>Tap</button>').querySelector('button'))
+		const coarse = matchMedia('(pointer: coarse)').matches
+		try {
+			await browser.stageMedia({ pointer: 'coarse' })
+			const marker = document.documentElement.getAttribute(browser.MEDIA_STAGE)
+			expect(marker).toMatch(/^[01]{5}$/u)
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			await browser.tapTouch(target)
+			await browser.releaseTouch()
+			expect(matchMedia('(pointer: fine)').matches).toBe(true)
+			expect(navigator.maxTouchPoints).toBe(0)
+			expect(document.documentElement.getAttribute(browser.MEDIA_STAGE)).toBe(marker)
+			await browser.stageMedia({ pointer: 'coarse' })
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			expect(document.documentElement.getAttribute(browser.MEDIA_STAGE)).toBe(marker)
+		} finally {
+			try {
+				await browser.releaseTouch()
+			} finally {
+				await browser.releaseMedia()
+			}
+		}
+		expect(matchMedia('(pointer: coarse)').matches).toBe(coarse)
+		expect(document.documentElement.hasAttribute(browser.MEDIA_STAGE)).toBe(false)
+	})
+
+	it('restores the original fine pointer when media is released before touch', async () => {
+		const target = requireValue(
+			buildFixture('<button>Tap before staging</button>').querySelector('button'),
+		)
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		expect(matchMedia('(pointer: fine)').matches).toBe(true)
+		try {
+			await browser.tapTouch(target)
+			await browser.stageMedia({ pointer: 'fine' })
+			await browser.releaseMedia()
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			await browser.releaseTouch()
+			expect(matchMedia('(pointer: fine)').matches).toBe(true)
+			expect(navigator.maxTouchPoints).toBe(0)
+			expect(document.documentElement.hasAttribute(browser.MEDIA_STAGE)).toBe(false)
+		} finally {
+			try {
+				await browser.releaseMedia()
+			} finally {
+				await browser.releaseTouch()
+			}
+		}
+	})
+
+	it('ends coarse when touch is released before a media stage that recorded the tap', async () => {
+		const target = requireValue(
+			buildFixture('<button>Tap before staging</button>').querySelector('button'),
+		)
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		try {
+			await browser.tapTouch(target)
+			await browser.stageMedia({ pointer: 'fine' })
+			await browser.releaseTouch()
+			expect(matchMedia('(pointer: fine)').matches).toBe(true)
+			await browser.releaseMedia()
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			expect(navigator.maxTouchPoints).toBe(1)
+			expect(document.documentElement.hasAttribute(browser.MEDIA_STAGE)).toBe(false)
+		} finally {
+			try {
+				await browser.releaseMedia()
+			} finally {
+				await browser.releaseTouch()
+			}
+		}
+	})
+
+	it('cancels a touch held mid-drag and admits the next gesture', async () => {
+		const target = requireValue(
+			buildFixture(
+				'<button style="width:160px;height:80px;touch-action:none">Drag</button>',
+			).querySelector('button'),
+		)
+		const events = createRecorder<readonly [string, boolean]>()
+		for (const name of ['touchstart', 'touchmove', 'touchcancel', 'touchend']) {
+			target.addEventListener(name, (event) => events.handler(event.type, event.isTrusted))
+		}
+		try {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+			await browser.sendTouch('touchStart', target)
+			await browser.sendTouch('touchMove', target, { x: 60, y: 30 })
+			await browser.releaseTouch()
+			expect(events.calls.map(([name]) => name)).toEqual(['touchstart', 'touchmove', 'touchcancel'])
+			expect(events.calls.every(([, trusted]) => trusted)).toBe(true)
+			expect(navigator.maxTouchPoints).toBe(0)
+			await browser.tapTouch(target)
+			expect(events.calls.at(-1)?.[0]).toBe('touchend')
+		} finally {
+			await browser.releaseTouch()
+		}
+	})
+
+	it('releases with nothing held and records the raw idle cancellation refusal', async () => {
+		await expect(
+			sendProtocol('Input.dispatchTouchEvent', {
+				type: 'touchCancel',
+				touchPoints: [],
+			}),
+		).rejects.toThrow('Must send a TouchStart first')
+		await sendProtocol('Input.dispatchMouseEvent', {
+			type: 'mouseReleased',
+			x: -1,
+			y: -1,
+			button: 'left',
+			buttons: 0,
+			clickCount: 1,
+		})
+		await browser.releaseTouch()
+		await browser.releaseTouch()
+		expect(navigator.maxTouchPoints).toBe(0)
+	})
+
+	it('leaves an independently held mouse press for its owner to release', async () => {
+		buildFixture('<button style="width:160px;height:80px">Hold</button>')
+		const target = resolveRendered('Hold')
+		const releases = createRecorder<readonly [PointerEvent]>()
+		target.addEventListener('pointerdown', (event) => target.setPointerCapture(event.pointerId))
+		target.addEventListener('pointerup', releases.handler)
+		await holdAccessible('Hold')
+		const marker = document.documentElement.getAttribute(POINTER_HOLD)
+		expect(marker).not.toBeNull()
+		await browser.releaseTouch()
+		expect(document.documentElement.getAttribute(POINTER_HOLD)).toBe(marker)
+		expect(releases.count).toBe(0)
+		await releasePointer()
+		expect(releases.count).toBe(1)
+		expect(document.documentElement.hasAttribute(POINTER_HOLD)).toBe(false)
+	})
+})
+
+describe('sendFileDrag', () => {
+	afterEach(async () => {
+		try {
+			for (const name of [
+				'test-0028-probe.txt',
+				'test-0028-accepted.txt',
+				'test-0028-refused.txt',
+				'test-0028-fix-smooth.txt',
+				'test-0028-fix-prefix.txt',
+				'test-0028-fix-refused.txt',
+			]) {
+				await commands.removeFile(`tmp/drag/${name}`).catch((error: unknown) => {
+					const message = readProperty(error, 'message')
+					if (!isString(message) || !message.startsWith('ENOENT:')) throw error
+				})
+			}
+		} finally {
+			await parkPointer()
+		}
+	})
+
+	it('writes no files when a later file name is refused', async () => {
+		const root = buildFixture('<p role="status" aria-label="No write">Drop here</p>')
+		const events = createRecorder<readonly [Event]>()
+		root.addEventListener('dragenter', events.handler)
+		await expect(commands.readFile('tmp/drag/test-0028-fix-prefix.txt')).rejects.toThrow('ENOENT')
+		await expect(commands.readFile('tmp/drag/test-0028-fix-refused.txt')).rejects.toThrow('ENOENT')
+		await expect(
+			browser.sendFileDrag('dragEnter', 'status', 'No write', [
+				'test-0028-fix-prefix.txt',
+				'./test-0028-fix-refused.txt',
+			]),
+		).rejects.toThrow('Dragged file names must name files without a path')
+		expect(events.count).toBe(0)
+		await expect(commands.readFile('tmp/drag/test-0028-fix-prefix.txt')).rejects.toThrow('ENOENT')
+		await expect(commands.readFile('tmp/drag/test-0028-fix-refused.txt')).rejects.toThrow('ENOENT')
+	})
+
+	it('reaches a target beyond the viewport under a smooth root', async () => {
+		const sheet = buildStylesheet('html { scroll-behavior: smooth }')
+		const root = buildFixture(
+			'<p role="status" aria-label="Distant drop" style="margin-top:3000px;height:80px">Drop here</p>',
+		)
+		const events = createRecorder<readonly [Event]>()
+		root.addEventListener('dragenter', events.handler)
+		const scroll = { x: scrollX, y: scrollY }
+		try {
+			scrollTo({ top: 0, left: 0, behavior: 'instant' })
+			expect(requireValue(root.querySelector('p')).getBoundingClientRect().top).toBeGreaterThan(
+				innerHeight,
+			)
+			await browser.sendFileDrag('dragEnter', 'status', 'Distant drop', [
+				'test-0028-fix-smooth.txt',
+			])
+			expect(events.count).toBe(1)
+			expect(events.calls[0]?.[0].isTrusted).toBe(true)
+			expect(scrollY).toBeGreaterThan(0)
+		} finally {
+			try {
+				await sendProtocol('Input.dispatchDragEvent', {
+					type: 'dragCancel',
+					x: -1,
+					y: -1,
+					data: { items: [], dragOperationsMask: 1 },
+				})
+			} finally {
+				sheet.remove()
+				scrollTo({ left: scroll.x, top: scroll.y, behavior: 'instant' })
+			}
+		}
+	})
+
+	it('refuses a file name before changing the scroll position', async () => {
+		buildFixture(
+			'<p role="status" aria-label="Refused drop" style="margin-top:3000px;height:80px">Drop here</p>',
+		)
+		const scroll = { x: scrollX, y: scrollY }
+		try {
+			scrollTo({ top: 0, left: 0, behavior: 'instant' })
+			await expect(
+				browser.sendFileDrag('dragEnter', 'status', 'Refused drop', ['../escape.txt']),
+			).rejects.toThrow('Dragged file names must name files without a path')
+			expect(scrollY).toBe(0)
+			expect(scrollX).toBe(0)
+		} finally {
+			scrollTo({ left: scroll.x, top: scroll.y, behavior: 'instant' })
+		}
+	})
+
+	it('carries trusted Files events over a named status and leaves on cancel beside a text control', async () => {
+		const root = buildFixture('<p role="status" aria-label="Drop status">Drop files here.</p>')
+		const target = requireValue(root.querySelector('p'))
+		const record = createRecorder<readonly [string, boolean, boolean]>()
+		for (const name of ['dragenter', 'dragover', 'dragleave']) {
+			root.addEventListener(name, (event) => {
+				if (event instanceof DragEvent)
+					record.handler(
+						event.type,
+						event.isTrusted,
+						Array.from(event.dataTransfer?.types ?? []).includes('Files'),
+					)
+			})
+		}
+		await browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['test-0028-probe.txt'])
+		try {
+			await browser.sendFileDrag('dragOver', 'status', 'Drop status', ['test-0028-probe.txt'])
+		} finally {
+			await browser.sendFileDrag('dragCancel', 'status', 'Drop status', ['test-0028-probe.txt'])
+		}
+		await waitForCondition('the cancelled file drag leaves its target', () =>
+			record.calls.some(([name]) => name === 'dragleave'),
+		)
+		expect(record.calls[0]?.[0]).toBe('dragenter')
+		expect(record.calls.map(([name]) => name)).toContain('dragover')
+		expect(record.calls.at(-1)?.[0]).toBe('dragleave')
+		expect(record.calls.every(([, trusted, files]) => trusted && files)).toBe(true)
+		record.clear()
+		const point = readProtocolPoint(target, { x: 4, y: 4 })
+		const data = { items: [{ mimeType: 'text/plain', data: 'note' }], dragOperationsMask: 1 }
+		await sendProtocol('Input.dispatchDragEvent', { type: 'dragEnter', ...point, data })
+		await sendProtocol('Input.dispatchDragEvent', { type: 'dragOver', x: -1, y: -1, data })
+		await sendProtocol('Input.dispatchDragEvent', { type: 'dragCancel', ...point, data })
+		await waitForCondition('the text drag leaves its target', () =>
+			record.calls.some(([name]) => name === 'dragleave'),
+		)
+		expect(record.calls.map(([name]) => name)).toContain('dragenter')
+		expect(record.calls.every(([, trusted]) => trusted)).toBe(true)
+		expect(record.calls.some(([, , files]) => files)).toBe(false)
+	})
+
+	it('refuses ambiguous, hidden, and outside targets without delivering events beside a visible control', async () => {
+		const root = buildFixture(
+			'<p role="status" aria-label="Drop status">First</p><p role="status" aria-label="Drop status">Second</p>',
+		)
+		const events = createRecorder<readonly [Event]>()
+		root.addEventListener('dragenter', events.handler)
+		await expect(
+			browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['test-0028-refused.txt']),
+		).rejects.toThrow('Drag target "Drop status" is ambiguous across 2 elements')
+		requireValue(root.lastElementChild).remove()
+		const target = requireValue(root.querySelector('p'))
+		target.hidden = true
+		await expect(
+			browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['test-0028-refused.txt']),
+		).rejects.toThrow('Drag target "Drop status" is not rendered')
+		target.hidden = false
+		target.style.cssText = 'position:fixed;top:-100px;left:0;height:20px;margin:0'
+		await expect(
+			browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['test-0028-refused.txt']),
+		).rejects.toThrow('Drag target "Drop status" lies outside the viewport')
+		expect(events.count).toBe(0)
+		target.removeAttribute('style')
+		await expect(
+			browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['../escape.txt']),
+		).rejects.toThrow('Dragged file names must name files without a path')
+		expect(events.count).toBe(0)
+		await browser.sendFileDrag('dragEnter', 'status', 'Drop status', ['test-0028-accepted.txt'])
+		try {
+			await waitForCondition('the lone target receives the file drag', () => events.count > 0)
+		} finally {
+			await browser.sendFileDrag('dragCancel', 'status', 'Drop status', ['test-0028-accepted.txt'])
+		}
+	})
+})
 
 describe('native file choice', () => {
 	it('resolves the labeled native input without inventing an ARIA role', () => {

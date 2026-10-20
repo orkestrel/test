@@ -1,4 +1,5 @@
 import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@src/core'
+import type { StabilityOptions } from '../captures/types.js'
 import type {
 	AccessibilityNode,
 	AnimationReading,
@@ -14,7 +15,8 @@ import {
 	waitForAbort,
 	waitForCondition,
 } from '@src/core'
-import { commands, page, userEvent } from 'vitest/browser'
+import { commands, page, server, userEvent } from 'vitest/browser'
+import { waitForStability } from '../captures/helpers.js'
 import { build, mount, sendProtocol, waitForFrame } from '../helpers.js'
 import {
 	ACCESSIBLE_ROLES,
@@ -25,6 +27,170 @@ import {
 	IMPLICIT_ROLES,
 	POINTER_HOLD,
 } from './constants.js'
+
+/**
+ * Sends one emulated touch event through the browser protocol.
+ *
+ * @param type - The Chrome DevTools Protocol touch event type.
+ * @param element - The connected element locating the touch; omit it to end or cancel every point.
+ * @param point - The offset from the element's top-left corner. Default: `{ x: 20, y: 20 }`.
+ * @returns A promise resolving after the browser accepts the event.
+ * @throws Thrown when the element is disconnected, the provider exposes no DevTools session, or the
+ * browser refuses the touch sequence.
+ *
+ * @example
+ * ```ts
+ * await sendTouch('touchStart', target)
+ * await sendTouch('touchEnd')
+ * ```
+ */
+export async function sendTouch(
+	type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel',
+	element?: Element,
+	point: ProtocolPoint = { x: 20, y: 20 },
+): Promise<void> {
+	await sendProtocol('Input.dispatchTouchEvent', {
+		type,
+		touchPoints: element === undefined ? [] : [readProtocolPoint(element, point)],
+	})
+}
+
+/**
+ * Taps an element's centre with emulated touch after its box settles.
+ *
+ * @param element - The connected element locating the tap.
+ * @param options - The stability frame count, time bounds, and abort signal.
+ * @returns A promise resolving after the browser accepts the touch end.
+ * @throws Thrown when stability fails, the element is disconnected, or a protocol command fails.
+ *
+ * @remarks
+ * Uses one touch point and leaves touch emulation enabled until {@link releaseTouch}.
+ * That cleanup disables even a coarse pointer staged by {@link stageMedia}; stage it again after
+ * cleanup when later steps need coarse precision.
+ * A first pointer stage while tap emulation is live records coarse as its pre-call reading.
+ * In teardown, call {@link releaseMedia} before {@link releaseTouch}; reversing that order restores
+ * coarse emulation after touch cleanup.
+ * The wait uses {@link waitForStability}; an unsettled scroller can consume a tap to stop momentum
+ * without producing a click. No scrolling or focus-reachability check is performed.
+ *
+ * @example
+ * ```ts
+ * await tapTouch(target, { budget: 2000 })
+ * await releaseTouch()
+ * ```
+ */
+export async function tapTouch(element: Element, options?: StabilityOptions): Promise<void> {
+	await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+	await waitForStability(
+		'the tap target holds still',
+		() => {
+			const { x, y, width, height } = element.getBoundingClientRect()
+			return `${x}:${y}:${width}:${height}`
+		},
+		options,
+	)
+	const box = element.getBoundingClientRect()
+	await sendTouch('touchStart', element, { x: box.width / 2, y: box.height / 2 })
+	await sendTouch('touchEnd')
+}
+
+/**
+ * Cancels emulated touch input, disables touch emulation, and parks the pointer.
+ *
+ * @returns A promise resolving after touch cleanup and the parked pointer's frame.
+ * @throws Thrown when a protocol command fails, apart from Chromium's idle touch cancellation refusal.
+ *
+ * @remarks
+ * Safe after a completed tap, a held touch, or an idle release. This sends no mouse button release.
+ * A native drag that also holds the mouse requires its own `mouseReleased` protocol command before
+ * parking. {@link releasePointer} releases only a press recorded by the package's hold verbs.
+ * Parking after touch input does not prove that Chromium cleared sticky touch hover.
+ * Disables even a coarse pointer staged by {@link stageMedia}, leaving its restoration marker
+ * unchanged. Stage the coarse pointer again when later steps need it; {@link releaseMedia} still
+ * restores the pointer reading recorded before the first pointer stage.
+ * If that stage ran while {@link tapTouch} emulation was live, it recorded coarse. In teardown,
+ * call {@link releaseMedia} before this cleanup; reversing the order ends with coarse emulation.
+ *
+ * @example
+ * ```ts
+ * await releaseTouch()
+ * ```
+ */
+export async function releaseTouch(): Promise<void> {
+	try {
+		await sendTouch('touchCancel')
+	} catch (error) {
+		const message = readProperty<unknown>(error, 'message')
+		if (!isString(message) || !message.includes('Must send a TouchStart first')) throw error
+	}
+	await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+	await parkPointer()
+}
+
+/**
+ * Carries files from outside the page over a rendered target named by role and accessible name.
+ *
+ * @param type - The protocol drag event; cancellation leaves the target before ending the drag.
+ * @param role - The target's accessible role.
+ * @param name - The target's exact accessible name.
+ * @param names - The file names to write under the provider root's `tmp/drag` directory.
+ * @returns A promise resolving after the browser accepts the event.
+ * @throws Thrown when the target is absent, ambiguous, or outside the viewport after scrolling,
+ * a file name contains a path, or the provider refuses a file write or protocol command.
+ *
+ * @remarks
+ * Resolves rendered elements through {@link isRendered}, without focus reachability. A status or
+ * region can receive a drag without being a Tab stop. Events are trusted and carry the `Files`
+ * type. No drop is sent. Chromium raises no `dragleave` for protocol cancellation alone, so
+ * cancellation first moves the drag outside the page.
+ *
+ * @example
+ * ```ts
+ * await sendFileDrag('dragEnter', 'status', 'Drop status', ['note.txt'])
+ * await sendFileDrag('dragCancel', 'status', 'Drop status', ['note.txt'])
+ * ```
+ */
+export async function sendFileDrag(
+	type: 'dragEnter' | 'dragOver' | 'dragCancel',
+	role: string,
+	name: string,
+	names: readonly string[],
+): Promise<void> {
+	const matches = page.getByRole(role, { name, exact: true }).elements().filter(isRendered)
+	if (matches.length > 1) {
+		throw new Error(`Drag target "${name}" is ambiguous across ${matches.length} elements`)
+	}
+	const [target] = matches
+	if (target === undefined) throw new Error(`Drag target "${name}" is not rendered`)
+	if (names.some((file) => file === '' || file === '.' || file === '..' || /[/\\:]/u.test(file))) {
+		throw new Error('Dragged file names must name files without a path')
+	}
+	target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+	await waitForFrame()
+	const box = target.getBoundingClientRect()
+	const center = { x: box.width / 2, y: box.height / 2 }
+	if (
+		box.left + center.x < 0 ||
+		box.top + center.y < 0 ||
+		box.left + center.x > innerWidth ||
+		box.top + center.y > innerHeight
+	)
+		throw new Error(`Drag target "${name}" lies outside the viewport`)
+	const files: string[] = []
+	for (const file of names) {
+		await commands.writeFile(`tmp/drag/${file}`, file)
+		files.push(`${server.config.root}/tmp/drag/${file}`)
+	}
+	const data = { items: [], files, dragOperationsMask: 1 }
+	if (type === 'dragCancel') {
+		await sendProtocol('Input.dispatchDragEvent', { type: 'dragOver', x: -1, y: -1, data })
+	}
+	await sendProtocol('Input.dispatchDragEvent', {
+		type,
+		...readProtocolPoint(target, center),
+		data,
+	})
+}
 
 /**
  * Determines whether a rectangle lies wholly outside the browser viewport.

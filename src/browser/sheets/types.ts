@@ -1,4 +1,18 @@
 /**
+ * Describes an adopted stylesheet and its idempotent release operation.
+ */
+export interface SheetAdoption {
+	/** Holds the stylesheet adopted into the document. */
+	readonly sheet: CSSStyleSheet
+	/**
+	 * Removes this sheet from the document without removing another adoption.
+	 *
+	 * @returns Nothing.
+	 */
+	release(): void
+}
+
+/**
  * Reports an authored-class census: the population walked, the tokens found, and the undeclared.
  *
  * @remarks

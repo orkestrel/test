@@ -1,6 +1,76 @@
-import type { CensusFixture, CensusReading, EscapeFixture } from './types.js'
+import type { CensusFixture, CensusReading, EscapeFixture, SheetAdoption } from './types.js'
 import { collectSelectorClasses } from '@src/core'
 import { build, readStyle } from '../helpers.js'
+
+/**
+ * Adopts CSS text into the document with an idempotent release operation.
+ *
+ * @param text - The compiled sheet text.
+ * @returns The adopted sheet and its release operation.
+ *
+ * @example
+ * ```ts
+ * const adopted = adoptSheet('.sample { display: block }')
+ * adopted.release()
+ * ```
+ */
+export function adoptSheet(text: string): SheetAdoption {
+	const sheet = new CSSStyleSheet()
+	sheet.replaceSync(text)
+	document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
+	return {
+		sheet,
+		release: () => {
+			document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+				(candidate) => candidate !== sheet,
+			)
+		},
+	}
+}
+
+/**
+ * Reads layer statements and blocks in declaration order, including repeated names.
+ *
+ * @param source - The parsed sheet, or a grouping or style rule inside it.
+ * @param layer - The qualified name of the layer enclosing the source, when one does.
+ * @returns Qualified layer names, with an empty name for an anonymous top-level layer.
+ *
+ * @remarks
+ * Descends through grouping and style rules at any depth, qualifying each name by its enclosing layer.
+ * An anonymous layer inside a named layer contributes a trailing dot to that qualified name.
+ * Conditions are read whether or not they match the document.
+ * An `@import ... layer()` rule contributes nothing, and neither do its imported sheet's rules.
+ * A dotted declaration such as `@layer a.b` contributes `a.b` as declared, without an implicit `a`.
+ * Distinct anonymous layers produce the same names; the result does not distinguish their identities.
+ *
+ * @example
+ * ```ts
+ * readLayerNames(new CSSStyleSheet()) // []
+ * ```
+ */
+export function readLayerNames(
+	source: CSSStyleSheet | CSSGroupingRule | CSSStyleRule,
+	layer?: string,
+): readonly string[] {
+	return Array.from(source.cssRules).flatMap((rule) => [
+		...(rule instanceof CSSLayerStatementRule
+			? rule.nameList
+			: rule instanceof CSSLayerBlockRule
+				? [rule.name]
+				: []
+		).map((name) => (layer === undefined ? name : `${layer}.${name}`)),
+		...(rule instanceof CSSGroupingRule || rule instanceof CSSStyleRule
+			? readLayerNames(
+					rule,
+					rule instanceof CSSLayerBlockRule
+						? layer === undefined
+							? rule.name
+							: `${layer}.${rule.name}`
+						: layer,
+				)
+			: []),
+	])
+}
 
 /**
  * Collects every class token the stylesheets loaded into this document actually define.

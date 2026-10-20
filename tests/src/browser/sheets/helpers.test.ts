@@ -1,3 +1,5 @@
+import type { SheetAdoption } from '@src/browser'
+import * as browser from '@src/browser'
 import {
 	build,
 	buildCensus,
@@ -22,6 +24,111 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../../setupBrowser.js'
 
 afterEach(resetFixtures)
+
+describe('sheet adoption and layer names', () => {
+	it('adopts and releases only its own sheet, including repeated release', () => {
+		const previous = [...document.adoptedStyleSheets]
+		const first: SheetAdoption = browser.adoptSheet('.sample { color: red }')
+		try {
+			const second = browser.adoptSheet('.other { display: block }')
+			try {
+				expect(document.adoptedStyleSheets).toEqual([...previous, first.sheet, second.sheet])
+				expect(first.sheet.cssRules.length).toBe(1)
+				first.release()
+				first.release()
+				expect(document.adoptedStyleSheets).toEqual([...previous, second.sheet])
+			} finally {
+				second.release()
+			}
+		} finally {
+			first.release()
+		}
+		expect(document.adoptedStyleSheets).toEqual(previous)
+	})
+
+	it('reads statements, blocks, nested conditions, and anonymous layers in order', () => {
+		const sheet = new CSSStyleSheet()
+		sheet.replaceSync(
+			'@layer first, second; @layer first { @media all { @layer nested {} } } @layer {}',
+		)
+		expect(browser.readLayerNames(sheet)).toEqual(['first', 'second', 'first', 'first.nested', ''])
+		const layer = requireValue(
+			Array.from(sheet.cssRules).find((rule) => rule instanceof CSSLayerBlockRule),
+		)
+		expect(browser.readLayerNames(layer, 'first')).toEqual(['first.nested'])
+	})
+
+	it('returns no layer names for an empty sheet or an unlayered rule', () => {
+		const sheet = new CSSStyleSheet()
+		expect(browser.readLayerNames(sheet)).toEqual([])
+		sheet.replaceSync('.sample { color: red }')
+		expect(browser.readLayerNames(sheet)).toEqual([])
+	})
+
+	it('reads layers two style rules deep inside a named layer', () => {
+		const sheet = new CSSStyleSheet()
+		sheet.replaceSync(
+			'@layer outer { .parent { & .child { @layer nested { @layer leaf {} } @layer {} } } }',
+		)
+		expect(browser.readLayerNames(sheet)).toEqual([
+			'outer',
+			'outer.nested',
+			'outer.nested.leaf',
+			'outer.',
+		])
+	})
+
+	it('compares complete descent with the Veneer scan through an outer style rule', () => {
+		const sheet = new CSSStyleSheet()
+		sheet.replaceSync(
+			'@layer repeated; @media all { @layer conditional {} } .outer { @layer direct {} & .inner { @layer nested {} } } @layer {} @layer repeated {}',
+		)
+		const outer = requireValue(
+			Array.from(sheet.cssRules).find((rule) => rule instanceof CSSStyleRule),
+		)
+		expect(outer.cssRules.length).toBe(2)
+		const direct = requireValue(outer.cssRules[0])
+		expect(direct).toBeInstanceOf(CSSLayerBlockRule)
+		const inner = requireValue(outer.cssRules[1])
+		expect(inner).toBeInstanceOf(CSSStyleRule)
+		const names = browser.readLayerNames(sheet)
+		expect(names).toEqual(['repeated', 'conditional', 'direct', 'nested', '', 'repeated'])
+		// Veneer's scan skips a style rule nested inside another style rule.
+		const pending: Array<{
+			readonly rule: CSSRule
+			readonly layer?: string | undefined
+			readonly enclosing?: string | undefined
+		}> = Array.from(sheet.cssRules, (rule) => ({ rule })).reverse()
+		const scanned: Array<{ readonly rule: CSSRule; readonly layer?: string | undefined }> = []
+		while (pending.length > 0) {
+			const entry = requireValue(pending.pop())
+			const { rule } = entry
+			if (rule instanceof CSSStyleRule && entry.enclosing !== undefined) continue
+			scanned.push(entry)
+			if (!(rule instanceof CSSGroupingRule || rule instanceof CSSStyleRule)) continue
+			const layer =
+				rule instanceof CSSLayerBlockRule
+					? entry.layer === undefined
+						? rule.name
+						: `${entry.layer}.${rule.name}`
+					: entry.layer
+			const enclosing = rule instanceof CSSStyleRule ? rule.selectorText : entry.enclosing
+			for (const child of Array.from(rule.cssRules).reverse()) {
+				pending.push({ rule: child, layer, enclosing })
+			}
+		}
+		expect(
+			scanned.flatMap(({ rule, layer }) =>
+				(rule instanceof CSSLayerStatementRule
+					? rule.nameList
+					: rule instanceof CSSLayerBlockRule
+						? [rule.name]
+						: []
+				).map((name) => (layer === undefined ? name : `${layer}.${name}`)),
+			),
+		).toEqual(['repeated', 'conditional', 'direct', '', 'repeated'])
+	})
+})
 
 describe('readCascade', () => {
 	it('collects class tokens from plain and grouped rules, and only real ones', () => {

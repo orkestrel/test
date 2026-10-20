@@ -33,6 +33,8 @@ export const CAPTURE_STAGINGS = 4
  *
  * @remarks
  * The value is a bit string in print, reduced motion, dark colour scheme, and forced colours order.
- * Each bit is `1` for a matching query and `0` otherwise, for example `0100`.
+ * Each bit is `1` for a matching query and `0` otherwise, for example `0100`. The first pointer
+ * stage appends a fifth bit for the pre-call `(pointer: coarse)` reading. Without a pointer stage,
+ * the marker stays four bits and release leaves touch emulation alone.
  */
 export const MEDIA_STAGE = 'data-media-stage'

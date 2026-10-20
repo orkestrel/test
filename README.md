@@ -33,6 +33,10 @@ npm install -D @orkestrel/test
 Vitest provider. Core touches neither `node:*` nor the DOM, so a browser test project imports it
 unchanged.
 
+The browser face also supplies `sendTouch`, `tapTouch`, and `releaseTouch`, external file drags
+through `sendFileDrag`, a `pointer` axis on `stageMedia`, and the stylesheet instruments
+`adoptSheet`, `SheetAdoption`, and `readLayerNames`.
+
 ```ts
 import {
 	captureError,

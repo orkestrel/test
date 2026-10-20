@@ -122,7 +122,7 @@ export interface StabilityOptions extends WaitOptions {
 	readonly frames?: number
 }
 
-/** Configures the tester's print medium, motion preference, and forced colours. */
+/** Configures the tester's print medium, motion preference, forced colours, and pointer precision. */
 export interface MediaOptions {
 	/** Determines whether the tester lays out for print. Omit it to leave the medium alone. */
 	readonly print?: boolean
@@ -130,4 +130,6 @@ export interface MediaOptions {
 	readonly motion?: boolean
 	/** Determines whether the tester runs under forced colours. Omit it to leave the colours alone. */
 	readonly forced?: boolean
+	/** Selects touch emulation for coarse input or mouse input for fine precision. Omit it to leave touch emulation alone. */
+	readonly pointer?: 'coarse' | 'fine'
 }

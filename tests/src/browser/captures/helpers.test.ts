@@ -1,3 +1,4 @@
+import * as browser from '@src/browser'
 import {
 	build,
 	CAPTURE_PANE,
@@ -1488,6 +1489,85 @@ describe('readPixels', () => {
 		expect(readStyle(subject, '--journey-label')).toBe('wide')
 		expect(readPixels(subject, '--journey-label')).toBe(0)
 		expect(readPixels(subject, '--journey-absent')).toBe(0)
+	})
+})
+
+describe('pointer media', () => {
+	it('stages coarse and fine pointers with their hover and any-pointer readings', async () => {
+		await browser.stageMedia({ pointer: 'coarse' })
+		expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+		expect(matchMedia('(any-pointer: coarse)').matches).toBe(true)
+		expect(matchMedia('(hover: none)').matches).toBe(true)
+		expect(matchMedia('(any-hover: none)').matches).toBe(true)
+		expect(matchMedia('(pointer: fine)').matches).toBe(false)
+		await browser.stageMedia({ pointer: 'fine' })
+		expect(matchMedia('(pointer: fine)').matches).toBe(true)
+		expect(matchMedia('(any-pointer: fine)').matches).toBe(true)
+		expect(matchMedia('(hover: hover)').matches).toBe(true)
+		expect(matchMedia('(any-hover: hover)').matches).toBe(true)
+		expect(matchMedia('(pointer: coarse)').matches).toBe(false)
+	})
+
+	it('restores the first coarse reading after fine then coarse staging', async () => {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+		await waitForCondition(
+			'the provider pointer is coarse',
+			() => matchMedia('(pointer: coarse)').matches,
+		)
+		try {
+			await browser.stageMedia({ pointer: 'fine' })
+			expect(document.documentElement.getAttribute(MEDIA_STAGE)).toMatch(/^[01]{4}1$/u)
+			await browser.stageMedia({ pointer: 'coarse' })
+			await releaseMedia()
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			expect(document.documentElement.hasAttribute(MEDIA_STAGE)).toBe(false)
+		} finally {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		}
+	})
+
+	it('restores a pre-call fine pointer and appends its bit to an earlier motion stage', async () => {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		await stageMedia({ motion: false })
+		const marker = document.documentElement.getAttribute(MEDIA_STAGE)
+		await browser.stageMedia({ pointer: 'coarse' })
+		expect(document.documentElement.getAttribute(MEDIA_STAGE)).toBe(`${marker}0`)
+		await releaseMedia()
+		expect(matchMedia('(pointer: fine)').matches).toBe(true)
+	})
+
+	it('restores pre-call readings when a runtime pointer value cannot read back', async () => {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+		await waitForCondition(
+			'the provider pointer is coarse',
+			() => matchMedia('(pointer: coarse)').matches,
+		)
+		const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		try {
+			await expect(
+				Reflect.apply(stageMedia, undefined, [{ pointer: 'unsupported', motion: reduced }]),
+			).rejects.toThrow('Media emulation did not reach the tester: (pointer: unsupported)')
+			expect(matchMedia('(pointer: coarse)').matches).toBe(true)
+			expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+			await releaseMedia()
+		} finally {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		}
+	})
+
+	it('leaves touch emulation untouched when the pointer axis is omitted, including idle release', async () => {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 3 })
+		try {
+			await stageMedia({ motion: false })
+			expect(navigator.maxTouchPoints).toBe(3)
+			expect(document.documentElement.getAttribute(MEDIA_STAGE)).toMatch(/^[01]{4}$/u)
+			await releaseMedia()
+			expect(navigator.maxTouchPoints).toBe(3)
+			await releaseMedia()
+			expect(navigator.maxTouchPoints).toBe(3)
+		} finally {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		}
 	})
 })
 
