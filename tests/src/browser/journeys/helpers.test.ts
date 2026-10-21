@@ -722,7 +722,7 @@ describe('resolveRendered', () => {
 	})
 
 	// The visible pass reads the accessibility tree, so a control the tree withholds is refused
-	// where it was once returned. A journey that could still click it was acting on something no
+	// where it was previously returned. A journey that could still click it was acting on something no
 	// reader is told about.
 	it('refuses a control an aria-hidden ancestor withholds rather than returning it', () => {
 		buildFixture('<div aria-hidden="true"><button type="button">Muted</button></div>')
@@ -2734,7 +2734,7 @@ describe('readRefusal', () => {
 	})
 
 	// T3-C6. `undefined` is the value the rethrow cannot afford to lose: a resolver that returned and
-	// a hostile getter that threw `undefined` are different findings, and a captured thrown value
+	// an untrusted getter that threw `undefined` are different findings, and a captured thrown value
 	// reads them as one. The flag is what separates a throw from a returned `undefined`, so the
 	// reading is left at a sentinel this call never produces.
 	it('rethrows undefined from a hostile target rather than reading it as resolved', () => {

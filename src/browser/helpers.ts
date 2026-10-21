@@ -7,7 +7,7 @@ import { cdp } from 'vitest/browser'
  *
  * @param method - The protocol method name.
  * @param params - The protocol parameters. Omit them for a command that takes none.
- * @returns A promise resolving to the browser's reply once the command completes.
+ * @returns A promise resolving to the browser's reply after the command completes.
  * @throws Thrown when the provider exposes no DevTools session, or the command fails.
  *
  * @remarks
@@ -89,7 +89,7 @@ export function build<K extends keyof HTMLElementTagNameMap>(
  * Puts one element into the document and hands it straight back.
  *
  * @param element - The element to attach.
- * @returns The same element, now appended to `document.body`.
+ * @returns The same element, appended to `document.body`.
  *
  * @remarks
  * What this buys is the composition, not the attachment: the `append` method returns `void`, and

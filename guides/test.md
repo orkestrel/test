@@ -180,7 +180,7 @@ for a missing or inherited key, and for a member carrying neither. Per-key tuple
 claim the narrowing carries rather than something the reading checks, so a caller relying on it
 establishes the pairing between an event and the recorder stored under that event first;
 `createRecorders` establishes it by wiring each recorder to exactly the event it stores that recorder
-under. Every hostile read is contained, so a value whose keys or getters throw answers `false`
+under. Every read of untrusted input is contained, so a value whose keys or getters throw answers `false`
 instead of propagating.
 
 #### Helpers
@@ -604,7 +604,7 @@ answers as the scope's scheme. The element's own and inherited custom properties
 property that does not inherit included, and an `input`, an SVG element, or any other element
 resolves like any other. A custom property is named by letters, digits, `_`, and `-` after its `--`,
 and a name the scope leaves undeclared is not carried, so its `var()` fallback still applies. The
-scope element is never written: the probe is new, so it has no earlier style to start a transition
+scope element is never written: the probe is freshly created, so it has no earlier style to start a transition
 from, a transition running on the scope keeps running and `currentColor` reads the color the scope
 shows at that moment, and the scope's geometry and scroll position stay as they were. No attribute,
 style, or child of the scope changes, so a `MutationObserver` on it records nothing. A disconnected
@@ -663,7 +663,7 @@ unreadable surface too.
 color it actually sits on. When no layer paints it hands that floor straight back.
 
 `readRing` reads and never acts. Focus arrives through the published verbs, and this measures what
-the browser painted once it landed: the `outline` the cascade declares, and the first color in a
+the browser painted after it landed: the `outline` the cascade declares, and the first color in a
 `box-shadow`. A control that is not matching `:focus-visible`, a control left the browser's own
 `outline-style: auto` ring, and a focus style that only changes the control's own fill all report
 `undefined` — in each case no measurement taken here would be about focus. `worn` names the element
@@ -909,7 +909,7 @@ A `Shape` cell holds the constant's declared type.
 | ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `readInventory`          | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Reads files from selected targets below a root directory.                                            |
 | `resolveContained`       | function | `(root: string, target: string) => string \| undefined`                                                             | Resolves a target that stays below a root directory.                                                 |
-| `requireContained`       | function | `(root: string, target: string) => string`                                                                          | Resolves a target that stays below a root directory, refusing an escape.                             |
+| `requireContained`       | function | `(root: string, target: string) => string`                                                                          | Resolves a target that stays below a root directory, refusing a path outside it.                     |
 | `hasScratchPath`         | function | `(root: string, target: string) => boolean`                                                                         | Reports whether a contained entry exists under a scratch directory without following its final link. |
 | `isExcluded`             | function | `(key: string, exclusions: readonly string[]) => boolean`                                                           | Reports whether a root-relative key matches an exclusion.                                            |
 | `readIdentity`           | function | `(status: Stats) => ScratchIdentity`                                                                                | Reads the identity of one allocated directory off a host status.                                     |
@@ -948,10 +948,10 @@ delete `resolveContained` and import `resolveContainedPath` from `@orkestrel/sca
 package already carries as a `devDependency`, rather than adding a third variant.
 
 `requireContained` is that same resolution with the refusal every contained scratch operation makes
-of an escape: it throws `Path outside scratch directory: <target>` where `resolveContained` answers
+of a path outside the root: it throws `Path outside scratch directory: <target>` where `resolveContained` answers
 `undefined`. Every `ScratchInterface` member and the `files` seeding pass through it, so the check
-and its one message are stated once rather than at each member. Read `resolveContained` where an
-escape is an answer the caller handles rather than a refusal it wants raised.
+and its one message are stated once rather than at each member. Read `resolveContained` where
+a path outside the root is an answer the caller handles rather than a refusal it wants raised.
 
 `isExcluded` is the exclusion rule itself, and `readInventory` applies it to a named target and a
 walked entry alike. An exclusion matches whole segments of a root-relative key, so it drops the key
@@ -962,9 +962,9 @@ is exported because a consumer walking its own tree wants that rule rather than 
 what `exclude` means.
 
 `matchesIdentity` is the comparison `destroy()` makes before it removes anything: whether the
-identity read from the allocated path now is the identity recorded when the directory was allocated.
+identity read from the allocated path is the identity recorded when the directory was allocated.
 All three fields are compared because none of them alone identifies an allocation. A device is
-shared by every directory on one filesystem, an index node is reused once its directory is removed,
+shared by every directory on one filesystem, an index node is reused after its directory is removed,
 and a creation time repeats within the host's timestamp resolution. It is exported so a fixture that
 manages its own directory can make the same check rather than trusting a path. `readIdentity` reads
 that triple off a `node:fs` `Stats`, and it is the one reading `createScratch` takes at allocation,
@@ -1023,7 +1023,7 @@ that names the mechanism it needs: an unprivileged Windows host answers `support
 `true` through a junction while answering `supportsFileLinks` `false`, so a fixture that reads a
 file through a link asks the second question rather than the first. `supportsMode` answers whether a
 permission bit is stored, which is narrower than whether it is enforced — a POSIX host running as
-uid `0` stores every bit faithfully and bypasses the access check those bits describe, so a proof
+uid `0` stores every bit faithfully and is exempt from the access check those bits describe, so a proof
 that needs a refusal probes that refusal itself.
 
 #### Factories
@@ -1045,7 +1045,7 @@ starts the generated directory name, and defaults to `orkestrel-test-`; allocati
 contains `/` or `\`, which is what stops a prefix steering the allocation out of its parent. Nothing
 else is refused: a fragment carrying no separator is one path segment, so `release-0..2-` allocates.
 `files` seeds files on allocation, keyed by path below the scratch directory; allocation removes the
-directory it recently made and rethrows when a key escapes or the host refuses a write.
+directory it recently made and rethrows when a key resolves outside it or the host refuses a write.
 
 `createLoopback` takes a `node:net` `Server` — `node:http`'s and `node:https`'s both extend it — and
 never constructs one. It listens on port `0` at `127.0.0.1`, waits for the `listening` event, and
@@ -1460,7 +1460,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
    nor a directory, or when a target resolves outside the root. A missing target surfaces the host's
    own `ENOENT` rather than a message from this package. It skips a symlink met while walking rather
    than following it. A target may be written relative to the root or as an absolute path inside it,
-   and one that escapes is refused either way.
+   and one that resolves outside the root is refused either way.
 
    A link in the **middle** of a named target is a separate refusal, and the only one that reaches
    it: the symbolic-link check reads the final segment, which such a link is not. The named target is
@@ -1491,13 +1491,13 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
    case are the same file varies by filesystem, so the suite probes the running host and asserts
    what the probe returned instead of assuming either answer.
 
-7. **`createScratch` refuses a lexical escape, not a symbolic link.** It allocates with
+7. **`createScratch` refuses a path lexically outside its directory, not a symbolic link.** It allocates with
    `mkdtempSync` below `parent`, which creates the directory at mode `0700` on a host that applies
    POSIX permission bits. The suite gates that assertion on `supportsMode`, so the mode is proven
    where the probe answers `true` and the case is skipped where it answers `false`. A Windows host
    answers `false` and reads the same allocation back as `0666`, so the bits describe nothing it
    applies. Every member that takes a target — `write`, `read`, `has`, `names`, `ensure`, `link`,
-   and `remove` — throws when that target lexically escapes the allocated directory, and a failed
+   and `remove` — throws when that target lexically resolves outside the allocated directory, and a failed
    seed removes the directory before rethrowing. `remove` adds a refusal the others do not need: a
    target naming the allocation itself, lexically or through an intermediate symbolic link. The
    lexical half compares paths. The physical half reads only the final entry with `lstat` and
@@ -1594,7 +1594,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     lists every member with the reading it breaks. Every member makes a naive read throw or violates
     a naive structural assumption; a total guard survives every member without throwing. Each has a
     direct probe for that failure. The negative control keeps an inert value from entering the corpus
-    under a hostile name. Whether it accepts or refuses one is that guard's own contract. Membership
+    under a name suggesting untrusted input. Whether it accepts or refuses one is that guard's own contract. Membership
     may grow in a release, so consumers loop over the whole array, assert their guard's expected
     answer per index, and attribute each failure by that index instead of naming or counting members
     locally.
@@ -1777,15 +1777,15 @@ that applies POSIX permission bits, and the suite asserts that mode where `suppo
 answers `false` the mode protects nothing, and the allocation carries only the access its parent
 directory already gives. The mode does not keep out a sibling test worker or the code under test on
 any host, because both run as the same uid, and they are the population that would create a link
-here. Its containment check is lexical: it refuses a relative path that escapes the allocated
+here. Its containment check is lexical: it refuses a relative path that resolves outside the allocated
 directory, which is the accident that actually happens — a test writing `../foo`. It does not walk
 the path's segments for symbolic links, because per-segment walking is sandbox behavior and this is
 not a sandbox.
 
 So a link inside the allocation was created by the test process or by the code the test drives, and
 handing `scratch.path` to the code under test is the ordinary use of this helper. `link` is this
-package's own entry in that population: it creates a symbolic link on request, it refuses only an
-escaping target, and its source may name anything. The source stays unchecked except on the fallback
+package's own entry in that population: it creates a symbolic link on request, it refuses only a
+target outside its directory, and its source may name anything. The source stays unchecked except on the fallback
 path, which stats it to decide whether a junction can point there. [Traversal](#traversal) states
 what each member does with a link it meets, and a contained path reaching outside the allocation
 through one is the result. This helper does not defend against that.
@@ -1829,7 +1829,7 @@ a time in the following table, and some of them ship while others do not.
 
 A member is one implementation group carried by one package, under whatever name that package
 spells it and whether it exports the helper or declares it inside a test file. Repeated calls routed
-through one shared implementation stay one member, and a set of adversarial values fed through one
+through one shared implementation stay one member, and a set of unexpected values fed through one
 totality loop is one member rather than one per value. Read the first column as the group rather
 than as an export: **nothing in this section is importable**, and the only names you can install are
 in [Surface](#surface).
@@ -1841,12 +1841,12 @@ or when a consumer appears the ruling did not consider.
 | Candidate                                                                                        | Ruling  | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A recorder map over an emitter's events, with its map, event-map, subscriber, and totality types | Ships   | It ships as `createRecorders`, with `RecorderMap` and `EventSourceInterface` beside it. Inference is what the earlier refusal turned on, and the shape improves it without settling it: a source parameter typed `EventSourceInterface<TMap>` is an inference site, so a call against one names no type argument, while a concrete class supplies none and the call names both. A keying limit survives that: `TName` derives from the events array's element type, so an array declared with a wider union than its contents keys the map past the events actually listed, and [Bounds a shipped helper carries](#bounds-a-shipped-helper-carries) states what to pass instead. A published signature still cannot import a consumer's event map, so the interface asks for the subscribe half alone and the consumer's own map is what it is instantiated with.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Hostile guard-input sets                                                                         | Ships   | `form`, `table`, and `supervisor` each feed one adversarial set through total readers, and the set is a mechanism rather than a policy: a guard's own contract decides the answers, not the corpus. It ships as `createHostileValues`; its members do not each become a factory, and every member carries a naive-reader negative control.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Unexpected guard-input sets                                                                      | Ships   | `form`, `table`, and `supervisor` each feed one unexpected-value set through total readers, and the set is a mechanism rather than a policy: a guard's own contract decides the answers, not the corpus. It ships as `createHostileValues`; its members do not each become a factory, and every member carries a naive-reader negative control.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Raw invocation — `invokeRaw`                                                                     | Ships   | It ships as `invokeUnchecked`, with `readProperty` beside it for the read. Native `Reflect.apply` still makes the call; what these add is the boundary — a callability refusal before the call, a target refusal before the read, and one named place where an unchecked runtime result meets the type its caller claims. The claim stays the caller's, and so does the guard that narrows what came back. Without them a consumer that bans `as` cannot drive a foreign object at all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Condition polling — wall-clock predicate loops                                                   | Ships   | The wait-family contract states the distinction: the no-polling architecture law governs a product's idle wakeup, and a test instrument waiting on a fact another process produces has no event to park on. It ships as `waitForCondition`. `retryUntil` ships on the same reading, because retrying a real operation is not re-reading a predicate; and where an event does exist, `waitForEvent` is the door.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Deep nesting beyond a guard's cap                                                                | Refused | `table` builds a record chain and `supervisor` builds nested arrays. The two nest different containers, so one shared factory needs a selector argument that changes the construction algorithm — a mode switch rather than a mechanism.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Canonical wire fixpoint assertions                                                               | Refused | `form` and `table` each serialize, parse untrusted JSON, serialize again, and compare exact bytes. The comparison is an assertion over the consumer's own codecs rather than a reusable mechanism, so the shape stays consumer-local and [Prove a wire fixpoint](#prove-a-wire-fixpoint) publishes the pattern instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Numeric corpora, hostile-key tables, and deep-freeze                                             | Refused | A numeric corpus or a hostile-object table is test policy — what a given suite decided to check — rather than a mechanism, and one factory covering the variants would need a mode argument. `createHostileValues` ships because a guard's totality is a property of the guard; these encode a decision about coverage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Numeric corpora, unexpected-key tables, and deep-freeze                                          | Refused | A numeric corpus or an unexpected-object table is test policy — what a given suite decided to check — rather than a mechanism, and one factory covering the variants would need a mode argument. `createHostileValues` ships because a guard's totality is a property of the guard; these encode a decision about coverage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Clearing web storage between tests                                                               | Ships   | Emptying local and session storage together is one mechanism, and the `afterEach` hook that must run after a failed test too is where every browser suite needs it. It ships as `clearStorage`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Class-ancestry orphan detection                                                                  | Ships   | A rendered element carrying a child class with no container class above it is a real invariant a stylesheet cannot state, and the check is mechanism when the class names are parameters rather than one framework's. It ships as `extractOrphans(root, child, parent)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | A DOM element builder                                                                            | Ships   | It ships as `build` for the element and `mount` for the attachment, and `render` widened to take a tag and its class list as well as markup. A class list, a text, and an attribute map are what a fixture actually varies, and expressing that variation through markup means assembling a string. Nothing here assembles a tree one call at a time: a fixture with children is still written as markup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -1961,7 +1961,7 @@ the helper rather than to the host, and each names what to reach for instead.
   `parkPointer`, so a held press stays held and only loses its hover and pressed paint; `pointer: false`
   leaves the pointer, its hover, and that paint where they are. It waits out every finite animation
   in the document, root element included, then pauses each endless one at its first frame and
-  resolves to the resume. Call the resume from a `finally` block once the frame is shot. A settle
+  resolves to the resume. Call the resume from a `finally` block after the frame is shot. A settle
   whose wait exhausts throws before it holds anything, so it owes no resume.
 - **`readShotPixel` reads a shot at the runner's scale.** The position is a fraction of the shot,
   and a fraction of `1` reads its last row or column. Where the runner scales the tester, the shot's
@@ -2028,7 +2028,7 @@ the helper rather than to the host, and each names what to reach for instead.
   It resolves the reply since 0.0.27, where 0.0.26 resolved nothing. A callback typed to return
   `void | Promise<void>`, such as a teardown or an `onTestFinished` hook, that returns
   `sendProtocol(…)` directly no longer type-checks. Write `async () => { await sendProtocol(…) }`.
-- **`readProtocolPoint` reads the layout now, and `readProtocolNode` hands back an id to use at
+- **`readProtocolPoint` reads the layout at the call, and `readProtocolNode` hands back an id to use at
   once.** The point is the layout at the call, so a box that moves afterwards moves the point it
   named. Each frame on the way up adds its border and its padding, because its content starts inside
   both. An element no document holds is refused, because its window still names the tester frame and
@@ -2046,7 +2046,7 @@ the helper rather than to the host, and each names what to reach for instead.
   handler took and destroys it before destroying the loopback.
 - **`destroyScratch`'s behavior under a permission hold is unproven where the hold cannot bind.** The
   retry path is proven against a real host refusal, and a host that produces no such refusal cannot
-  exercise it: a container running as uid `0` bypasses the access check the mode bits describe, so
+  exercise it: a container running as uid `0` is exempt from the access check the mode bits describe, so
   the suite reads a runtime probe and skips that case rather than asserting either answer. Read
   `supportsMode` for the narrower question of whether the bits are stored at all.
 - **`createRecorders` keys its map from the events array's declared element type.** An array declared
@@ -2062,7 +2062,7 @@ the helper rather than to the host, and each names what to reach for instead.
   the quota, and the grant are.
 - **`readProperty`'s `TypeError` names the target, never the read.** It refuses a target that is
   neither an object nor a function before it reads anything, and a getter that throws on an accepted
-  target hands that throw straight to the caller. Wrap the call in `captureError` where a hostile
+  target hands that throw straight to the caller. Wrap the call in `captureError` where an untrusted
   getter is the subject.
 - **`readPixels` reports a measured contribution rather than a parsed length.** A resolved value
   carrying no leading number — `'auto'`, `'none'`, `''` — reads as `0`, because none of them
@@ -2513,9 +2513,9 @@ for (const [index, value] of values.entries()) {
 ```
 
 The corpus is the positive proof input. Keep a negative control for every member too: perform the
-naive read or the naive structural reading that member is meant to break, and prove it answers the
-way the member's own hostility says. Without that control, an inert value can make the totality loop
-look stronger without exercising another hostile boundary.
+naive read or the naive structural reading that member is meant to test, and prove it answers the
+way the member's unexpected structure requires. Without that control, an inert value can make the totality loop
+look stronger without exercising another untrusted-input boundary.
 
 This package's own suite carries one control per member, in corpus order, and each names the reading
 that member breaks:
@@ -2855,7 +2855,7 @@ readInventory(root, ['src/core/index.ts'], { extensions: ['.ts'], exclude: ['src
 ### Own a temporary directory
 
 This demonstration builds a scratch directory seeded with a file, writes and reads inside it,
-refuses an escaping write, and nests one allocation inside another.
+refuses a write outside its directory, and nests one allocation inside another.
 
 ```ts
 import { createScratch } from '@orkestrel/test/server'
@@ -3114,9 +3114,9 @@ jar.read('session') // undefined
 jar.header // 'theme=dark'
 ```
 
-### Refuse an escaping path in your own fixture
+### Refuse a path outside the root in your own fixture
 
-`readInventory` and `createScratch` refuse an escape with this predicate. Reach for it when a
+`readInventory` and `createScratch` refuse a path outside the root with this predicate. Reach for it when a
 fixture of your own resolves a caller-supplied path below a root.
 
 ```ts
@@ -3808,7 +3808,7 @@ finds beside it, because a picture does not show how far a pane scrolls.
 ### Measure a document's content edge
 
 A capture stages the pane at the height the document needs, and the body's box cannot answer for
-that height once the pane is taller than the document. In the following fence the document holds
+that height after the pane grows taller than the document. In the following fence the document holds
 1600 rows of fixed content and nothing is bound to the viewport.
 
 ```ts
@@ -3885,7 +3885,7 @@ picking one of them.
   is either slower than it needs to be or shorter than the slowest host, and it reports nothing when
   it fails. Name the fact instead, and let `waitForCondition`, `retryUntil`, or `waitForEvent` decide
   when it holds.
-- **Let `readInventory` refuse.** A symlinked root or an escaping target is an error, not a
+- **Let `readInventory` refuse.** A symlinked root or a target outside the root is an error, not a
   filtered result, so a misconfigured walk fails loudly instead of returning a short map.
 - **Reach for `parent` only when the allocation must be somewhere named.** The default keeps it out
   of the repository, and a path inside a package tree is walked by every tool that reads that tree.
@@ -3944,7 +3944,7 @@ Each entry names the contracts its file proves. The test names carry the cases.
   with every remaining handler still run, both together aggregated in run order, a handler added
   during a run kept for the next call, the count reset before the handlers run, and a `destroy()`
   that is called empty and called twice. `createHostileValues` proves a naive-reader failure for
-  every member, frozen and fresh membership, and one total guard's benign and hostile answers with
+  every member, frozen and fresh membership, and one total guard's answers for ordinary and unexpected inputs with
   loop-index attribution.
 - [`tests/src/browser/helpers.test.ts`](../tests/src/browser/helpers.test.ts),
   [`tests/src/browser/journeys/helpers.test.ts`](../tests/src/browser/journeys/helpers.test.ts),
@@ -4206,8 +4206,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   or drag event whose `{ composed: false }` override keeps it inside the root.
 - [`tests/src/server/helpers.test.ts`](../tests/src/server/helpers.test.ts) — the `readInventory` and
   wait-family contracts, and each pure leaf against its own inputs. `resolveContained` takes
-  contained relative and absolute targets and both spellings of an escape, and `requireContained`
-  takes the same contained pair and each escape refused with the message naming the target it was
+  contained relative and absolute targets and both spellings of a path outside the root, and `requireContained`
+  takes the same contained pair and each path outside the root refused with the message naming the target it was
   given. `readIdentity` takes a real
   allocation's three fields, that allocation matching itself across a `stat` and an `lstat`, and a
   second allocation reading as a different identity. `readErrorCode` takes a real `ENOENT` off the
@@ -4248,14 +4248,14 @@ Each entry names the contracts its file proves. The test names carry the cases.
   leaves a moved allocation alone. Then one group per subject.
   `destruction` takes `write`, `read`, `has`, `names`, `ensure`, `link`, and `remove` after
   `destroy()`, with `write`, `ensure`, and `link` also proven not to rebuild the allocation root, and
-  `remove` proving its root and escape refusals answer before the destroyed-allocation one.
+  `remove` proving its root and path-containment refusals answer before the destroyed-allocation one.
   `names` takes its sorted output, including the population that discriminates a dropped `.sort()`.
   `ensure` takes an empty directory, every missing parent, and a repeated call. `link` takes
   traversal through a planted link, the final segment `has` reports rather than follows, and the
   `EEXIST` an occupied final segment throws. `remove` takes a file beside a kept
   sibling, an empty directory, a populated subtree, a missing target, an ancestor link back to the
   allocation with every seeded file read back afterwards, a final link whose destination is read back
-  afterwards, a sibling directory reached through that same ancestor link, an escaping target with
+  afterwards, a sibling directory reached through that same ancestor link, a target outside the root with
   the file outside left intact, the root refused as `''`, as `'.'`, and as its absolute path, a
   foreign directory swapped onto the allocated path that `remove('')` refuses, and that same swap
   under `destroy()`, which removes nothing either. `parent` and `prefix` take their own refusals.

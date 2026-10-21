@@ -247,7 +247,7 @@ describe('createPortfolio', () => {
 			expect(portfolio.placements).toStrictEqual(['start-empty'])
 
 			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
-			// The placement above handed the viewport back and left the theme at what `dark-390`
+			// The preceding placement handed the viewport back and left the theme at what `dark-390`
 			// selects, so a viewport and a theme that variant does not produce are staged before the
 			// disabled call. The readings after it then answer for that call rather than for the one
 			// before it.

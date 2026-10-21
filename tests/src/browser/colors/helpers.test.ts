@@ -75,7 +75,7 @@ describe('parseColor', () => {
 	})
 
 	it('reads what this browser actually computes, rather than only what a literal declares', () => {
-		// The cases above are declarations. This one asks the engine which syntax it hands back for a
+		// The preceding cases are declarations. This one asks the engine which syntax it hands back for a
 		// keyword and for a `color-mix()`, so a browser that changed either answer reddens here.
 		const container = buildFixture(
 			'<p id="named" style="color: rebeccapurple">Ready</p>' +

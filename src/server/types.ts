@@ -19,7 +19,7 @@ export interface ScratchInterface {
 	 * @param target - A relative or absolute file path contained by the scratch directory.
 	 * @param text - The file contents.
 	 * @returns The absolute path of the written file.
-	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
+	 * @throws When the target resolves outside the scratch directory, the scratch root is missing, a symbolic
 	 * link, or a file, or the host refuses to write the file.
 	 */
 	write(target: string, text: string): string
@@ -29,7 +29,7 @@ export interface ScratchInterface {
 	 * @param target - A relative or absolute file path contained by the scratch directory.
 	 * @returns The file contents, or `undefined` when no file can be read, including through a
 	 * symbolic link whose target is missing.
-	 * @throws When the path is a directory, escapes the scratch directory, or its root is a symbolic
+	 * @throws When the path is a directory, resolves outside the scratch directory, or its root is a symbolic
 	 * link or file. Reading follows links, so a link the host cannot resolve — a cycle, for one —
 	 * surfaces the host's own error rather than `undefined`.
 	 */
@@ -40,7 +40,7 @@ export interface ScratchInterface {
 	 * @param target - A relative or absolute path contained by the scratch directory.
 	 * @returns True if the entry exists, including a symbolic link whose target is
 	 * missing; false otherwise.
-	 * @throws When the path escapes the scratch directory or its root is a symbolic link or file.
+	 * @throws When the path resolves outside the scratch directory or its root is a symbolic link or file.
 	 */
 	has(target: string): boolean
 	/**
@@ -49,7 +49,7 @@ export interface ScratchInterface {
 	 * @param target - A relative or absolute directory path contained by the scratch directory.
 	 * Default: the scratch root.
 	 * @returns The sorted entry names, without their parent paths.
-	 * @throws When the path escapes the scratch directory, the target is missing or is not a
+	 * @throws When the path resolves outside the scratch directory, the target is missing or is not a
 	 * directory, or the scratch root is a symbolic link or file.
 	 */
 	names(target?: string): readonly string[]
@@ -58,7 +58,7 @@ export interface ScratchInterface {
 	 *
 	 * @param target - A relative or absolute directory path contained by the scratch directory.
 	 * @returns The absolute path of the directory.
-	 * @throws When the path escapes the scratch directory, the target exists and is not a directory,
+	 * @throws When the path resolves outside the scratch directory, the target exists and is not a directory,
 	 * or the scratch root is missing, a symbolic link, or a file.
 	 */
 	ensure(target: string): string
@@ -72,7 +72,7 @@ export interface ScratchInterface {
 	 * destination, but its exact text is not promised. The path may name a destination outside the
 	 * scratch directory and is not containment-checked.
 	 * @returns The absolute path of the created link, whatever host mechanism created it.
-	 * @throws When the target escapes the scratch directory, the scratch root is missing, a symbolic
+	 * @throws When the target resolves outside the scratch directory, the scratch root is missing, a symbolic
 	 * link, or a file, or the host refuses to create the link, including a host that creates no
 	 * symbolic link when the source names an existing non-directory.
 	 * @remarks {@link createLink} owns the host-specific link mechanism.
@@ -83,7 +83,7 @@ export interface ScratchInterface {
 	 *
 	 * @param target - A relative or absolute path contained by the scratch directory. A missing target
 	 * is a no-op. A final symbolic link is removed without following it, so its destination survives.
-	 * @throws When the target escapes the scratch directory, when it names the allocation itself
+	 * @throws When the target resolves outside the scratch directory, when it names the allocation itself
 	 * lexically or through an intermediate symbolic link, when the scratch root is missing, a symbolic
 	 * link, or a file, or when the host refuses to remove the target.
 	 */
@@ -123,7 +123,7 @@ export interface ScratchOptions {
 	readonly prefix?: string
 	/**
 	 * Holds the files to write on allocation, keyed by path below the scratch directory. Allocation
-	 * removes its directory and rethrows when a key escapes or the host refuses a write.
+	 * removes its directory and rethrows when a key resolves outside it or the host refuses a write.
 	 */
 	readonly files?: Readonly<Record<string, string>>
 }

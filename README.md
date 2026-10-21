@@ -92,7 +92,7 @@ a browser workspace renders that table in.
 The server face adds `readInventory`, which reads a checkout into a map of root-relative path to
 file text that a parity suite can assert against, and `createLoopback`, which binds a server the
 test built to an ephemeral loopback port. Behind them sit the pure leaves the server face also
-exports on its own: `readInventory` refuses an escape with `resolveContained` and prunes with
+exports on its own: `readInventory` refuses a path outside the root with `resolveContained` and prunes with
 `isExcluded`, while `createScratch` refuses one with `requireContained`, the throwing form, and
 reads and compares its allocation with `readIdentity` and `matchesIdentity` before `destroy()`
 removes anything. `createLink` and `removeTree` do the writing under it, and both decide on the
@@ -146,7 +146,7 @@ back for every key that is not integer-like.
 
 `createScratch` and `readInventory` promise different things, and each boundary is worth stating up
 front. `createScratch` allocates its own directory at POSIX mode `0700` — under the host temporary
-directory, or under a `parent` you name — and refuses a path that lexically escapes it. The suite
+directory, or under a `parent` you name — and refuses a path that lexically resolves outside it. The suite
 gates that assertion on `supportsMode`, the shipped probe that reads whether permission bits
 round-trip on this host, so it runs only where they do and claims nothing about a host that emulates
 them. The mode keeps another uid out, and neither a sibling test worker nor the code under test is
@@ -162,8 +162,8 @@ reports `ctime` in its place, the first write moves it, and `destroy()` then rem
 returns as if it had. `readInventory` walks a checkout you supply, usually one the test did not
 create, so it throws on a symlinked root or named target, throws on a named target whose real path
 leaves the root through a link in the middle, and skips a symlink met while walking. Neither is a
-sandbox against hostile filesystem content: those refusals stop accidental escape, not an adversary
-who can create hard links where the test process already writes.
+sandbox against untrusted filesystem content: those refusals stop accidental access outside the root, not a process
+that can create hard links where the test process already writes.
 
 The browser face is the journey layer: an accessible-name resolver with exact failure voices,
 region and disclosure targeting, input and traversal verbs, perception readers, a WCAG contrast

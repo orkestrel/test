@@ -40,7 +40,7 @@ import {
  *
  * @param root - The absolute root directory.
  * @param target - The relative or absolute target to resolve.
- * @returns The absolute target, or `undefined` when the target escapes the root.
+ * @returns The absolute target, or `undefined` when the target resolves outside the root.
  */
 export function resolveContained(root: string, target: string): string | undefined {
 	const candidate = resolve(root, target)
@@ -55,16 +55,16 @@ export function resolveContained(root: string, target: string): string | undefin
 }
 
 /**
- * Resolves a target that stays below a root directory, refusing an escape.
+ * Resolves a target that stays below a root directory, refusing a path outside it.
  *
  * @param root - The absolute root directory.
  * @param target - The relative or absolute target to resolve.
  * @returns The absolute target below the root.
- * @throws An `Error` reading `Path outside scratch directory: <target>` when the target escapes the
+ * @throws An `Error` reading `Path outside scratch directory: <target>` when the target resolves outside the
  * root.
  * @remarks This is {@link resolveContained} with the refusal every contained scratch operation makes
- * of an escape, so the check and its one message are stated once. Read `resolveContained` where an
- * escape is an answer rather than a refusal.
+ * of a path outside the root, so the check and its one message are stated once. Read `resolveContained` where
+ * a path outside the root is an answer rather than a refusal.
  *
  * @example
  * ```ts
@@ -108,7 +108,7 @@ export function readIdentity(status: Stats): ScratchIdentity {
  * @param root - The absolute scratch directory path.
  * @param target - The relative or absolute contained entry to inspect.
  * @returns True if the root directory and entry exist; false otherwise.
- * @throws Thrown when the target escapes the root, the root is a symbolic link or not a directory,
+ * @throws Thrown when the target resolves outside the root, the root is a symbolic link or not a directory,
  * or the host refuses to inspect either path.
  * @remarks Checks containment before inspecting the root. Intermediate links are followed; a
  * dangling final link counts as present. The root's allocation identity is not checked.
@@ -163,11 +163,11 @@ export function readErrorCode(error: unknown): string | undefined {
 /**
  * Reports whether two directory identities name the same allocation.
  *
- * @param current - The identity read from the path now.
+ * @param current - The identity read from the path.
  * @param allocation - The identity recorded when the directory was allocated.
  * @returns True if the device, the index node, and the creation time all match; false otherwise.
  * @remarks All three fields are compared because none of them alone identifies an allocation. A
- * device is shared by every directory on one filesystem, an index node is reused once its directory
+ * device is shared by every directory on one filesystem, an index node is reused after its directory
  * is removed, and a creation time repeats within the host's timestamp resolution.
  *
  * @example
@@ -249,7 +249,7 @@ export function createLink(path: string, source: string): void {
  * Removes a directory tree, retrying past a transient Windows handle-release race.
  *
  * @param path - The absolute directory to remove.
- * @throws The last removal error once {@link REMOVE_TREE_MAX_ATTEMPTS} attempts are exhausted,
+ * @throws The last removal error after {@link REMOVE_TREE_MAX_ATTEMPTS} attempts are exhausted,
  * or immediately for any error whose code is not in {@link REMOVE_TREE_RETRYABLE_CODES}.
  * @remarks On Windows, a directory that a recently exited process still holds as its current
  * working directory throws `EPERM` for a short interval after that process exits. Node's own
@@ -402,7 +402,7 @@ export function readInventory(
  * pid the host refuses.
  * @throws Nothing. Every host refusal reads as false.
  * @remarks This is an instantaneous observation rather than a claim of ownership. A host reuses a
- * process id after the process holding it exits, so a true answer says some process holds that id now
+ * process id after the process holding it exits, so a true answer says some process holds that id at the time of the check
  * and never says it is the process the caller started. Two host answers are worth knowing. A POSIX
  * host refuses signal `0` to a process another user owns with `EPERM`, and that refusal reads as
  * false here. A pid of `0` names the caller's own process group on POSIX and the system idle process
@@ -513,7 +513,7 @@ export async function waitForSocketClose(socket: Socket, options?: WaitOptions):
  *
  * @param scratch - The scratch directory to destroy.
  * @param options - The time bounds and abort signal.
- * @returns A promise that resolves once `destroy()` returns without throwing.
+ * @returns A promise that resolves after `destroy()` returns without throwing.
  * @throws The abort reason, or an `Error` when a bound is invalid or the budget elapses. The
  * exhaustion error carries the last host refusal as its `cause`.
  * @remarks Default budget: `10000` milliseconds. Default interval: `25` milliseconds. A host holds a
@@ -732,7 +732,7 @@ export function supportsFileLinks(): boolean {
  * remove it afterwards, both propagate.
  * @remarks POSIX reports `mode & 0o777 === 0o700` and Windows reports `0o666` regardless, so the
  * answer is true on POSIX and false on Windows. Storing a bit is a narrower question than enforcing
- * it: a POSIX host running as uid `0` stores every bit faithfully and bypasses the access check the
+ * it: a POSIX host running as uid `0` stores every bit faithfully and is exempt from the access check the
  * bits describe, so a caller that needs a permission to be enforced probes the refusal it needs
  * rather than reading this.
  *

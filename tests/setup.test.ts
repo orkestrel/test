@@ -34,7 +34,7 @@ describe('createStreamSource', () => {
 		}
 		expect(collected).toStrictEqual(['a', 'b', 'c'])
 
-		// The control: a stream that never closes never reports `done`, so the loop above would
+		// The control: a stream that never closes never reports `done`, so the preceding loop would
 		// hang rather than pass silently. Read once more to confirm the close persists.
 		const settled = await reader.read()
 		expect(settled.done).toBe(true)

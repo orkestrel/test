@@ -333,7 +333,7 @@ await new GuideCommand({
 					heading = title
 					continue
 				}
-				// A deeper heading is part of what the `###` above it owns, so it leaves that heading
+				// A deeper heading is part of what the preceding `###` owns, so it leaves that heading
 				// standing and a fence under it still belongs to the carrier that names it. A `##` opens a
 				// section that owns no `###` yet.
 				if (depth.length > 3) continue
@@ -1018,7 +1018,7 @@ await new GuideCommand({
 			}
 		})
 
-		// guides/test.md → Patterns → "Refuse an escaping path in your own fixture".
+		// guides/test.md → Patterns → "Refuse a path outside the root in your own fixture".
 		it('resolves a contained path and refuses a relative and an absolute escape', () => {
 			const scratch = createScratch({ files: { 'src/index.ts': 'export {}\n' } })
 			const base = scratch.path

@@ -370,7 +370,7 @@ describe('createScratch', () => {
 			try {
 				// Entries are created in descending order, and the population mixes case with
 				// digit-leading names so the expectation pins `.sort()`'s code-unit order rather
-				// than a locale-aware or numeric order. The test below it is what discriminates a
+				// than a locale-aware or numeric order. The following test is what discriminates a
 				// dropped sort.
 				scratch.write('zeta.txt', 'zeta')
 				scratch.write('nested/deep.txt', 'deep')
@@ -413,7 +413,7 @@ describe('createScratch', () => {
 				expect(native).toStrictEqual(['\uFFFDa', '\u00E9'])
 				expect(scratch.names()).toStrictEqual(['\u00E9', '\uFFFDa'])
 
-				// The control. The two assertions above pin a dropped `.sort()` only while this
+				// The control. The two preceding assertions pin a dropped `.sort()` only while this
 				// population still discriminates, so this fails the moment it stops.
 				expect(scratch.names()).not.toStrictEqual(native)
 			} finally {
@@ -673,7 +673,7 @@ describe('createScratch', () => {
 				scratch.write('gate/written.txt', 'written')
 				expect(destination.read('written.txt')).toBe('written')
 
-				// The other half of the contract: an escape spelled lexically is still refused.
+				// The other half of the contract: a path lexically outside the directory is still refused.
 				expect(() => scratch.ensure(`../${basename(destination.path)}`)).toThrow(
 					`Path outside scratch directory: ../${basename(destination.path)}`,
 				)
@@ -685,7 +685,7 @@ describe('createScratch', () => {
 		})
 
 		it('reports a final-segment link rather than its destination', () => {
-			// The traversal test above drives `has` through an intermediate link. `has` uses
+			// The preceding traversal test drives `has` through an intermediate link. `has` uses
 			// `lstatSync`, so a link as the final segment reports on the link itself, which is the
 			// case that behaves differently.
 			const destination = createScratch({ prefix: 'orkestrel-test-link-final-' })
@@ -1140,7 +1140,7 @@ describe('createLoopback', () => {
 		const loopback = await createLoopback(createHTTPServer())
 
 		// Identity is asserted before either promise settles: a `destroy()` that awaited the stored
-		// promise and returned a fresh one would still resolve twice and pass the two assertions below.
+		// promise and returned a fresh one would still resolve twice and pass the two following assertions.
 		const first = loopback.destroy()
 		const second = loopback.destroy()
 		expect(first).toBe(second)

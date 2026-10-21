@@ -269,7 +269,7 @@ describe('createJournal', () => {
 		const journal = createJournal()
 		// The runner reports a page failure through the console as well, and the journal is standing
 		// in front of that console while it is armed. The recorder holds those reports so they do not
-		// reach the terminal, which is why the two lines below are asserted by membership.
+		// reach the terminal, which is why the two following lines are asserted by membership.
 		const printed = createRecorder<[unknown]>()
 		const channels = { error: console.error, warn: console.warn }
 		console.error = printed.handler
@@ -894,7 +894,7 @@ describe('createHarness', () => {
 				runs += 1
 				// The element the first run rendered into, read on the second run before any row of
 				// that run has produced a context. The builder first runs inside `execute`, which is
-				// after the reading below is in hand.
+				// after the following reading is in hand.
 				if (runs === 2) {
 					observed = {
 						attribute: rendered.getAttribute(STATECHART_ATTRIBUTES.state),

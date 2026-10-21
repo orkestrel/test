@@ -1090,7 +1090,7 @@ const DISCLOSURE_SCENARIOS: ReadonlyArray<
 	},
 ]
 
-// The control, drawn from outside the population above: the same entity and the same three phases,
+// The control, drawn from outside the preceding population: the same entity and the same three phases,
 // with a `to` state the event cannot reach. Nothing about the row is malformed, so the assertion is
 // the only thing that can catch it.
 const MISMATCHED_SCENARIOS: ReadonlyArray<

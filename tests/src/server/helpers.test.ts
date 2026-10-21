@@ -55,7 +55,7 @@ import {
 // The child announces itself on stdout and then parks on a timer that never fires within a test, so
 // it holds its working directory until the parent kills it. A child that self-exits on a fixed delay
 // raced the assertions that read the hold — whether it was still alive when the un-retried baseline
-// ran was a coin toss — so every hold below is bounded by the parent rather than by a clock.
+// ran was a coin toss — so every following hold is bounded by the parent rather than by a clock.
 const HOLD_CWD = "process.stdout.write('ready\\n'); setTimeout(() => {}, 1e9)"
 
 /**
@@ -83,11 +83,11 @@ function probePermissionHold(): boolean {
 }
 
 // Removing a directory entry needs write permission on its parent, and two different hosts decline
-// to enforce that: Windows ignores the bit, and a POSIX uid of 0 bypasses the check the bit
+// to enforce that: Windows ignores the bit, and a POSIX uid of 0 is exempt from the check the bit
 // describes. `supportsMode` cannot answer this, because it reads whether a bit is stored rather than
 // whether it is enforced, and a root POSIX host stores it faithfully and enforces nothing. So the
 // mechanism itself is attempted here — strip the parent, try the removal, read the host's answer —
-// and the case below is keyed to that refusal rather than to a platform or a user name.
+// and the following case is keyed to that refusal rather than to a platform or a user name.
 const PERMISSION_HOLD_REFUSES_REMOVAL = probePermissionHold()
 
 /**
@@ -154,7 +154,7 @@ describe('resolveContained', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-contained-foreign-'))
 		try {
 			for (const target of FOREIGN_ROOTS) {
-				// The escape branch keyed to `..` is provably not the one answering: the spelling
+				// The path-containment branch keyed to `..` is provably not the one answering: the spelling
 				// `relative` returns for this pair is absolute and names no ancestor segment.
 				const spelling = relative(root, resolve(root, target))
 				expect(isAbsolute(spelling)).toBe(true)
@@ -162,7 +162,7 @@ describe('resolveContained', () => {
 				expect(resolveContained(root, target)).toBeUndefined()
 			}
 
-			// The same root still resolves a contained target, so the refusals above are the foreign
+			// The same root still resolves a contained target, so the preceding refusals are the foreign
 			// root's doing rather than a helper refusing everything it is handed.
 			expect(resolveContained(root, 'nested/file.txt')).toBe(join(root, 'nested', 'file.txt'))
 		} finally {
@@ -360,7 +360,7 @@ describe('removeTree', () => {
 				stdio: ['ignore', 'pipe', 'ignore'],
 			})
 			try {
-				// The child is provably alive and holding the directory once it has spoken, so the
+				// The child is provably alive and holding the directory after it has spoken, so the
 				// un-retried baseline throws deterministically rather than by luck of timing.
 				await once(child.stdout, 'data')
 
@@ -764,7 +764,7 @@ describe('readInventory', () => {
 			writeFileSync(join(root, 'src', 'file.ts'), 'source')
 			writeFileSync(join(root, 'src-other', 'file.ts'), 'sibling')
 
-			// The control: with no exclusion the whole population is read, so an empty result below
+			// The control: with no exclusion the whole population is read, so an empty result later
 			// reports the rule rather than an empty fixture.
 			expect(readInventory(root, ['.'])).toStrictEqual({
 				'src-other/file.ts': 'sibling',
@@ -974,7 +974,7 @@ describe('waitForSocketClose', () => {
 		try {
 			await waitForSocketClose(client, { budget: 1000 })
 
-			// The reset really happened, so the resolution above came from waiting past it rather
+			// The reset really happened, so the preceding resolution came from waiting past it rather
 			// than from a connection that ended cleanly.
 			expect(errors.count).toBe(1)
 			expect(errors.calls[0]?.[0]).toHaveProperty('code', 'ECONNRESET')
@@ -1057,7 +1057,7 @@ describe('waitForSocketClose', () => {
 			await expect(wait).rejects.toBe(reason)
 
 			// A signal already aborted refuses before either listener is attached, so the counts
-			// below are what they were before the call.
+			// that follow are what they were before the call.
 			const closes = client.listenerCount('close')
 			await expect(waitForSocketClose(client, { signal: AbortSignal.abort(reason) })).rejects.toBe(
 				reason,
@@ -1106,7 +1106,7 @@ describe('destroyScratch', () => {
 		expect(existsSync(scratch.path)).toBe(false)
 	})
 
-	// The hold below is a permission hold, so it forms only where the host enforces the permission.
+	// The following hold is a permission hold, so it forms only where the host enforces the permission.
 	// `PERMISSION_HOLD_REFUSES_REMOVAL` records whether it did, attempted for real at load. The
 	// Windows case beneath it holds the allocation the one way that host refuses a removal for.
 	it.runIf(PERMISSION_HOLD_REFUSES_REMOVAL)(
@@ -1156,8 +1156,8 @@ describe('destroyScratch', () => {
 				stdio: ['ignore', 'pipe', 'ignore'],
 			})
 			try {
-				// The child is provably alive and holding the directory once it has spoken, so the
-				// rejection below is the hold rather than luck of timing.
+				// The child is provably alive and holding the directory after it has spoken, so the
+				// following rejection is the hold rather than luck of timing.
 				await once(child.stdout, 'data')
 
 				const rejection: unknown = await destroyScratch(scratch, {
@@ -1186,7 +1186,7 @@ describe('destroyScratch', () => {
 
 				expect(existsSync(scratch.path)).toBe(false)
 			} finally {
-				// The release above usually kills the child, and `exit` has then already been
+				// The preceding release usually kills the child, and `exit` has then already been
 				// emitted; awaiting it again would wait for an event that never comes twice.
 				if (child.exitCode === null && child.signalCode === null) {
 					child.kill()
@@ -1241,7 +1241,7 @@ describe('destroyScratch', () => {
 describe('requestUpgrade', () => {
 	// A server that upgrades keeps the socket it took: the connection is detached from the HTTP
 	// server, so `LoopbackInterface.destroy`'s `closeAllConnections` never reaches it and
-	// `server.close` waits on it forever. Every fixture below therefore records what its upgrade
+	// `server.close` waits on it forever. Every following fixture therefore records what its upgrade
 	// handler took and destroys it itself.
 	it('reports the protocol a server selects when it claims the upgrade', async () => {
 		const detached: Duplex[] = []
@@ -1263,7 +1263,7 @@ describe('requestUpgrade', () => {
 				requestUpgrade(loopback.port, { path: '/socket', protocols: ['chat', 'echo'] }),
 			).resolves.toStrictEqual({ claimed: true, protocol: 'chat' })
 
-			// The upgrade handler answered, so the plain handler above did not.
+			// The upgrade handler answered, so the preceding plain handler did not.
 			expect(detached.length).toBe(1)
 		} finally {
 			for (const socket of detached) socket.destroy()
@@ -1426,7 +1426,7 @@ describe('requestUpgrade', () => {
 		})
 		const upgrading = await createLoopback(server)
 		// No `upgrade` listener, so Node routes the same request to the plain handler and this
-		// server drives the refused path while the one above drives the claimed path.
+		// server drives the refused path while the preceding one drives the claimed path.
 		const refusing = await createLoopback(
 			createHTTPServer((_request, response) => {
 				response.statusCode = 426
@@ -1449,7 +1449,7 @@ describe('requestUpgrade', () => {
 			const refused = await requestUpgrade(refusing.port)
 			const rejection: unknown = await requestUpgrade(port).catch((error: unknown) => error)
 
-			// All three paths were really driven, so the release below covers each of them rather
+			// All three paths were really driven, so the following release covers each of them rather
 			// than one path taken three times.
 			expect([claimed.claimed, refused.claimed]).toStrictEqual([true, false])
 			expect(rejection).toBeInstanceOf(Error)
@@ -1533,7 +1533,7 @@ describe('host capability probes', () => {
 		const lower = 'cased'
 		const owned = createScratch({ prefix: 'orkestrel-test-case-control-' })
 		try {
-			// The subject has to differ by case and by nothing else, or the reading below is true on
+			// The subject has to differ by case and by nothing else, or the following reading is true on
 			// every host and answers nothing about folding.
 			expect(upper).not.toBe(lower)
 			expect(upper.toLowerCase()).toBe(lower)
@@ -1561,7 +1561,7 @@ describe('host capability probes', () => {
 			const stored = (statSync(parent).mode & 0o777) === 0o500
 
 			// The two readings come apart on a root POSIX host, which stores every bit faithfully
-			// and bypasses the check the bits describe. That is why the permission-hold case earlier
+			// and is exempt from the check the bits describe. That is why the permission-hold case earlier
 			// probes the refusal instead of reading `supportsMode`.
 			expect(supportsMode()).toBe(stored)
 

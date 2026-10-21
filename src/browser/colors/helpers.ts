@@ -405,7 +405,7 @@ export function parseColor(value: string): Color | undefined {
  * property is named by letters, digits, `_`, and `-` after its `--`. A name the scope leaves
  * undeclared is not carried, so its `var()` fallback still applies.
  *
- * The scope element is never written. The probe is new, so it has no earlier style to start a
+ * The scope element is never written. The probe is freshly created, so it has no earlier style to start a
  * transition from, and a transition running on the scope keeps running: `currentColor` reads the
  * color the scope shows at that moment, and the scope's geometry and scroll position stay as they
  * were. No attribute, style, or child of the scope changes, so a `MutationObserver` on it records
@@ -768,7 +768,7 @@ export function readContrast(element: Element, floor?: Color): number {
  * @remarks
  * This reads and never acts. Focus arrives through the published verbs — `traverseAccessible`,
  * `userEvent.keyboard` from `vitest/browser`, a real click — and this measures what the browser
- * painted once it landed. A control that is not matching `:focus-visible` when the call is made
+ * painted after it landed. A control that is not matching `:focus-visible` when the call is made
  * reports nothing, because no measurement taken then would be about focus.
  *
  * Some controls are two elements: one that takes the focus and one a reader can see. A hidden radio

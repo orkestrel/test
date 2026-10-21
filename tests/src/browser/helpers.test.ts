@@ -40,7 +40,7 @@ describe('sendProtocol', () => {
 	})
 
 	// The control: a reply the page cannot have produced by accident. The same call over a different
-	// expression replies differently, so the 2 above is this command's own answer and not a stale one.
+	// expression replies differently, so the preceding 2 is this command's own answer and not a stale one.
 	it('replies to each command with its own answer', async () => {
 		const reply = await sendProtocol('Runtime.evaluate', { expression: '"a" + "b"' })
 		expect(reply).toMatchObject({ result: { type: 'string', value: 'ab' } })
@@ -230,7 +230,7 @@ describe('readStyle', () => {
 		// trim removed. What is proven here is the contract: the value carries no surrounding
 		// whitespace. What is unproven is that the trim is ever reached, because a custom property's
 		// computed value is its declaration's token stream and nothing requires an engine to trim it.
-		// A build that returns ' 8px' would redden the assertions above and prove the rest.
+		// A build that returns ' 8px' would redden the preceding assertions and prove the rest.
 		expect(getComputedStyle(subject).getPropertyValue('--journey-padded')).toBe('8px')
 	})
 

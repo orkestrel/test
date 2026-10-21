@@ -624,7 +624,7 @@ describe('captureFrame', () => {
 	it('settles a document whose height converges under a viewport-bound rule', async () => {
 		// `min-height: 50vh` plus a fixed 900-row block is a document whose height is half the pane
 		// plus 900, so it converges on 1800 and never reaches it by restaging at the height last
-		// read: each staging closes half the remaining gap. The two readings below are that
+		// read: each staging closes half the remaining gap. The two following readings are that
 		// approach measured — 1322 under the declared pane, 1561 under a pane staged at 1322 — so a
 		// fixture that stops converging reddens here rather than passing on a document that settles
 		// on its own.
@@ -685,7 +685,7 @@ describe('captureFrame', () => {
 		// A rule bound to the viewport height lays the document out taller against the taller pane,
 		// so the height read before the restaging is already stale when the shot is taken. The media
 		// query caps that growth, which is what makes this the re-reading case rather than the
-		// refusal below. The height before the reflow and the height after it are measured here, so
+		// following refusal. The height before the reflow and the height after it are measured here, so
 		// a fixture that stops reflowing reddens rather than passing on a document that never moved.
 		buildStylesheet(
 			'html { background: rgb(0, 128, 0) } .grow { min-height: 100vh }' +

@@ -993,7 +993,7 @@ export async function releasePointer(): Promise<void> {
  * Each frame on the way up adds its border and its padding, which is where its content starts,
  * scales the point by the ratio of its painted width to its layout width, and adds its own position,
  * so a tester iframe the runner scales or offsets is accounted for, and so is an iframe the page
- * itself nests, bordered, padded, or neither. The reading is of the layout now: a box that moves
+ * itself nests, bordered, padded, or neither. The reading is of the layout at the call: a box that moves
  * afterwards moves the point it names. An element in a document no frame holds reads its own client
  * point. A disconnected element has no layout, and its window still names the tester frame, so it is
  * refused rather than read as that frame's corner.
@@ -1019,7 +1019,7 @@ export function readProtocolPoint(element: Element, offset?: ProtocolPoint): Pro
 	if (realm === null || !(frame instanceof realm.HTMLElement)) {
 		throw new Error('The frame holding the element is not an HTML element of a live document')
 	}
-	// The point is now in the frame's content viewport. The border and the padding sit between that
+	// The point is in the frame's content viewport. The border and the padding sit between that
 	// viewport and the frame's corner, so the offset from the corner adds both. Scaling by how much
 	// wider the frame paints than it lays out turns that offset into the one the frame itself is read
 	// at.
@@ -1683,7 +1683,7 @@ export function readRefusal(name: string): string | undefined
  * sentence rather than a boolean. This fixes the resolver, translates the `unknown` a `catch` binds
  * into `string | undefined`, and rethrows anything that is not an `Error` — a value no resolver
  * raises, and one a caller reading a message would otherwise lose. `undefined` is rethrown with the
- * rest: a resolver that returned and a hostile getter that threw `undefined` are different findings,
+ * rest: a resolver that returned and an untrusted getter that threw `undefined` are different findings,
  * which is why the `catch` is this function's own rather than a captured thrown value.
  *
  * It resolves rather than acts, so a target it reports `undefined` for is one an acting verb
@@ -1701,7 +1701,7 @@ export function readRefusal(first: string, second?: string): string | undefined 
 		resolveRendered(first, second)
 	} catch (thrown) {
 		// The `catch` is local rather than routed through `captureError`, which returns the thrown
-		// value and therefore reads a hostile `throw undefined` as a resolver that returned.
+		// value and therefore reads an untrusted `throw undefined` as a resolver that returned.
 		if (isError(thrown)) return thrown.message
 		throw thrown
 	}
@@ -1746,7 +1746,7 @@ export function readText(element: Element): string {
  * A declared `role` wins outright, and its first token is the answer when several are listed.
  * Otherwise the element's own anatomy decides: an anchor is a link only while it holds an `href`,
  * an `input` takes the role {@link FIELD_ROLES} gives its type, a `select` is a combobox until it
- * offers several rows at once, a `section` is a region only once something names it, and a `th`
+ * offers several rows at once, a `section` is a region only after something names it, and a `th`
  * heads whichever axis its `scope` names. Every other tag answers from {@link IMPLICIT_ROLES},
  * whose membership is the contract for what this can answer at all.
  *
@@ -2104,7 +2104,7 @@ export async function waitForState(
  *
  * @param element - The element whose own animations and descendants' animations to wait on.
  * @param options - The time bounds and the abort signal.
- * @returns A promise resolving once no finite animation is still running.
+ * @returns A promise resolving after every finite animation has stopped running.
  * @throws An `Error` when the element is not in a document, when a bound is invalid, or when an
  * animation is still running at the budget; or the abort reason.
  *
@@ -2231,7 +2231,7 @@ export function readAnimations(element: Element): AnimationReading {
  * A pointer left over a control paints that control's hover, and a transition still running paints
  * a fill between two states, so neither is a state the interface rests in. An endless animation, a
  * spinner or a placeholder shimmer, stands at a different phase in every frame unless it is held at
- * the same one, so each is paused at its first frame. Call the resume once the frame is shot; a
+ * the same one, so each is paused at its first frame. Call the resume after the frame is shot; a
  * capture that throws still owes it, so call it from a `finally` block.
  *
  * The subject is the whole document, its root element included. The pointer parks through
