@@ -300,7 +300,7 @@ export function measureContent(): number {
  *
  * @remarks
  * This depends on the runner's own tester layout, and that dependency is contract rather than an
- * accident: `vitest@4.1.11` lays its tester out inside a smaller page, fits it by scaling the pane
+ * accident: `vitest@4.1.12` lays its tester out inside a smaller page, fits it by scaling the pane
  * the tester sits in, and clips whatever overflows that pane. Layout inside the tester is
  * unaffected — the tester reports the viewport it was given and every breakpoint answers to it —
  * but a screenshot is taken off the page the runner painted, so a frame shot through that scale is

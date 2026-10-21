@@ -720,7 +720,7 @@ where that distinction matters.
 
 `stagePane` unscales the runner's tester and lifts it to the window's origin, because a frame shot
 through the runner's fitting scale is a thumbnail of the surface. That couples it to Vitest's own
-tester layout, which is contract rather than accident: `vitest@4.1.11` is the version behind the
+tester layout, which is contract rather than accident: `vitest@4.1.12` is the version behind the
 `iframe[data-vitest]` selector and the `--tester-transform`, `--tester-margin-left`,
 `--viewport-width`, and `--viewport-height` custom properties it writes. A release that renames any
 of them reddens the size check rather than writing a wrong frame. Always hand the pane back with
@@ -1707,7 +1707,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     stopped, and `steps` and `output` hand out snapshots. There is no shared instance: a file that
     needs one journal per scenario creates one per scenario.
 18. **The capture layer depends on the Vitest runner's own tester layout, deliberately.** A
-    screenshot is taken off the page the runner painted, and `vitest@4.1.11` lays its tester out
+    screenshot is taken off the page the runner painted, and `vitest@4.1.12` lays its tester out
     inside a smaller page and fits it by scaling the pane the tester sits in, so a frame shot through
     that scale is a thumbnail of the surface. `stagePane` therefore reaches into that layout: the
     `iframe[data-vitest]` selector and the `--tester-transform`, `--tester-margin-left`,
@@ -2513,8 +2513,8 @@ for (const [index, value] of values.entries()) {
 ```
 
 The corpus is the positive proof input. Keep a negative control for every member too: perform the
-naive read or the naive structural reading that member is meant to test, and prove it answers the
-way the member's unexpected structure requires. Without that control, an inert value can make the totality loop
+naive read or the naive structural reading that member is meant to break, and prove it fails the
+way the member's structure dictates. Without that control, an inert value can make the totality loop
 look stronger without exercising another untrusted-input boundary.
 
 This package's own suite carries one control per member, in corpus order, and each names the reading
