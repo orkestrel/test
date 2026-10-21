@@ -21,6 +21,8 @@ import {
 	driveHold,
 	driveTraversal,
 	FIELD_ROLES,
+	FOCUSABLE_SELECTOR,
+	FOCUS_SEGMENT_LIMIT,
 	fillAccessible,
 	holdAccessible,
 	holdAccessibleWithin,
@@ -2104,18 +2106,21 @@ describe('traverseAccessible', () => {
 			container.querySelectorAll('button, input').length * 3 + 10,
 		)
 		expect(landings.length).toBeGreaterThan(countElements())
+		expect(
+			document.querySelectorAll(FOCUSABLE_SELECTOR).length * FOCUS_SEGMENT_LIMIT +
+				10 -
+				landings.length,
+		).toBeGreaterThanOrEqual(container.querySelectorAll('input').length)
 		start.focus()
 		expect(await traverseAccessible('Finish')).toBe(finish)
 		start.focus()
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		container.addEventListener('keydown', (event) => {
+			if (event.key === 'Tab') presses.handler(event)
+		})
+		const cap = countElements() * FOCUS_SEGMENT_LIMIT
 		expect(await walkFocus()).toStrictEqual([start, ...container.querySelectorAll('input'), finish])
-	})
-
-	it('crosses a segmented date input to the following control', async () => {
-		const container = buildFixture(
-			'<button>Start</button><input type="date" aria-label="Collection date"><button>Finish</button>',
-		)
-		requireValue(container.querySelector('button')).focus()
-		expect(await traverseAccessible('Finish')).toBe(container.querySelectorAll('button')[1])
+		expect(cap - presses.count).toBeGreaterThanOrEqual(container.querySelectorAll('input').length)
 	})
 
 	it('reaches a named control through forward Tab alone', async () => {
@@ -2374,7 +2379,24 @@ describe('containsNode', () => {
 })
 
 describe('stepFocus', () => {
-	it('reports repeated native field landings for every segmented input type', async () => {
+	it('pins fractional-second datetime-local landings with a spare press in the budget', async () => {
+		const container = buildFixture(
+			'<button>Start</button><input type="datetime-local" step="0.001"><button>Finish</button>',
+		)
+		const input = requireValue(container.querySelector('input'))
+		const finish = requireValue(container.querySelectorAll('button')[1])
+		requireValue(container.querySelector('button')).focus()
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(16)) {
+			landings.push(focused)
+			if (focused === finish) break
+		}
+		expect(landings.at(-1)).toBe(finish)
+		expect(landings.filter((focused) => focused === input)).toHaveLength(9)
+		expect(FOCUS_SEGMENT_LIMIT).toBeGreaterThanOrEqual(landings.length)
+	})
+
+	it('reports repeated native segment landings for every segmented input type', async () => {
 		const container = buildFixture(
 			'<button>Start</button><input type="date"><input type="time">' +
 				'<input type="datetime-local"><input type="month"><input type="week"><button>Finish</button>',
@@ -2466,6 +2488,42 @@ describe('supportsSegmentedFocus', () => {
 })
 
 describe('driveTraversal', () => {
+	it('refuses a segmented input trap within its consecutive landing budget', async () => {
+		const container = buildFixture('<input type="date"><button>Finish</button>')
+		const input = requireValue(container.querySelector('input'))
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		input.addEventListener('keydown', (event) => {
+			if (event.key !== 'Tab') return
+			presses.handler(event)
+			event.preventDefault()
+			input.focus()
+		})
+		input.focus()
+		await expect(driveTraversal(() => resolveRendered('Finish'), 'Finish')).rejects.toThrow(
+			'Interactive target "Finish" is not reachable through forward Tab traversal: INPUT:',
+		)
+		expect(presses.count).toBeGreaterThan(1)
+		expect(presses.count).toBeLessThanOrEqual(FOCUS_SEGMENT_LIMIT + 1)
+		expect(presses.count).toBe(11)
+	})
+
+	it('refuses a non-modal button trap after the repeated landing', async () => {
+		const container = buildFixture('<button>Stay</button><button>Finish</button>')
+		const button = requireValue(container.querySelector('button'))
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		button.addEventListener('keydown', (event) => {
+			if (event.key !== 'Tab') return
+			presses.handler(event)
+			event.preventDefault()
+			button.focus()
+		})
+		button.focus()
+		await expect(driveTraversal(() => resolveRendered('Finish'), 'Finish')).rejects.toThrow(
+			'Interactive target "Finish" is not reachable through forward Tab traversal: BUTTON:Stay',
+		)
+		expect(presses.count).toBe(2)
+	})
+
 	it('reaches the control a resolver returns, re-resolving on every step', async () => {
 		const container = buildFixture(
 			'<button type="button">First</button><button type="button">Second</button>',
@@ -2487,6 +2545,23 @@ describe('driveTraversal', () => {
 })
 
 describe('walkFocus', () => {
+	it('ends a segmented input trap within its consecutive landing budget', async () => {
+		const container = buildFixture('<input type="date">')
+		const input = requireValue(container.querySelector('input'))
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		input.addEventListener('keydown', (event) => {
+			if (event.key !== 'Tab') return
+			presses.handler(event)
+			event.preventDefault()
+			input.focus()
+		})
+		input.focus()
+		await expect(walkFocus()).resolves.toStrictEqual([input])
+		expect(presses.count).toBeGreaterThan(1)
+		expect(presses.count).toBeLessThanOrEqual(FOCUS_SEGMENT_LIMIT + 1)
+		expect(presses.count).toBe(10)
+	})
+
 	it('lists a segmented date input once and continues past it', async () => {
 		const container = buildFixture(
 			'<button>Start</button><input type="date" aria-label="Collection date"><button>Finish</button>',
@@ -2622,6 +2697,24 @@ describe('walkFocus', () => {
 })
 
 describe('collectTabStops', () => {
+	it('collects a trapped segmented input within its consecutive landing budget', async () => {
+		const container = buildFixture('<button>Start</button><section><input type="date"></section>')
+		const start = requireValue(container.querySelector('button'))
+		const region = requireValue(container.querySelector('section'))
+		const input = requireValue(container.querySelector('input'))
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		input.addEventListener('keydown', (event) => {
+			if (event.key !== 'Tab') return
+			presses.handler(event)
+			event.preventDefault()
+			input.focus()
+		})
+		await expect(collectTabStops(region, start)).resolves.toStrictEqual([input])
+		expect(presses.count).toBeGreaterThan(1)
+		expect(presses.count).toBeLessThanOrEqual(FOCUS_SEGMENT_LIMIT + 1)
+		expect(presses.count).toBe(10)
+	})
+
 	it('collects every stop in a region holding a segmented date input', async () => {
 		const container = buildFixture(
 			'<button>Start</button><section><button>Inside</button>' +

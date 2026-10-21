@@ -277,7 +277,7 @@ markup or from a tag and its classes; `createHarness` mounts a whole statechart 
 back the root it mounted; `buildContrast`, `buildEscapes`, and `buildCensus` each build
 a detached control the caller appends where it is reading; `clearStorage` takes nothing at all, and
 `removeDatabase` takes a database name. The predicates, the element readers, and the describers name
-a node the caller already has — `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`,
+a node the caller already has — `isRendered`, `isReachable`, `supportsSegmentedFocus`, `readHit`, `readText`, `readRole`,
 `readName`, `readStates`, `readProtocolPoint`, `readProtocolNode`, `readAccessibilityNode`,
 `readActiveElement`, `countElements`, `containsNode`, `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`,
 `readRows`, `readStyle`, `readToken`, `readPixels`, `readContrast`, `readColorContrast`,
@@ -344,8 +344,8 @@ A `Shape` cell holds the constant's declared type.
 | `CONTENT_ROLES`         | const | `readonly string[]`                | Names the roles whose accessible name is the text a reader can see inside them.                            |
 | `FIELD_ROLES`           | const | `Readonly<Record<string, string>>` | Names the role each `input` type carries.                                                                  |
 | `FOCUSABLE_SELECTOR`    | const | `string`                           | Names what sequential keyboard navigation can reach, before disabled and unrendered elements go.           |
-| `SEGMENTED_INPUT_TYPES` | const | `readonly string[]`                | Names the native input types whose editable fields share one focused element.                              |
-| `FOCUS_SEGMENT_LIMIT`   | const | `number`                           | Bounds the Tab presses budgeted per element for native input fields.                                       |
+| `SEGMENTED_INPUT_TYPES` | const | `readonly string[]`                | Names the native input types whose editable segments share one focused element.                            |
+| `FOCUS_SEGMENT_LIMIT`   | const | `number`                           | Bounds consecutive focus landings and the Tab presses budgeted per segmented input.                        |
 | `HEADER_ROLES`          | const | `Readonly<Record<string, string>>` | Names the role a `th` carries for the header axis its `scope` names.                                       |
 | `IMPLICIT_ROLES`        | const | `Readonly<Record<string, string>>` | Names the role each listed tag carries in the accessibility tree when it declares none of its own.         |
 | `MEDIA_STAGE`           | const | `string`                           | Names the tester root's attribute holding the media readings observed before the first stage.              |
@@ -355,7 +355,7 @@ A `Shape` cell holds the constant's declared type.
 
 | API                        | Kind     | Signature                                                                                                                       | Summary                                                                                                                                                                                                                                                                         |
 | -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supportsSegmentedFocus`   | function | `(element: Element) => boolean`                                                                                                 | Determines whether a native input exposes separately editable fields under one focused element.                                                                                                                                                                                 |
+| `supportsSegmentedFocus`   | function | `(element: Element) => boolean`                                                                                                 | Determines whether a native input exposes separately editable segments under one focused element.                                                                                                                                                                               |
 | `resolveAccessible`        | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`                                                 | Resolves one visible, focus-reachable interactive element by its exact accessible name. A wholly-off-viewport target is scrolled into view before reachability is measured.                                                                                                     |
 | `resolveAccessibleWithin`  | function | `(region: string, role: string, name: string) => HTMLElement`                                                                   | Resolves one human-reachable control by role and accessible-name text inside a named region.                                                                                                                                                                                    |
 | `resolveRendered`          | function | `(first: string, second?: string) => HTMLElement`                                                                               | Resolves one rendered, focus-reachable interactive element without requiring it to intersect the viewport yet.                                                                                                                                                                  |
@@ -543,14 +543,18 @@ the same name in another region is left alone.
 `traverseAccessible` charges a step only when focus actually lands on an element and re-resolves
 the target by name on every step, because a framework may replace the node between resolution and
 focus arrival. Consecutive landings on the same native `date`, `time`, `datetime-local`, `month`, or
-`week` input pass through its editable fields and count that control once. Every other revisit ends
-the traversal, including a consecutive repeat on a button in a focus trap. The
-`supportsSegmentedFocus` predicate reads the input type from `SEGMENTED_INPUT_TYPES` in the element's
-own realm. The hard cap is `FOCUS_SEGMENT_LIMIT` times the page's candidate count plus ten,
-including disabled controls and elements with `tabindex="-1"`. The limit budgets eight presses per
-candidate for a datetime-local input with date, time, fractional-second, and meridiem fields, so a
-page of segmented inputs can finish while a page whose focus never settles still fails.
-`driveTraversal` is that loop over any resolver, and `driveHold` is the one pointer drive every hold
+`week` input pass through its editable segments and count that control once, up to
+`FOCUS_SEGMENT_LIMIT` landings. A longer run or any other revisit ends the traversal, including a
+consecutive repeat on a button in a focus trap. Any different landing starts a separate run.
+The `supportsSegmentedFocus` predicate is true for an input whose `type` is in `SEGMENTED_INPUT_TYPES`,
+checked against the element's own document's `HTMLInputElement`, so a same-origin frame's input
+counts. It is false where the document has no window. The hard cap is `FOCUS_SEGMENT_LIMIT` times
+the page's candidate count plus ten, including disabled controls and elements with `tabindex="-1"`.
+The limit budgets ten presses per candidate. Chromium measured nine landings on a `datetime-local`
+input with `step="0.001"`: year, month, day, hour, minute, second, millisecond, and meridiem segments,
+plus the picker indicator. The budget leaves one spare press per input, so a page of segmented
+inputs can finish while a page whose focus never settles still fails.
+`driveTraversal` implements this forward Tab traversal for any resolver. `driveHold` is the one pointer drive every hold
 verb shares, releasing the pointer before refusing when the frame wait or the pressed-state read
 fails, as well as when the press misses; each verb supplies its resolver and the name its refusals
 voice.
@@ -1612,7 +1616,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     into a description of the markup. `build` creates a node, `mount` attaches one, `render` does
     both, `clearStorage` takes nothing at all, and `removeDatabase` takes a database name. The
     predicates, the element readers, and the describers do take a node —
-    `isRendered`, `isReachable`, `readHit`, `readText`, `readRole`, `readName`, `readStates`,
+    `isRendered`, `isReachable`, `supportsSegmentedFocus`, `readHit`, `readText`, `readRole`, `readName`, `readStates`,
     `readCensus`, `describeTree`, `describeFocus`, `extractOrphans`, `readRows`, `readStyle`,
     `readToken`, `readPixels`, `readContrast`, `readColorContrast`, `readLayers`, `readBackdrop`,
     and `readRing` — and each is a reader of a node the caller already has rather than a verb that
@@ -1951,8 +1955,9 @@ the helper rather than to the host, and each names what to reach for instead.
   cannot name a control there. A hidden or disabled stop is returned like any other. A consumer that
   refuses one throws from the predicate it passes. The walk ends where focus returns to the body or
   revisits a stop, except that consecutive landings on the same native segmented input pass through
-  its fields and contribute one stop. A consecutive repeat on every other element still ends the
-  walk. The press cap is `FOCUS_SEGMENT_LIMIT` times the count `countElements` reads, which includes
+  its segments and contribute one stop, up to `FOCUS_SEGMENT_LIMIT` landings including the initial
+  focused element. A longer run or a consecutive repeat on any other element ends the walk.
+  Any different landing starts a separate run. The press cap is `FOCUS_SEGMENT_LIMIT` times the count `countElements` reads, which includes
   open shadow roots and same-origin frames; exceeding it throws. A control inside a same-origin frame belongs to the
   frame's window, so it fails this window's `instanceof HTMLElement`. `collectTabStops` is the same
   walk bounded to a region by `containsNode`, which places a control inside an open shadow root or a
@@ -4031,10 +4036,14 @@ Each entry names the contracts its file proves. The test names carry the cases.
   Each acting verb takes its happy path and every voice it owns, including both
   region-scoped refusals and both native-disclosure ones; `clickAccessibleWithin` also takes a
   glyph-captioned control inside a region a glyph-carrying heading labels, which is the loose match
-  proving unchanged. `traverseAccessible` takes a Tab-reachable
-  target; as the cap control, a lone target whose own focus handler blurs it, so focus never lands
+  proving unchanged. `traverseAccessible` takes a Tab-reachable target, a crossing for each type in
+  `SEGMENTED_INPUT_TYPES`, and a page of fractional-second `datetime-local` inputs that traversal
+  and census both cross with spare presses for another landing per input. As the cap control, it
+  takes a lone target whose own focus handler blurs it, so focus never lands
   and the cap fails with an empty trail; and, as the cycle control, the same self-blurring target
   behind a reachable decoy, so the traversal completes one cycle and reports the decoy in its trail.
+  `driveTraversal` takes a non-modal button trap with a resolvable target and refuses after the
+  repeated landing, plus a segmented input trap that refuses within its consecutive landing budget.
   The page readers take their own inputs: `readPerception` takes one named region including its
   visually hidden text, a region a glyph-carrying heading labels through `aria-labelledby`, a painted
   region an `aria-hidden` attribute withholds, and its not-visible and ambiguous refusals, `readPage`
@@ -4051,8 +4060,16 @@ Each entry names the contracts its file proves. The test names carry the cases.
   frame holding focus with nothing inside, and a frame from another origin refused;
   `countElements` takes the shadow and frame content a plain query misses; `containsNode` takes a
   region's own content, a shadow root's and a frame's, and a detached node left outside;
-  `stepFocus` takes one press per landing, none past the consumer's last read, a limit of zero, and
-  a landing on nothing. `walkFocus` and `collectTabStops` take the buttons of an open shadow root
+  `stepFocus` takes one press per landing, none past the consumer's last read, a limit of zero,
+  a landing on nothing, repeated segment landings for each type in `SEGMENTED_INPUT_TYPES`, and
+  the measured nine landings of a fractional-second `datetime-local` input with a spare press in
+  its budget. `supportsSegmentedFocus` takes the frozen type list, every listed type beside text
+  and number inputs, a button and a non-input carrying `type="date"`, an input from a same-origin
+  frame, and a document with no window. `walkFocus` takes a date input counted once before the
+  following control, a single-button modal trap that returns after one press, and a lone segmented
+  input trap that returns within its consecutive landing budget. `collectTabStops` takes a region
+  holding a date input with every stop listed and a trapped date input returned within that budget.
+  `walkFocus` and `collectTabStops` take the buttons of an open shadow root
   and of a same-origin frame between two light controls, a start element inside a shadow root, a
   start element immediately before the region that reaches the region's first stop, and
   focus in a foreign frame refused; `readProtocolPoint` takes a padded frame beside a bordered one,
