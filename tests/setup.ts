@@ -138,7 +138,7 @@ export type Format = 'module' | 'commonjs'
  * consumer: the compiler options its scratch project sets, and the conditions TypeScript applies
  * for that resolution and importing format.
  */
-export interface Resolution {
+export interface DistributionResolution {
 	readonly label: string
 	readonly resolution: string
 	readonly module: string
@@ -178,7 +178,7 @@ export const DECLARATION_CONDITIONS = Object.freeze({
  * consumer. The option values are the spellings the project file takes, so nothing here needs the
  * compiler's own API to name them.
  */
-export const RESOLUTIONS: readonly Resolution[] = Object.freeze([
+export const RESOLUTIONS: readonly DistributionResolution[] = Object.freeze([
 	Object.freeze({
 		label: 'node16',
 		resolution: 'node16',

@@ -29,7 +29,7 @@ import { chromium } from 'playwright'
 import { build } from 'vite'
 import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
 import { afterAll, describe, expect, it } from 'vitest'
-import type { Format, Resolution } from './setup.js'
+import type { DistributionResolution, Format } from './setup.js'
 import {
 	DECLARATION_CONDITIONS,
 	DECLARATION_EXTENSIONS,
@@ -383,7 +383,7 @@ function selectEntries(entries: readonly Entry[], conditions: readonly string[])
 // The compile drivers whose conditions reach one entry under one importing format.
 // A driver that resolves no target for that entry compiles nothing, so a consumer
 // written under it would report a resolution failure this package never made.
-function selectDrivers(entry: Entry, format: Format): readonly Resolution[] {
+function selectDrivers(entry: Entry, format: Format): readonly DistributionResolution[] {
 	return RESOLUTIONS.filter(
 		(driver) => selectEntries([entry], driver.conditions[format]).length > 0,
 	)
@@ -410,7 +410,7 @@ interface Surface {
 	readonly entry: Entry
 	readonly extension: string
 	readonly published: readonly string[]
-	readonly driver: Resolution
+	readonly driver: DistributionResolution
 }
 
 // A scratch project over named consumer modules, written beside them so their own
@@ -419,7 +419,7 @@ interface Surface {
 function writeProject(
 	stage: Stage,
 	name: string,
-	driver: Resolution,
+	driver: DistributionResolution,
 	files: readonly string[],
 ): string {
 	const path = join(stage.consumer, `tsconfig.${name}.json`)
