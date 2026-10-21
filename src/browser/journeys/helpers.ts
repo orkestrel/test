@@ -23,9 +23,11 @@ import {
 	CONTENT_ROLES,
 	FIELD_ROLES,
 	FOCUSABLE_SELECTOR,
+	FOCUS_SEGMENT_LIMIT,
 	HEADER_ROLES,
 	IMPLICIT_ROLES,
 	POINTER_HOLD,
+	SEGMENTED_INPUT_TYPES,
 } from './constants.js'
 
 /**
@@ -1234,7 +1236,8 @@ export async function pressKeys(keys: string): Promise<void> {
  * @throws When one complete traversal cannot reach the target.
  *
  * @remarks
- * The loop is {@link driveTraversal} over {@link resolveRendered}.
+ * The loop is {@link driveTraversal} over {@link resolveRendered}. Consecutive landings inside a
+ * native segmented input continue through its fields; every other revisit ends the traversal.
  *
  * @example
  * ```ts
@@ -1390,7 +1393,9 @@ export function containsNode(root: Node, node: Node): boolean {
  * through the provider, reads the landing with {@link readActiveElement}, and leaves every decision
  * to the caller: what counts as an end, a revisit, or a stop is the consumer's, because the two
  * consumers disagree. The press is the next one only after the consumer asks for the next landing, so
- * a consumer that stops reading stops pressing.
+ * a consumer that stops reading stops pressing. A native segmented input can yield the same element
+ * for successive field landings. This generator preserves each landing; its consumers count that
+ * control once while continuing through its fields.
  *
  * @example
  * ```ts
@@ -1409,6 +1414,26 @@ export async function* stepFocus(
 }
 
 /**
+ * Determines whether a native input exposes separately editable fields under one focused element.
+ *
+ * @param element - The element whose native input type is read in its own document's realm.
+ * @returns True if the element is an input with a type in {@link SEGMENTED_INPUT_TYPES}; false otherwise.
+ *
+ * @example
+ * ```ts
+ * supportsSegmentedFocus(document.createElement('button')) // false
+ * ```
+ */
+export function supportsSegmentedFocus(element: Element): boolean {
+	const realm = element.ownerDocument.defaultView
+	return (
+		realm !== null &&
+		element instanceof realm.HTMLInputElement &&
+		SEGMENTED_INPUT_TYPES.includes(element.type)
+	)
+}
+
+/**
  * Reaches the control a resolver returns, only through natural forward Tab traversal from the
  * current focus.
  *
@@ -1420,8 +1445,10 @@ export async function* stepFocus(
  *
  * @remarks
  * This is the one loop every traversal verb shares, over {@link stepFocus}. A step counts only when
- * focus lands on an element, the traversal is over when focus revisits one, and the cap is counted
- * off {@link FOCUSABLE_SELECTOR}.
+ * focus lands on an element. Consecutive landings on the same native segmented input continue
+ * through its fields and count that control once; every other revisit ends the traversal.
+ * The press cap is {@link FOCUS_SEGMENT_LIMIT} times the {@link FOCUSABLE_SELECTOR} candidate count
+ * plus ten, so a page of segmented inputs has a budget for their fields.
  *
  * @example
  * ```ts
@@ -1433,17 +1460,18 @@ export async function driveTraversal(
 	name: string,
 ): Promise<HTMLElement> {
 	resolve()
-	// Two facts shape the loop. A Tab pressed before the page has real input focus moves nothing,
-	// so a step counts only when focus actually lands somewhere; the traversal is over when focus
-	// revisits an element, because that is one full cycle of the tab order. And the target is
+	// A Tab pressed before the page has real input focus moves nothing, so a step counts only when
+	// focus actually lands somewhere. The traversal is over when focus revisits an element, which is
+	// one full cycle of the tab order, except a segmented input's next field. The target is
 	// re-resolved on every step, because a framework may replace the node between resolution and
 	// focus arrival: the person's target is the role and name, never one node.
-	// The bound is counted off `FOCUSABLE_SELECTOR`, the one population this environment reads
-	// sequential navigation from, so a tag the selector gains is a tag this traversal budgets for.
-	const cap = document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * 3 + 10
+	const cap =
+		document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * FOCUS_SEGMENT_LIMIT + 10
 	const visited = new Set<Element>()
-	const trail: string[] = []
+	const landings: Array<HTMLElement | undefined> = []
 	for await (const focused of stepFocus(cap)) {
+		const previous = landings.at(-1)
+		landings.push(focused)
 		if (focused === undefined) continue
 		try {
 			const current = resolve()
@@ -1451,10 +1479,14 @@ export async function driveTraversal(
 		} catch {
 			continue
 		}
+		if (focused === previous && supportsSegmentedFocus(focused)) continue
 		if (visited.has(focused)) break
 		visited.add(focused)
-		trail.push(`${focused.tagName}:${focused.innerText.slice(0, 20)}`)
 	}
+	const trail = [...new Set(landings)]
+		.filter((focused) => focused !== undefined)
+		.filter((focused) => visited.has(focused))
+		.map((focused) => `${focused.tagName}:${focused.innerText.slice(0, 20)}`)
 	throw new Error(
 		`Interactive target "${name}" is not reachable through forward Tab traversal: ${trail.join(' > ')}`,
 	)
@@ -1466,8 +1498,8 @@ export async function driveTraversal(
  *
  * @param stop - Accepts the destination. Omit it to census the remaining document.
  * @returns Every element focus reached, in order and each once, the accepted stop last.
- * @throws Thrown when the walk outlasts every element the page holds, a key press rejects, or focus
- * lands in a frame from another origin.
+ * @throws Thrown when the walk exceeds its press cap, a key press rejects, or focus lands in a
+ * frame from another origin.
  *
  * @remarks
  * The walk records the focused element and then presses Tab through {@link stepFocus}, so it reaches
@@ -1476,8 +1508,12 @@ export async function driveTraversal(
  * innermost focused element {@link readActiveElement} reads, so a control inside an open shadow root
  * or a same-origin frame is a stop of its own, and its host or frame element is not. The walk ends
  * with an empty list when only the body holds focus, and where focus revisits a stop or returns to
- * the body. It applies no rule about which stop counts: the predicate sees each one and decides, so
- * a consumer that refuses a hidden stop throws from its own predicate.
+ * the body. Consecutive landings on the same native segmented input continue through its fields
+ * and count that control once. Every other revisit, including a repeated button in a focus trap,
+ * ends the walk. The press cap is {@link FOCUS_SEGMENT_LIMIT} times {@link countElements}, including
+ * open shadow roots and same-origin frames. It applies no rule about which stop counts: the
+ * predicate sees each one and decides, so a consumer that refuses a hidden stop throws from its own
+ * predicate.
  *
  * A closed shadow root cannot be entered, so its host stands for everything inside it, and a frame
  * from another origin is refused because its controls cannot be named.
@@ -1494,8 +1530,10 @@ export async function walkFocus(
 	if (first === undefined) return []
 	const reached: HTMLElement[] = [first]
 	if (stop?.(first) === true) return reached
-	for await (const focused of stepFocus(countElements())) {
-		if (focused === undefined || reached.includes(focused)) return reached
+	for await (const focused of stepFocus(countElements() * FOCUS_SEGMENT_LIMIT)) {
+		if (focused === undefined) return reached
+		if (focused === reached.at(-1) && supportsSegmentedFocus(focused)) continue
+		if (reached.includes(focused)) return reached
 		reached.push(focused)
 		if (stop?.(focused) === true) return reached
 	}
@@ -1518,7 +1556,8 @@ export async function walkFocus(
  * {@link containsNode}, so a control inside an open shadow root or a same-origin frame that `root`
  * holds is in the region, and `start` may sit inside one. A `start` that sits outside the region,
  * as the control immediately before it, is the walk's origin and never its end, so the first Tab into the
- * region reaches its first stop.
+ * region reaches its first stop. A native segmented input contributes one stop while consecutive
+ * landings pass through its fields; every other revisit ends the walk.
  *
  * @example
  * ```ts

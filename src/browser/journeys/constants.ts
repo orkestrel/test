@@ -82,6 +82,24 @@ export const FIELD_ROLES: Readonly<Record<string, string>> = Object.freeze({
 export const FOCUSABLE_SELECTOR =
 	'a[href], area[href], button, input, select, summary, textarea, [tabindex]'
 
+/** Names the native input types whose editable fields share one focused element. */
+export const SEGMENTED_INPUT_TYPES: readonly string[] = Object.freeze([
+	'date',
+	'time',
+	'datetime-local',
+	'month',
+	'week',
+])
+
+/**
+ * Bounds the Tab presses budgeted per element for native input fields.
+ *
+ * @remarks
+ * A datetime-local input can expose year, month, day, hour, minute, second, millisecond, and
+ * meridiem fields. Each field can consume a press while the same input holds focus.
+ */
+export const FOCUS_SEGMENT_LIMIT = 8
+
 /**
  * Names the role a `th` carries for the header axis its `scope` names.
  *

@@ -335,24 +335,27 @@ a union's arms escaped as `\|`.
 
 A `Shape` cell holds the constant's declared type.
 
-| API                  | Kind  | Shape                              | Summary                                                                                                    |
-| -------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `ACCESSIBLE_ROLES`   | const | `readonly string[]`                | Names the interactive ARIA roles a bare accessible name is searched across.                                |
-| `CANVAS_COLOR`       | const | `Color`                            | Names the color a browser paints an unstyled document with: opaque white.                                  |
-| `CAPTURE_PANE`       | const | `string`                           | Names the attribute marking the runner's tester pane, and the rule that sizes it, while a frame is staged. |
-| `CAPTURE_STAGINGS`   | const | `number`                           | Bounds the restagings one capture takes before it refuses a document whose height never settles.           |
-| `CONTENT_ROLES`      | const | `readonly string[]`                | Names the roles whose accessible name is the text a reader can see inside them.                            |
-| `FIELD_ROLES`        | const | `Readonly<Record<string, string>>` | Names the role each `input` type carries.                                                                  |
-| `FOCUSABLE_SELECTOR` | const | `string`                           | Names what sequential keyboard navigation can reach, before disabled and unrendered elements go.           |
-| `HEADER_ROLES`       | const | `Readonly<Record<string, string>>` | Names the role a `th` carries for the header axis its `scope` names.                                       |
-| `IMPLICIT_ROLES`     | const | `Readonly<Record<string, string>>` | Names the role each listed tag carries in the accessibility tree when it declares none of its own.         |
-| `MEDIA_STAGE`        | const | `string`                           | Names the tester root's attribute holding the media readings observed before the first stage.              |
-| `POINTER_HOLD`       | const | `string`                           | Names the tester root's attribute holding the pressed pointer's page coordinates.                          |
+| API                     | Kind  | Shape                              | Summary                                                                                                    |
+| ----------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `ACCESSIBLE_ROLES`      | const | `readonly string[]`                | Names the interactive ARIA roles a bare accessible name is searched across.                                |
+| `CANVAS_COLOR`          | const | `Color`                            | Names the color a browser paints an unstyled document with: opaque white.                                  |
+| `CAPTURE_PANE`          | const | `string`                           | Names the attribute marking the runner's tester pane, and the rule that sizes it, while a frame is staged. |
+| `CAPTURE_STAGINGS`      | const | `number`                           | Bounds the restagings one capture takes before it refuses a document whose height never settles.           |
+| `CONTENT_ROLES`         | const | `readonly string[]`                | Names the roles whose accessible name is the text a reader can see inside them.                            |
+| `FIELD_ROLES`           | const | `Readonly<Record<string, string>>` | Names the role each `input` type carries.                                                                  |
+| `FOCUSABLE_SELECTOR`    | const | `string`                           | Names what sequential keyboard navigation can reach, before disabled and unrendered elements go.           |
+| `SEGMENTED_INPUT_TYPES` | const | `readonly string[]`                | Names the native input types whose editable fields share one focused element.                              |
+| `FOCUS_SEGMENT_LIMIT`   | const | `number`                           | Bounds the Tab presses budgeted per element for native input fields.                                       |
+| `HEADER_ROLES`          | const | `Readonly<Record<string, string>>` | Names the role a `th` carries for the header axis its `scope` names.                                       |
+| `IMPLICIT_ROLES`        | const | `Readonly<Record<string, string>>` | Names the role each listed tag carries in the accessibility tree when it declares none of its own.         |
+| `MEDIA_STAGE`           | const | `string`                           | Names the tester root's attribute holding the media readings observed before the first stage.              |
+| `POINTER_HOLD`          | const | `string`                           | Names the tester root's attribute holding the pressed pointer's page coordinates.                          |
 
 #### Helpers
 
 | API                        | Kind     | Signature                                                                                                                       | Summary                                                                                                                                                                                                                                                                         |
 | -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supportsSegmentedFocus`   | function | `(element: Element) => boolean`                                                                                                 | Determines whether a native input exposes separately editable fields under one focused element.                                                                                                                                                                                 |
 | `resolveAccessible`        | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`                                                 | Resolves one visible, focus-reachable interactive element by its exact accessible name. A wholly-off-viewport target is scrolled into view before reachability is measured.                                                                                                     |
 | `resolveAccessibleWithin`  | function | `(region: string, role: string, name: string) => HTMLElement`                                                                   | Resolves one human-reachable control by role and accessible-name text inside a named region.                                                                                                                                                                                    |
 | `resolveRendered`          | function | `(first: string, second?: string) => HTMLElement`                                                                               | Resolves one rendered, focus-reachable interactive element without requiring it to intersect the viewport yet.                                                                                                                                                                  |
@@ -537,11 +540,16 @@ resolution on its own, and `holdAccessibleWithin` and `traverseAccessibleWithin`
 resolves the way `holdAccessible` and `traverseAccessible` drive a document-wide one, so a twin of
 the same name in another region is left alone.
 
-`traverseAccessible` charges a step only when focus actually lands on an element, ends when focus
-revisits one — that is a complete cycle of the tab order — and re-resolves the target by name on
-every step, because a framework may replace the node between resolution and focus arrival. Its hard
-cap is three times the page's candidate count plus ten, including disabled controls and elements
-with `tabindex="-1"`, so a page whose focus never settles fails instead of hanging.
+`traverseAccessible` charges a step only when focus actually lands on an element and re-resolves
+the target by name on every step, because a framework may replace the node between resolution and
+focus arrival. Consecutive landings on the same native `date`, `time`, `datetime-local`, `month`, or
+`week` input pass through its editable fields and count that control once. Every other revisit ends
+the traversal, including a consecutive repeat on a button in a focus trap. The
+`supportsSegmentedFocus` predicate reads the input type from `SEGMENTED_INPUT_TYPES` in the element's
+own realm. The hard cap is `FOCUS_SEGMENT_LIMIT` times the page's candidate count plus ten,
+including disabled controls and elements with `tabindex="-1"`. The limit budgets eight presses per
+candidate for a datetime-local input with date, time, fractional-second, and meridiem fields, so a
+page of segmented inputs can finish while a page whose focus never settles still fails.
 `driveTraversal` is that loop over any resolver, and `driveHold` is the one pointer drive every hold
 verb shares, releasing the pointer before refusing when the frame wait or the pressed-state read
 fails, as well as when the press misses; each verb supplies its resolver and the name its refusals
@@ -1942,8 +1950,10 @@ the helper rather than to the host, and each names what to reach for instead.
   host stands for what it holds, and focus in a frame from another origin throws, because the page
   cannot name a control there. A hidden or disabled stop is returned like any other. A consumer that
   refuses one throws from the predicate it passes. The walk ends where focus returns to the body or
-  revisits a stop, and throws only when it outlasts the count `countElements` reads, which includes
-  open shadow roots and same-origin frames. A control inside a same-origin frame belongs to the
+  revisits a stop, except that consecutive landings on the same native segmented input pass through
+  its fields and contribute one stop. A consecutive repeat on every other element still ends the
+  walk. The press cap is `FOCUS_SEGMENT_LIMIT` times the count `countElements` reads, which includes
+  open shadow roots and same-origin frames; exceeding it throws. A control inside a same-origin frame belongs to the
   frame's window, so it fails this window's `instanceof HTMLElement`. `collectTabStops` is the same
   walk bounded to a region by `containsNode`, which places a control inside an open shadow root or a
   same-origin frame in the region that holds its host or frame element. The start element is the

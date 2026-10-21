@@ -60,7 +60,9 @@ import {
 	resolveRendered,
 	sendProtocol,
 	settleCapture,
+	SEGMENTED_INPUT_TYPES,
 	stepFocus,
+	supportsSegmentedFocus,
 	traverseAccessible,
 	traverseAccessibleWithin,
 	typeAccessible,
@@ -2075,6 +2077,47 @@ describe('readAccessibilityNode', () => {
 })
 
 describe('traverseAccessible', () => {
+	it.each(SEGMENTED_INPUT_TYPES)('crosses a segmented %s input', async (type) => {
+		const container = buildFixture(
+			`<button>Start</button><input type="${type}" aria-label="Schedule"><button>Finish</button>`,
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(await traverseAccessible('Finish')).toBe(container.querySelectorAll('button')[1])
+	})
+
+	it('budgets traversal and census presses for a page of segmented inputs', async () => {
+		const container = buildFixture(
+			'<button>Start</button>' +
+				'<input type="datetime-local" step="0.001" aria-label="Schedule">'.repeat(24) +
+				'<button>Finish</button>',
+		)
+		const start = requireValue(container.querySelector('button'))
+		const finish = requireValue(container.querySelectorAll('button')[1])
+		start.focus()
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(256)) {
+			landings.push(focused)
+			if (focused === finish) break
+		}
+		expect(landings.at(-1)).toBe(finish)
+		expect(landings.length).toBeGreaterThan(
+			container.querySelectorAll('button, input').length * 3 + 10,
+		)
+		expect(landings.length).toBeGreaterThan(countElements())
+		start.focus()
+		expect(await traverseAccessible('Finish')).toBe(finish)
+		start.focus()
+		expect(await walkFocus()).toStrictEqual([start, ...container.querySelectorAll('input'), finish])
+	})
+
+	it('crosses a segmented date input to the following control', async () => {
+		const container = buildFixture(
+			'<button>Start</button><input type="date" aria-label="Collection date"><button>Finish</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(await traverseAccessible('Finish')).toBe(container.querySelectorAll('button')[1])
+	})
+
 	it('reaches a named control through forward Tab alone', async () => {
 		const container = buildFixture(
 			'<button type="button">First</button><button type="button">Evaluate</button>',
@@ -2331,6 +2374,24 @@ describe('containsNode', () => {
 })
 
 describe('stepFocus', () => {
+	it('reports repeated native field landings for every segmented input type', async () => {
+		const container = buildFixture(
+			'<button>Start</button><input type="date"><input type="time">' +
+				'<input type="datetime-local"><input type="month"><input type="week"><button>Finish</button>',
+		)
+		const finish = requireValue(container.querySelectorAll('button')[1])
+		requireValue(container.querySelector('button')).focus()
+		const landings: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(40)) {
+			landings.push(focused)
+			if (focused === finish) break
+		}
+		for (const input of container.querySelectorAll('input')) {
+			expect(landings.filter((focused) => focused === input).length).toBeGreaterThan(1)
+		}
+		expect(landings.at(-1)).toBe(finish)
+	})
+
 	it('presses Tab once per landing and yields the element focus reached, then nothing past the last', async () => {
 		const container = buildFixture(
 			'<button type="button">One</button><button type="button">Two</button>',
@@ -2376,6 +2437,34 @@ describe('stepFocus', () => {
 	})
 })
 
+describe('supportsSegmentedFocus', () => {
+	it('recognizes only the native segmented input types', () => {
+		expect(SEGMENTED_INPUT_TYPES).toStrictEqual(['date', 'time', 'datetime-local', 'month', 'week'])
+		expect(Object.isFrozen(SEGMENTED_INPUT_TYPES)).toBe(true)
+		const container = buildFixture(
+			'<input type="date"><input type="time"><input type="datetime-local">' +
+				'<input type="month"><input type="week"><input type="text"><input type="number">' +
+				'<button type="button">Date</button><div type="date" tabindex="0"></div>',
+		)
+		expect([...container.children].map((element) => supportsSegmentedFocus(element))).toStrictEqual(
+			[true, true, true, true, true, false, false, false, false],
+		)
+	})
+
+	it('reads an input in its own frame realm and refuses a document without a window', () => {
+		const frame = requireValue(
+			buildFixture('<iframe title="Schedule"></iframe>').querySelector('iframe'),
+		)
+		const input = requireValue(frame.contentDocument).createElement('input')
+		input.type = 'date'
+		expect(input instanceof HTMLInputElement).toBe(false)
+		expect(supportsSegmentedFocus(input)).toBe(true)
+		const detached = document.implementation.createHTMLDocument().createElement('input')
+		detached.type = 'date'
+		expect(supportsSegmentedFocus(detached)).toBe(false)
+	})
+})
+
 describe('driveTraversal', () => {
 	it('reaches the control a resolver returns, re-resolving on every step', async () => {
 		const container = buildFixture(
@@ -2398,6 +2487,39 @@ describe('driveTraversal', () => {
 })
 
 describe('walkFocus', () => {
+	it('lists a segmented date input once and continues past it', async () => {
+		const container = buildFixture(
+			'<button>Start</button><input type="date" aria-label="Collection date"><button>Finish</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect((await walkFocus()).map((stop) => readName(stop))).toStrictEqual([
+			'Start',
+			'Collection date',
+			'Finish',
+		])
+	})
+
+	it('ends a single-element focus trap at the repeated button', async () => {
+		const container = buildFixture('<dialog><button>Stay</button></dialog>')
+		const dialog = requireValue(container.querySelector('dialog'))
+		const button = requireValue(container.querySelector('button'))
+		const presses = createRecorder<[event: KeyboardEvent]>()
+		dialog.addEventListener('keydown', (event) => {
+			if (event.key !== 'Tab') return
+			presses.handler(event)
+			event.preventDefault()
+			button.focus()
+		})
+		dialog.showModal()
+		try {
+			button.focus()
+			expect(await walkFocus()).toStrictEqual([button])
+			expect(presses.count).toBe(1)
+		} finally {
+			dialog.close()
+		}
+	})
+
 	it('lists every node a forward Tab reaches, once and in order, from the focused control', async () => {
 		const container = buildFixture(
 			'<button type="button">One</button><a href="#two">Two</a><input type="text" aria-label="Three">',
@@ -2500,6 +2622,20 @@ describe('walkFocus', () => {
 })
 
 describe('collectTabStops', () => {
+	it('collects every stop in a region holding a segmented date input', async () => {
+		const container = buildFixture(
+			'<button>Start</button><section><button>Inside</button>' +
+				'<input type="date" aria-label="Collection date"><button>Finish</button></section><button>After</button>',
+		)
+		const region = requireValue(container.querySelector('section'))
+		const start = requireValue(container.querySelector('button'))
+		expect((await collectTabStops(region, start)).map((stop) => readName(stop))).toStrictEqual([
+			'Inside',
+			'Collection date',
+			'Finish',
+		])
+	})
+
 	const REGION = [
 		'<section data-region>',
 		'<h2 data-start tabindex="-1">Heading</h2>',
