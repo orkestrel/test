@@ -612,7 +612,12 @@ export async function chooseAccessible(
 	files: readonly FixtureFile[],
 	options?: ChoiceOptions,
 ): Promise<void> {
-	if (options?.keyboard) await driveTraversal(() => resolveFileInput(name), name)
+	if (options?.keyboard)
+		await driveTraversal(
+			() => resolveFileInput(name),
+			name,
+			(focused) => focused instanceof HTMLInputElement && focused.type === 'file',
+		)
 	const target = resolveFileInput(name)
 	const command = readProperty<unknown>(commands, 'chooseFiles')
 	if (typeof command !== 'function')
@@ -1236,7 +1241,8 @@ export async function pressKeys(keys: string): Promise<void> {
  * @throws When one complete traversal cannot reach the target.
  *
  * @remarks
- * The loop is {@link driveTraversal} over {@link resolveRendered}. Consecutive landings inside a
+ * The loop is {@link driveTraversal} over {@link resolveRendered}, with a conservative name check
+ * before each arrival resolution. Consecutive landings inside a
  * native segmented input continue through its segments up to {@link FOCUS_SEGMENT_LIMIT} landings.
  * A longer run or any other revisit ends the traversal.
  *
@@ -1261,7 +1267,8 @@ export async function traverseAccessible(name: string): Promise<HTMLElement> {
  *
  * @remarks
  * The resolution is {@link resolveAccessibleWithin} and the loop is {@link driveTraversal}, so a
- * twin of the same name earlier in the tab order is passed over rather than reached.
+ * twin of the same name earlier in the tab order is passed over rather than reached. Candidates
+ * retain the resolver's loose name match and must belong to a freshly resolved named region.
  *
  * @example
  * ```ts
@@ -1273,7 +1280,16 @@ export async function traverseAccessibleWithin(
 	role: string,
 	name: string,
 ): Promise<HTMLElement> {
-	return driveTraversal(() => resolveAccessibleWithin(region, role, name), name)
+	return driveTraversal(
+		() => resolveAccessibleWithin(region, role, name),
+		name,
+		(focused) =>
+			matchesTraversalName(focused, name, false) &&
+			page
+				.getByRole('region', { name: region, exact: true })
+				.elements()
+				.some((container) => containsNode(container, focused)),
+	)
 }
 
 /**
@@ -1436,12 +1452,73 @@ export function supportsSegmentedFocus(element: Element): boolean {
 }
 
 /**
+ * Checks whether a landing can carry a requested accessible name without resolving the document.
+ *
+ * @param element - The element focus landed on.
+ * @param name - The name the resolver matches.
+ * @param exact - If `true`, compares exact names; if `false`, compares case-insensitive substrings.
+ * Default: `true`.
+ * @returns True if the name matches or its computation requires the resolver; false otherwise.
+ *
+ * @remarks
+ * This is a conservative candidate check, not an accessible-name implementation. It compares a
+ * nonempty `aria-label` without `aria-labelledby`, or the text of a plain native button or link.
+ * Referenced labels, associated labels, descendants, shadow content, owned content, explicit roles,
+ * generated content, and other naming rules fall through to the resolver. Empty requested names
+ * also fall through because a role can prohibit naming. Whitespace, zero-width spaces, and soft
+ * hyphens are normalized as in the provider's role query. Never use this check to accept a target.
+ *
+ * @example
+ * ```ts
+ * matchesTraversalName(document.createElement('input'), 'Attachments') // true
+ * ```
+ */
+export function matchesTraversalName(element: HTMLElement, name: string, exact = true): boolean {
+	const wanted = name
+		.replaceAll(/[\u200b\u00ad]/g, '')
+		.trim()
+		.replaceAll(/\s+/g, ' ')
+	if (wanted.length === 0 || element.hasAttribute('aria-labelledby')) return true
+	const label = element.getAttribute('aria-label') ?? ''
+	const realm = element.ownerDocument.defaultView
+	if (label.trim().length === 0) {
+		if (
+			realm === null ||
+			!(element instanceof realm.HTMLButtonElement || element instanceof realm.HTMLAnchorElement) ||
+			element.hasAttribute('role') ||
+			element.hasAttribute('aria-owns') ||
+			element.childElementCount > 0 ||
+			element.shadowRoot !== null ||
+			(element instanceof realm.HTMLButtonElement && (element.labels?.length ?? 0) > 0) ||
+			(element instanceof realm.HTMLAnchorElement && !element.hasAttribute('href'))
+		)
+			return true
+		if (
+			![
+				realm.getComputedStyle(element, '::before'),
+				realm.getComputedStyle(element, '::after'),
+			].every((style) => style.content === 'none' || style.content === 'normal')
+		)
+			return true
+		if ((element.textContent ?? '').trim().length === 0) return true
+	}
+	const actual = (label.trim().length > 0 ? label : (element.textContent ?? ''))
+		.replaceAll(/[\u200b\u00ad]/g, '')
+		.trim()
+		.replaceAll(/\s+/g, ' ')
+	return exact ? actual === wanted : actual.toUpperCase().includes(wanted.toUpperCase())
+}
+
+/**
  * Reaches the control a resolver returns, only through natural forward Tab traversal from the
  * current focus.
  *
- * @param resolve - The resolver that returns the target, called before the first step and again on
- * every step, because a framework may replace the node between resolution and focus arrival.
+ * @param resolve - The resolver called before traversal and at candidate arrivals, without retaining
+ * its result between steps.
  * @param name - The target's name, as the refusal voices it.
+ * @param candidate - The landing check; it must admit every element the resolver could return.
+ * Default: the conservative exact-name check from {@link matchesTraversalName}. Supply a check
+ * matching the resolver's semantics when it uses a label, region, or loose name.
  * @returns The target after the browser moves focus to it.
  * @throws When the resolver refuses, or one complete traversal cannot reach the target.
  *
@@ -1461,13 +1538,13 @@ export function supportsSegmentedFocus(element: Element): boolean {
 export async function driveTraversal(
 	resolve: () => HTMLElement,
 	name: string,
+	candidate?: (element: HTMLElement) => boolean,
 ): Promise<HTMLElement> {
 	resolve()
 	// A Tab pressed before the page has real input focus moves nothing, so a step counts only when
 	// focus actually lands somewhere. The traversal is over when focus revisits an element, which is
 	// one full cycle of the tab order, except a segmented input's next segment within its budget.
-	// The target is re-resolved on every step, because a framework may replace the node between
-	// resolution and focus arrival: the person's target is the role and name, never one node.
+	// Resolve at arrival because a framework can replace the target between Tab presses.
 	const cap =
 		document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * FOCUS_SEGMENT_LIMIT + 10
 	const visited = new Set<Element>()
@@ -1477,8 +1554,10 @@ export async function driveTraversal(
 		landings.push(focused)
 		if (focused === undefined) continue
 		try {
-			const current = resolve()
-			if (focused === current) return current
+			if (candidate === undefined ? matchesTraversalName(focused, name) : candidate(focused)) {
+				const current = resolve()
+				if (focused === current) return current
+			}
 		} catch {
 			continue
 		}

@@ -385,7 +385,8 @@ A `Shape` cell holds the constant's declared type.
 | `countElements`            | function | `(root?: Document \| ShadowRoot) => number`                                                                                     | Counts the elements a tree holds, descending into open shadow roots and same-origin frames.                                                                                                                                                                                     |
 | `containsNode`             | function | `(root: Node, node: Node) => boolean`                                                                                           | Determines whether a node sits inside a root, through open shadow roots and frames.                                                                                                                                                                                             |
 | `stepFocus`                | function | `(limit: number) => AsyncGenerator<HTMLElement \| undefined, void, undefined>`                                                  | Presses Tab and yields the element focus lands on, once per press, up to a limit.                                                                                                                                                                                               |
-| `driveTraversal`           | function | `(resolve: () => HTMLElement, name: string) => Promise<HTMLElement>`                                                            | Reaches the control a resolver returns, only through natural forward Tab traversal from the current focus.                                                                                                                                                                      |
+| `matchesTraversalName`     | function | `(element: HTMLElement, name: string, exact?: boolean) => boolean`                                                              | Checks whether a landing can carry a requested accessible name without resolving the document.                                                                                                                                                                                  |
+| `driveTraversal`           | function | `(resolve: () => HTMLElement, name: string, candidate?: (element: HTMLElement) => boolean) => Promise<HTMLElement>`             | Reaches the control a resolver returns, only through natural forward Tab traversal from the current focus.                                                                                                                                                                      |
 | `walkFocus`                | function | `(stop?: (element: HTMLElement) => boolean) => Promise<readonly HTMLElement[]>`                                                 | Walks forward by real Tab presses from the focused element until a predicate accepts a stop or the Tab order ends.                                                                                                                                                              |
 | `collectTabStops`          | function | `(root: Element, start: HTMLElement) => Promise<readonly HTMLElement[]>`                                                        | Collects the elements of a region that a forward Tab walk reaches from a starting element.                                                                                                                                                                                      |
 | `pressKeys`                | function | `(keys: string) => Promise<void>`                                                                                               | Sends a key sequence to whatever holds focus, and refuses to send it to nothing.                                                                                                                                                                                                |
@@ -540,9 +541,26 @@ resolution on its own, and `holdAccessibleWithin` and `traverseAccessibleWithin`
 resolves the way `holdAccessible` and `traverseAccessible` drive a document-wide one, so a twin of
 the same name in another region is left alone.
 
-`traverseAccessible` charges a step only when focus actually lands on an element and re-resolves
-the target by name on every step, because a framework may replace the node between resolution and
-focus arrival. Consecutive landings on the same native `date`, `time`, `datetime-local`, `month`, or
+`traverseAccessible` resolves before pressing Tab to preserve its refusal voices, then checks each
+landing with `matchesTraversalName` before resolving again. A candidate is accepted only when the
+fresh resolution returns that very element. No resolved target is retained between presses, so a
+framework can replace it before focus arrives. The candidate check compares names using the role
+query's whitespace normalization, including removal of zero-width spaces and soft hyphens.
+It rejects a mismatch only for a nonempty `aria-label` without `aria-labelledby`, or plain native
+button and link text without associated labels, descendants, explicit roles, owned or shadow content,
+or generated content. Other naming cases conservatively reach the full resolver; `readName` is not
+an equivalent implementation of the provider's accessible-name algorithm. A walk over unrelated
+plain controls therefore avoids the repeated document-wide role scans, while complex naming can
+still require a resolution at each landing.
+
+`traverseAccessibleWithin` uses the same candidate check with the region resolver's case-insensitive
+substring semantics, then checks membership in a freshly resolved named region. The full resolver
+still decides role, reachability, ambiguity, and identity at arrival. The keyboard path of
+`chooseAccessible` admits native file inputs as candidates and leaves their label matching to
+`resolveFileInput`, whose label-query semantics differ from the role query.
+
+A traversal charges a step only when focus actually lands on an element.
+Consecutive landings on the same native `date`, `time`, `datetime-local`, `month`, or
 `week` input pass through its editable segments and count that control once, up to
 `FOCUS_SEGMENT_LIMIT` landings. A longer run or any other revisit ends the traversal, including a
 consecutive repeat on a button in a focus trap. Any different landing starts a separate run.
@@ -554,7 +572,10 @@ The limit budgets ten presses per candidate. Chromium measured nine landings on 
 input with `step="0.001"`: year, month, day, hour, minute, second, millisecond, and meridiem segments,
 plus the picker indicator. The budget leaves one spare press per input, so a page of segmented
 inputs can finish while a page whose focus never settles still fails.
-`driveTraversal` implements this forward Tab traversal for any resolver. `driveHold` is the one pointer drive every hold
+`driveTraversal` implements this forward Tab traversal for any resolver. Its optional candidate
+predicate must admit every landing the supplied resolver could return; without it, the conservative
+exact-name check applies. A resolver with different naming semantics must supply its own candidate
+predicate. `driveHold` is the one pointer drive every hold
 verb shares, releasing the pointer before refusing when the frame wait or the pressed-state read
 fails, as well as when the press misses; each verb supplies its resolver and the name its refusals
 voice.
@@ -4036,8 +4057,15 @@ Each entry names the contracts its file proves. The test names carry the cases.
   Each acting verb takes its happy path and every voice it owns, including both
   region-scoped refusals and both native-disclosure ones; `clickAccessibleWithin` also takes a
   glyph-captioned control inside a region a glyph-carrying heading labels, which is the loose match
-  proving unchanged. `traverseAccessible` takes a Tab-reachable target, a crossing for each type in
-  `SEGMENTED_INPUT_TYPES`, and a page of fractional-second `datetime-local` inputs that traversal
+  proving unchanged. `traverseAccessible` takes a target after many unrelated Tab stops, a same-name
+  landing outside the accepted roles, a target replaced between landings, and names from referenced
+  labels, associated labels, normalized ARIA labels, transformed text, and generated content.
+  `traverseAccessibleWithin` passes the exact bare twin to reach a loose match inside its region,
+  preserves the bare resolver's ambiguity refusal for exact twins, and reaches a replaced region.
+  `matchesTraversalName` refuses certain mismatches and admits names requiring the full resolver.
+  `driveTraversal` records resolution calls through its existing resolver callback and proves that
+  unrelated plain stops require no full resolution. `traverseAccessible` also takes a crossing for
+  each type in `SEGMENTED_INPUT_TYPES`, and a page of fractional-second `datetime-local` inputs that traversal
   and census both cross with spare presses for another landing per input. As the cap control, it
   takes a lone target whose own focus handler blurs it, so focus never lands
   and the cap fails with an empty trail; and, as the cycle control, the same self-blurring target

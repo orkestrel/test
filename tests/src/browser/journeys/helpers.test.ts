@@ -31,6 +31,7 @@ import {
 	isOutsideViewport,
 	isReachable,
 	isRendered,
+	matchesTraversalName,
 	parkPointer,
 	POINTER_HOLD,
 	pressKeys,
@@ -2079,6 +2080,88 @@ describe('readAccessibilityNode', () => {
 })
 
 describe('traverseAccessible', () => {
+	it('passes many Tab stops before reaching the named target', async () => {
+		const container = buildFixture(
+			'<button>Start</button>' +
+				Array.from({ length: 64 }, (_, index) => `<button>Stop ${index}</button>`).join('') +
+				'<button>Finish</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		const landings = createRecorder<[event: FocusEvent]>()
+		container.addEventListener('focusin', landings.handler)
+		const reached = await traverseAccessible('Finish')
+		expect(reached).toBe(container.querySelector('button:last-child'))
+		expect(document.activeElement).toBe(reached)
+		expect(landings.count).toBe(65)
+	})
+
+	it('passes a matching name whose role is outside the accepted roles', async () => {
+		const container = buildFixture(
+			'<button>Start</button><div role="heading" tabindex="0" aria-label="Finish">Decoy</div>' +
+				'<button>Finish</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		const decoy = requireValue(container.querySelector<HTMLElement>('[role="heading"]'))
+		const landings = createRecorder<[event: FocusEvent]>()
+		decoy.addEventListener('focus', landings.handler)
+		const reached = await traverseAccessible('Finish')
+		expect(landings.count).toBe(1)
+		expect(reached).toBe(container.querySelector('button:last-child'))
+		expect(document.activeElement).toBe(reached)
+	})
+
+	it('reaches a replacement rendered between landings', async () => {
+		const container = buildFixture(
+			'<button>Start</button><button>Render</button><section><button>Finish</button></section>',
+		)
+		const original = requireValue(container.querySelector('section button'))
+		requireValue(container.querySelector('button')).focus()
+		requireValue(container.querySelectorAll('button')[1]).addEventListener(
+			'focus',
+			() => {
+				requireValue(container.querySelector('section')).innerHTML = '<button>Finish</button>'
+			},
+			{ once: true },
+		)
+		const reached = await traverseAccessible('Finish')
+		expect(original.isConnected).toBe(false)
+		expect(reached).not.toBe(original)
+		expect(reached).toBe(container.querySelector('section button'))
+		expect(document.activeElement).toBe(reached)
+	})
+
+	it('uses the role engine name for referenced labels and associated labels', async () => {
+		const container = buildFixture(
+			'<button>Start</button><span id="destination" aria-label="Finish">Different text</span>' +
+				'<button aria-labelledby="destination" aria-label="Ignored">Different button</button>' +
+				'<label for="entry"><span aria-label="Entry">Different label</span></label><input id="entry">',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(await traverseAccessible('Finish')).toBe(container.querySelectorAll('button')[1])
+		expect(await traverseAccessible('Entry')).toBe(container.querySelector('input'))
+	})
+
+	it('keeps role-query whitespace normalization and ignores rendered text transforms', async () => {
+		const container = buildFixture(
+			'<button>Start</button><button aria-label="  Finish\u200b\t now\u00ad  ">Different text</button>' +
+				'<button style="text-transform:uppercase">Next step</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(await traverseAccessible('Finish now')).toBe(container.querySelectorAll('button')[1])
+		expect(await traverseAccessible('Next step')).toBe(container.querySelectorAll('button')[2])
+	})
+
+	it('leaves generated content and hidden descendants to the role engine', async () => {
+		buildStylesheet('.generated::before { content: "Finish " }')
+		const container = buildFixture(
+			'<button>Start</button><button class="generated">now</button>' +
+				'<button><span aria-hidden="true">Decoration</span>Next</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		expect(await traverseAccessible('Finish now')).toBe(container.querySelectorAll('button')[1])
+		expect(await traverseAccessible('Next')).toBe(container.querySelectorAll('button')[2])
+	})
+
 	it.each(SEGMENTED_INPUT_TYPES)('crosses a segmented %s input', async (type) => {
 		const container = buildFixture(
 			`<button>Start</button><input type="${type}" aria-label="Schedule"><button>Finish</button>`,
@@ -2154,6 +2237,42 @@ describe('traverseAccessible', () => {
 })
 
 describe('traverseAccessibleWithin', () => {
+	it('reaches the exact bare twin first and passes it for a loose match inside the region', async () => {
+		const container = buildFixture(
+			'<button>Start</button><button>Evaluate</button>' +
+				'<section aria-label="Ledger"><button>Evaluate report</button></section>',
+		)
+		const start = requireValue(container.querySelector('button'))
+		start.focus()
+		expect(await traverseAccessible('Evaluate')).toBe(container.querySelectorAll('button')[1])
+		start.focus()
+		const reached = await traverseAccessibleWithin('Ledger', 'button', 'EVALUATE')
+		expect(reached).toBe(container.querySelector('section button'))
+		expect(document.activeElement).toBe(reached)
+	})
+
+	it('re-resolves a region replaced between landings', async () => {
+		const container = buildFixture(
+			'<button>Start</button><button>Render</button><div>' +
+				'<section aria-label="Ledger"><button>Evaluate</button></section></div>',
+		)
+		const original = requireValue(container.querySelector('section button'))
+		requireValue(container.querySelector('button')).focus()
+		requireValue(container.querySelectorAll('button')[1]).addEventListener(
+			'focus',
+			() => {
+				requireValue(container.querySelector('div')).innerHTML =
+					'<section aria-label="Ledger"><button>Evaluate</button></section>'
+			},
+			{ once: true },
+		)
+		const reached = await traverseAccessibleWithin('Ledger', 'button', 'Evaluate')
+		expect(original.isConnected).toBe(false)
+		expect(reached).not.toBe(original)
+		expect(reached).toBe(container.querySelector('section button'))
+		expect(document.activeElement).toBe(reached)
+	})
+
 	it('passes over a twin outside the region and reaches the control inside it', async () => {
 		const container = buildFixture(
 			'<section aria-label="Vault"><button type="button">Evaluate</button></section>' +
@@ -2487,7 +2606,72 @@ describe('supportsSegmentedFocus', () => {
 	})
 })
 
+describe('matchesTraversalName', () => {
+	it('rejects only a certain mismatch and keeps exact and loose comparisons distinct', () => {
+		const container = buildFixture('<button>Evaluate report</button><a href="#report">Report</a>')
+		const button = requireValue(container.querySelector('button'))
+		const link = requireValue(container.querySelector('a'))
+		expect(matchesTraversalName(button, 'Evaluate report')).toBe(true)
+		expect(matchesTraversalName(button, 'Evaluate')).toBe(false)
+		expect(matchesTraversalName(button, 'evaluate report')).toBe(false)
+		expect(matchesTraversalName(button, 'EVALUATE', false)).toBe(true)
+		expect(matchesTraversalName(link, 'Report')).toBe(true)
+		expect(matchesTraversalName(link, 'Unrelated')).toBe(false)
+	})
+
+	it('normalizes aria-label names and defers to referenced labels', () => {
+		const container = buildFixture(
+			'<input aria-label="  Entry\u200b\t name\u00ad  ">' +
+				'<span id="label">Referenced</span><input aria-labelledby="label" aria-label="Ignored">',
+		)
+		const labelled = requireValue(container.querySelector('input'))
+		const referenced = requireValue(container.querySelectorAll('input')[1])
+		expect(matchesTraversalName(labelled, ' Entry name ')).toBe(true)
+		expect(matchesTraversalName(labelled, 'Other')).toBe(false)
+		expect(matchesTraversalName(referenced, 'Referenced')).toBe(true)
+		expect(resolveRendered('Referenced')).toBe(referenced)
+	})
+
+	it('admits associated labels, placeholders, title fallbacks, and prohibited names', () => {
+		const container = buildFixture(
+			'<label for="action">Labelled</label><button id="action">Different</button>' +
+				'<input placeholder="Entry"><button title="Hinted"></button>' +
+				'<div role="generic" tabindex="0" aria-label="Ignored"></div>',
+		)
+		const labelled = requireValue(container.querySelector('button'))
+		const placeholder = requireValue(container.querySelector('input'))
+		const titled = requireValue(container.querySelectorAll('button')[1])
+		const generic = requireValue(container.querySelector<HTMLElement>('[role="generic"]'))
+		expect(matchesTraversalName(labelled, 'Labelled')).toBe(true)
+		expect(resolveRendered('Labelled')).toBe(labelled)
+		expect(matchesTraversalName(placeholder, 'Entry')).toBe(true)
+		expect(resolveRendered('Entry')).toBe(placeholder)
+		expect(matchesTraversalName(titled, 'Hinted')).toBe(true)
+		expect(resolveRendered('Hinted')).toBe(titled)
+		expect(matchesTraversalName(generic, '')).toBe(true)
+	})
+})
+
 describe('driveTraversal', () => {
+	it('resolves before traversal and at arrival while skipping unrelated stops', async () => {
+		const container = buildFixture(
+			'<button>Start</button>' +
+				Array.from({ length: 64 }, (_, index) => `<a href="#stop-${index}">Stop ${index}</a>`).join(
+					'',
+				) +
+				'<button>Finish</button>',
+		)
+		requireValue(container.querySelector('button')).focus()
+		const resolutions = createRecorder<[]>()
+		const reached = await driveTraversal(() => {
+			resolutions.handler()
+			return resolveRendered('Finish')
+		}, 'Finish')
+		expect(reached).toBe(container.querySelector('button:last-child'))
+		expect(document.activeElement).toBe(reached)
+		expect(resolutions.count).toBe(2)
+	})
+
 	it('refuses a segmented input trap within its consecutive landing budget', async () => {
 		const container = buildFixture('<input type="date"><button>Finish</button>')
 		const input = requireValue(container.querySelector('input'))
@@ -2524,7 +2708,7 @@ describe('driveTraversal', () => {
 		expect(presses.count).toBe(2)
 	})
 
-	it('reaches the control a resolver returns, re-resolving on every step', async () => {
+	it('reaches the control a resolver returns, re-resolving at arrival', async () => {
 		const container = buildFixture(
 			'<button type="button">First</button><button type="button">Second</button>',
 		)
@@ -2532,15 +2716,14 @@ describe('driveTraversal', () => {
 		const second = requireValue(container.querySelectorAll('button')[1])
 		const resolutions = createRecorder<[]>()
 		// The resolver answers with the first button before the loop starts and with the second on
-		// every step after that: a loop that compared focus against its first resolution would stop
-		// on the first button, and a loop that resolves on every step passes it and reaches the second.
+		// arrival after that: the initial resolution must not decide where traversal stops.
 		const reached = await driveTraversal(() => {
 			resolutions.handler()
 			return resolutions.count > 1 ? second : first
 		}, 'Second')
 		expect(reached).toBe(second)
 		expect(document.activeElement).toBe(second)
-		expect(resolutions.count).toBeGreaterThan(2)
+		expect(resolutions.count).toBe(2)
 	})
 })
 
