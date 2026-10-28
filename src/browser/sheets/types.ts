@@ -21,7 +21,7 @@ export interface SheetAdoption {
  * markup whose every class the cascade declares. Assert on `elements` as well as on `undeclared`
  * and the two cannot be confused.
  */
-export interface CensusReading {
+export interface CensusResult {
 	/** Reports how many elements the walk read, the root included when it is an element. */
 	readonly elements: number
 	/** Lists every class token the markup carries, sorted. */

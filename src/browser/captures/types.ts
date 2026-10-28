@@ -1,5 +1,16 @@
 import type { JourneyVariant, WaitOptions } from '@src/core'
 
+/** Reads the lowercase hexadecimal SHA-256 digest of a captured file through a browser command. */
+export type CaptureReader = (path: string) => Promise<string>
+
+/** Represents the path and base64 bytes returned by Vitest's screenshot operation. */
+export interface FrameShot {
+	/** Holds the absolute path the provider wrote. */
+	readonly path: string
+	/** Holds the screenshot bytes encoded as base64. */
+	readonly base64: string
+}
+
 /** Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots. */
 export interface FrameOptions {
 	/** Holds the frame's path, relative to the calling test file. */
@@ -38,7 +49,7 @@ export interface FrameOffset {
  * color in the `rgb(r, g, b)` form a computed style is written in, so a literal comparison,
  * `parseColor`, and `matchesColor` all take it.
  */
-export interface FrameReading {
+export interface FrameResult {
 	/** Holds the frame's width in device pixels. */
 	readonly width: number
 	/** Holds the frame's height in device pixels. */

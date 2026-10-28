@@ -1116,9 +1116,9 @@ describe('createLoopback', () => {
 			await loopback.destroy()
 			expect(server.listening).toBe(false)
 
-			await new Promise<void>((resolveListening, rejectListening) => {
-				replacement.once('error', rejectListening)
-				replacement.listen(loopback.port, '127.0.0.1', resolveListening)
+			await new Promise<void>((resolveReady, rejectReady) => {
+				replacement.once('error', rejectReady)
+				replacement.listen(loopback.port, '127.0.0.1', resolveReady)
 			})
 			expect(replacement.listening).toBe(true)
 		} finally {
@@ -1173,9 +1173,9 @@ describe('createLoopback', () => {
 		// The server is bound before it is handed over, so `listen` refuses it. The caller keeps the
 		// server it made: nothing was bound on its behalf, so nothing is released on its behalf either.
 		const server = createNetServer()
-		await new Promise<void>((resolveListening, rejectListening) => {
-			server.once('error', rejectListening)
-			server.listen(0, '127.0.0.1', resolveListening)
+		await new Promise<void>((resolveReady, rejectReady) => {
+			server.once('error', rejectReady)
+			server.listen(0, '127.0.0.1', resolveReady)
 		})
 		try {
 			// The code rather than the message: the code is what Node documents, and the message is

@@ -97,13 +97,13 @@ describe('sheet adoption and layer names', () => {
 		const pending: Array<{
 			readonly rule: CSSRule
 			readonly layer?: string | undefined
-			readonly enclosing?: string | undefined
+			readonly selector?: string | undefined
 		}> = Array.from(sheet.cssRules, (rule) => ({ rule })).reverse()
 		const scanned: Array<{ readonly rule: CSSRule; readonly layer?: string | undefined }> = []
 		while (pending.length > 0) {
 			const entry = requireValue(pending.pop())
 			const { rule } = entry
-			if (rule instanceof CSSStyleRule && entry.enclosing !== undefined) continue
+			if (rule instanceof CSSStyleRule && entry.selector !== undefined) continue
 			scanned.push(entry)
 			if (!(rule instanceof CSSGroupingRule || rule instanceof CSSStyleRule)) continue
 			const layer =
@@ -112,9 +112,9 @@ describe('sheet adoption and layer names', () => {
 						? rule.name
 						: `${entry.layer}.${rule.name}`
 					: entry.layer
-			const enclosing = rule instanceof CSSStyleRule ? rule.selectorText : entry.enclosing
+			const selector = rule instanceof CSSStyleRule ? rule.selectorText : entry.selector
 			for (const child of Array.from(rule.cssRules).reverse()) {
-				pending.push({ rule: child, layer, enclosing })
+				pending.push({ rule: child, layer, selector })
 			}
 		}
 		expect(
@@ -512,11 +512,11 @@ describe('readCensus', () => {
 		const section = requireValue(container.querySelector('section'))
 		section.append(control.root)
 
-		const reading = readCensus(section)
+		const census = readCensus(section)
 
-		expect(reading.elements).toBe(4)
-		expect(reading.tokens).toStrictEqual(['census-declared', control.mark, control.token].sort())
-		expect(reading.undeclared).toStrictEqual([control.mark, control.token])
+		expect(census.elements).toBe(4)
+		expect(census.tokens).toStrictEqual(['census-declared', control.mark, control.token].sort())
+		expect(census.undeclared).toStrictEqual([control.mark, control.token])
 	})
 
 	it('sorts the tokens rather than reporting them in document order', () => {
@@ -532,11 +532,11 @@ describe('readCensus', () => {
 		buildStylesheet('.census-known { color: red }')
 		const container = buildFixture('<p class="census-known">Ready</p>')
 
-		const reading = readCensus(container)
+		const census = readCensus(container)
 
-		expect(reading.elements).toBe(2)
-		expect(reading.tokens).toStrictEqual(['census-known'])
-		expect(reading.undeclared).toStrictEqual([])
+		expect(census.elements).toBe(2)
+		expect(census.tokens).toStrictEqual(['census-known'])
+		expect(census.undeclared).toStrictEqual([])
 	})
 
 	it('refuses a walk that reads no element', () => {

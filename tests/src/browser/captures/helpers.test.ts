@@ -1,3 +1,4 @@
+import { isNumber, isRecord } from '@orkestrel/contract'
 import * as browser from '@src/browser'
 import {
 	build,
@@ -13,6 +14,7 @@ import {
 	paintImage,
 	readClipEdge,
 	readClipMargin,
+	readCaptureReader,
 	readClippedBlock,
 	readFrame,
 	readPixels,
@@ -25,6 +27,7 @@ import {
 	sendProtocol,
 	stageMedia,
 	stagePane,
+	verifyFrame,
 	waitForFrame,
 	waitForStability,
 } from '@src/browser'
@@ -361,6 +364,64 @@ describe('measureContent', () => {
 })
 
 describe('stagePane', () => {
+	it('suppresses the runner transform on both the pane and the tester iframe', async () => {
+		const viewport = [window.innerWidth, window.innerHeight] as const
+		await page.viewport(390, 844)
+		const frame = requireValue(window.frameElement)
+		const pane = requireValue(frame.parentElement)
+		const owner = pane.ownerDocument
+		const frameStyle = frame.getAttribute('style')
+		const paneStyle = pane.getAttribute('style')
+		frame.setAttribute('style', `${frameStyle ?? ''};transform:scale(0.7)`)
+		pane.style.setProperty('transform', 'scale(0.7)')
+		try {
+			const view = requireValue(owner.defaultView)
+			expect(view.getComputedStyle(frame).transform).not.toBe('none')
+			expect(view.getComputedStyle(pane).transform).not.toBe('none')
+			await stagePane(390, 844)
+			expect(view.getComputedStyle(frame).transform).toBe('none')
+			expect(view.getComputedStyle(pane).transform).toBe('none')
+			expect(Math.round(frame.getBoundingClientRect().height)).toBe(844)
+		} finally {
+			if (frameStyle === null) frame.removeAttribute('style')
+			else frame.setAttribute('style', frameStyle)
+			if (paneStyle === null) pane.removeAttribute('style')
+			else pane.setAttribute('style', paneStyle)
+			await releasePane()
+			// The case set this viewport itself, so the release owes nothing; later cases need the original.
+			await page.viewport(...viewport)
+		}
+	})
+
+	it('sends no viewport request when staging an unchanged viewport', async () => {
+		const viewport = [window.innerWidth, window.innerHeight] as const
+		const query = new URL(window.location.href).searchParams
+		const channel = new BroadcastChannel(`vitest:${requireValue(query.get('sessionId'))}`)
+		const requests = createRecorder<[width: number, height: number]>()
+		channel.addEventListener('message', (event: MessageEvent<unknown>) => {
+			if (
+				isRecord(event.data) &&
+				event.data.event === 'viewport' &&
+				event.data.iframeId === query.get('iframeId') &&
+				isNumber(event.data.width) &&
+				isNumber(event.data.height)
+			) {
+				requests.handler(event.data.width, event.data.height)
+			}
+		})
+		try {
+			await stagePane(...viewport)
+			// A real resize is the control that proves the observer receives viewport requests.
+			await page.viewport(viewport[0] + 1, viewport[1])
+			await waitForCondition('the resize request arrives', () => requests.count > 0)
+			expect(requests.calls).toStrictEqual([[viewport[0] + 1, viewport[1]]])
+		} finally {
+			channel.close()
+			await releasePane()
+			await page.viewport(...viewport)
+		}
+	})
+
 	it('marks the pane, renders the tester at the viewport it was given, and releases both', async () => {
 		const pane = requireValue(window.frameElement?.parentElement)
 		const owner = pane.ownerDocument
@@ -402,6 +463,39 @@ describe('stagePane', () => {
 })
 
 describe('captureFrame', () => {
+	it.each([true, false])(
+		'stages a tall element once when its viewport is prepared: %s',
+		async (prepared) => {
+			await page.viewport(390, prepared ? 844 : 843)
+			const pane = requireValue(window.frameElement?.parentElement)
+			const changes = createRecorder<[records: readonly MutationRecord[]]>()
+			const observer = new MutationObserver(changes.handler)
+			observer.observe(pane, { attributes: true, attributeFilter: [CAPTURE_PANE] })
+			const container = buildFixture(
+				'<div style="width: 40px; height: 1600px; background: rgb(0, 128, 0)"></div>',
+			)
+			try {
+				const written = await captureFrame({
+					path: `${FRAMES}/staging-${String(prepared)}.png`,
+					width: 390,
+					height: 844,
+					element: requireValue(container.firstElementChild),
+				})
+				expect(await readFrame(written)).toStrictEqual({
+					width: 40,
+					height: 1600,
+					floor: 'rgb(0, 128, 0)',
+				})
+				// Each staging writes the marker; release removes it. A changed viewport needs the
+				// declared layout first, which is the control for the single-staging observation.
+				expect(changes.calls.flatMap(([records]) => records).length).toBe(prepared ? 2 : 3)
+				expect([window.innerWidth, window.innerHeight]).toStrictEqual([390, prepared ? 844 : 843])
+			} finally {
+				observer.disconnect()
+			}
+		},
+	)
+
 	it('keeps a viewport-bound sticky panel at its fitted native alignment', async () => {
 		buildStylesheet(
 			'html { scroll-padding-top: 55px }' +
@@ -440,8 +534,8 @@ describe('captureFrame', () => {
 			height: 800,
 			element,
 		})
-		const reading = await readFrame(written)
-		expect([reading.width, reading.height]).toStrictEqual([240, 753])
+		const result = await readFrame(written)
+		expect([result.width, result.height]).toStrictEqual([240, 753])
 		const image = new Image()
 		image.src = `data:image/png;base64,${await commands.readFile(written, 'base64')}`
 		await image.decode()
@@ -541,8 +635,8 @@ describe('captureFrame', () => {
 			height: 844,
 			element: requireValue(container.lastElementChild),
 		})
-		const reading = await readFrame(written)
-		expect([reading.width, reading.height]).toStrictEqual([100, 85])
+		const result = await readFrame(written)
+		expect([result.width, result.height]).toStrictEqual([100, 85])
 		expect(window.scrollY).toBe(200)
 	})
 
@@ -615,10 +709,10 @@ describe('captureFrame', () => {
 		buildFixture('<div style="height: 1600px">Taller than the pane</div>')
 
 		const written = await captureFrame({ path: `${FRAMES}/tall.png`, width: 390, height: 844 })
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBe(1600)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBe(1600)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 	})
 
 	it('settles a document whose height converges under a viewport-bound rule', async () => {
@@ -642,22 +736,22 @@ describe('captureFrame', () => {
 			width: 390,
 			height: 844,
 		})
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
 		// 900 fixed rows over a rule that keeps half the pane: the fixed point is 900 / (1 - 1/2),
 		// written out rather than read back from the capture that staged it.
-		expect(reading.height).toBe(1800)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		expect(result.height).toBe(1800)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 	})
 
 	it('shoots a document shorter than the pane at the pane height, on the same floor', async () => {
 		buildStylesheet('html { background: rgb(0, 128, 0) }')
 		buildFixture('<div style="height: 40px">Shorter than the pane</div>')
 		const written = await captureFrame({ path: `${FRAMES}/short.png`, width: 390, height: 844 })
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBe(844)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBe(844)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 	})
 
 	it('covers a body whose box ends on a fraction of a pixel', async () => {
@@ -675,10 +769,10 @@ describe('captureFrame', () => {
 		expect(rounded).toBeLessThan(Math.ceil(box))
 
 		const written = await captureFrame({ path: `${FRAMES}/fraction.png`, width: 390, height: 844 })
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBeGreaterThanOrEqual(Math.ceil(box))
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBeGreaterThanOrEqual(Math.ceil(box))
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 	})
 
 	it('re-reads the document after the pane grows, and covers what the reflow added', async () => {
@@ -701,10 +795,10 @@ describe('captureFrame', () => {
 		expect(reflowed).toBeGreaterThan(first)
 
 		const written = await captureFrame({ path: `${FRAMES}/reflow.png`, width: 390, height: 844 })
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBeGreaterThanOrEqual(reflowed)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBeGreaterThanOrEqual(reflowed)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 	})
 
 	it.each(['0px', 'calc(80px + 5.25px)'])(
@@ -735,12 +829,12 @@ describe('captureFrame', () => {
 				height: declared,
 				element: requireValue(container.lastElementChild),
 			})
-			const reading = await readFrame(written)
-			expect(reading.width).toBe(across)
-			expect(reading.height).toBe((declared * 3) / 10)
+			const result = await readFrame(written)
+			expect(result.width).toBe(across)
+			expect(result.height).toBe((declared * 3) / 10)
 			// The panel's own color on the bottom row is what separates a shot of the panel from a shot
 			// of the document behind it or of the runner's page.
-			expect(reading.floor).toBe('rgb(0, 0, 255)')
+			expect(result.floor).toBe('rgb(0, 0, 255)')
 			expect(window.scrollY).toBe(400)
 		},
 	)
@@ -766,10 +860,10 @@ describe('captureFrame', () => {
 			height: declared,
 			element: requireValue(container.children[1]),
 		})
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(across)
-		expect(reading.height).toBe(100)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(across)
+		expect(result.height).toBe(100)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 		expect(window.scrollY).toBe(200)
 	})
 
@@ -791,10 +885,10 @@ describe('captureFrame', () => {
 				height: 844,
 				element: requireValue(container.lastElementChild),
 			})
-			const reading = await readFrame(written)
-			expect(reading.width).toBe(390)
-			expect(reading.height).toBe(422)
-			expect(reading.floor).toBe('rgb(0, 0, 255)')
+			const result = await readFrame(written)
+			expect(result.width).toBe(390)
+			expect(result.height).toBe(422)
+			expect(result.floor).toBe('rgb(0, 0, 255)')
 		},
 	)
 
@@ -841,9 +935,9 @@ describe('captureFrame', () => {
 			height: 844,
 			element: requireValue(container.children[1]),
 		})
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBe(1112)
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBe(1112)
 	})
 
 	it('refuses an element that outgrows every pane, and hands the pane and the scroll back', async () => {
@@ -885,9 +979,9 @@ describe('captureFrame', () => {
 		// It carries another value because the provider's locator refuses a second `true` frame.
 		other.setAttribute('data-vitest', 'earlier')
 		owner.body.append(other)
-		const readings: Array<[calling: number, other: number]> = []
+		const positions: Array<[current: number, other: number]> = []
 		const observer = new MutationObserver(() => {
-			readings.push([frame.getBoundingClientRect().top, other.getBoundingClientRect().top])
+			positions.push([frame.getBoundingClientRect().top, other.getBoundingClientRect().top])
 		})
 		observer.observe(owner, { subtree: true, childList: true, attributes: true })
 		const declared = Math.max(844, requireValue(window.top).innerHeight + 200)
@@ -907,10 +1001,8 @@ describe('captureFrame', () => {
 			other.remove()
 		}
 		// The calling frame moving is the control that a reading was taken under the offset.
-		expect(Math.min(...readings.map(([calling]) => calling))).toBeLessThan(0)
-		expect(readings.map(([, reading]) => reading).filter((reading) => reading < 0)).toStrictEqual(
-			[],
-		)
+		expect(Math.min(...positions.map(([current]) => current))).toBeLessThan(0)
+		expect(positions.map(([, top]) => top).filter((top) => top < 0)).toStrictEqual([])
 		expect(frame.getAttribute('style')).toBe(style)
 	})
 
@@ -986,8 +1078,8 @@ describe('captureFrame', () => {
 		})
 		await waitForFrame()
 		expect(entered.count).toBe(0)
-		const reading = await readFrame(written)
-		expect([reading.width, reading.height]).toStrictEqual([across, 100])
+		const result = await readFrame(written)
+		expect([result.width, result.height]).toStrictEqual([across, 100])
 	})
 
 	it('takes no mouseover from the parked pointer for a flush-left element too large for the runner window', async () => {
@@ -1072,8 +1164,8 @@ describe('captureFrame', () => {
 				element: requireValue(container.firstElementChild),
 			})
 			await waitForFrame()
-			const reading = await readFrame(written)
-			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+			const result = await readFrame(written)
+			expect([result.width, result.height]).toStrictEqual([100, 100])
 		} finally {
 			observer.disconnect()
 			document.removeEventListener('mouseover', entered.handler)
@@ -1121,8 +1213,8 @@ describe('captureFrame', () => {
 				element: requireValue(container.firstElementChild),
 			})
 			await waitForFrame()
-			const reading = await readFrame(written)
-			expect([reading.width, reading.height]).toStrictEqual([view.innerWidth, view.innerHeight])
+			const result = await readFrame(written)
+			expect([result.width, result.height]).toStrictEqual([view.innerWidth, view.innerHeight])
 		} finally {
 			document.removeEventListener('mouseover', entered.handler)
 		}
@@ -1175,8 +1267,8 @@ describe('captureFrame', () => {
 				element: requireValue(shadow.querySelector('svg')),
 			})
 			await waitForFrame()
-			const reading = await readFrame(written)
-			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+			const result = await readFrame(written)
+			expect([result.width, result.height]).toStrictEqual([100, 100])
 		} finally {
 			document.removeEventListener('mouseover', entered.handler)
 		}
@@ -1202,8 +1294,8 @@ describe('captureFrame', () => {
 				element: requireValue(container.querySelector('svg')),
 			})
 			await waitForFrame()
-			const reading = await readFrame(written)
-			expect([reading.width, reading.height]).toStrictEqual([100, 100])
+			const result = await readFrame(written)
+			expect([result.width, result.height]).toStrictEqual([100, 100])
 		} finally {
 			document.removeEventListener('mouseover', entered.handler)
 		}
@@ -1348,6 +1440,38 @@ describe('computeOffset', () => {
 	})
 })
 
+describe('verifyFrame', () => {
+	it('propagates a digest read failure even while the base64 fallback would succeed', async () => {
+		const path = `${FRAMES}/read-failure.png`
+		const missing = `${server.config.root}/tmp/capture/frame/missing-digest.png`
+		await commands.writeFile(missing, 'removed before the digest read')
+		await commands.removeFile(missing)
+		const shot = await page.screenshot({ path, base64: true })
+		const reader = requireValue(readCaptureReader()).bind(undefined, missing)
+		await expect(verifyFrame(shot, path)).resolves.toBeUndefined()
+		await expect(verifyFrame(shot, path, reader)).rejects.toThrow('ENOENT')
+	})
+
+	it.each([true, false])(
+		'verifies the real shot and refuses overwritten bytes with a registered digest reader: %s',
+		async (digest) => {
+			const path = `${FRAMES}/verified-${String(digest)}.png`
+			const reader = digest ? requireValue(readCaptureReader()) : undefined
+			const shot = await page.screenshot({ path, base64: true })
+			await expect(verifyFrame(shot, path, reader)).resolves.toBeUndefined()
+			await commands.writeFile(shot.path, 'not the captured frame')
+			await expect(verifyFrame(shot, path, reader)).rejects.toThrow(
+				`Capture frame at ${path} is not the one this run shot`,
+			)
+			await expect(verifyFrame(shot, `${FRAMES}/elsewhere.png`, reader)).rejects.toThrow(
+				`Capture frame was written to ${shot.path} where ${FRAMES}/elsewhere.png was asked for`,
+			)
+			await commands.removeFile(shot.path)
+			await expect(verifyFrame(shot, path, reader)).rejects.toThrow('ENOENT')
+		},
+	)
+})
+
 describe('readFrame', () => {
 	// guides/test.md → Patterns → "Read a written frame back". A browser fence carries in this
 	// directory because the guides project runs with the browser disabled.
@@ -1355,14 +1479,14 @@ describe('readFrame', () => {
 		buildStylesheet('html { background: rgb(0, 128, 0) }')
 		const written = await captureFrame({ path: `${FRAMES}/read.png`, width: 390, height: 844 })
 
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(390)
-		expect(reading.height).toBe(844)
-		expect(reading.floor).toBe('rgb(0, 128, 0)')
+		const result = await readFrame(written)
+		expect(result.width).toBe(390)
+		expect(result.height).toBe(844)
+		expect(result.floor).toBe('rgb(0, 128, 0)')
 
 		// The frame is decoded rather than computed, so the floor is a second reading of the same
 		// claim: the cascade's own answer for the canvas this document paints.
-		expect(reading.floor).toBe(readStyle(document.documentElement, 'background-color'))
+		expect(result.floor).toBe(readStyle(document.documentElement, 'background-color'))
 	})
 
 	it('reports no floor for a frame whose bottom row paints more than one color', async () => {
@@ -1377,9 +1501,9 @@ describe('readFrame', () => {
 			element: requireValue(container.firstElementChild),
 		})
 
-		const reading = await readFrame(written)
-		expect(reading.width).toBe(40)
-		expect(reading.floor).toBeUndefined()
+		const result = await readFrame(written)
+		expect(result.width).toBe(40)
+		expect(result.floor).toBeUndefined()
 	})
 
 	it('refuses a path holding no file, and a file holding no image', async () => {
@@ -1767,7 +1891,7 @@ describe('releaseMedia', () => {
 	it('reads a stable value after a release with nothing staged', async () => {
 		expect(document.documentElement.hasAttribute(MEDIA_STAGE)).toBe(false)
 		await releaseMedia()
-		const readings = [
+		const matches = [
 			matchMedia('print').matches,
 			matchMedia('(prefers-reduced-motion: reduce)').matches,
 			matchMedia('(prefers-color-scheme: dark)').matches,
@@ -1779,11 +1903,11 @@ describe('releaseMedia', () => {
 			matchMedia('(prefers-reduced-motion: reduce)').matches,
 			matchMedia('(prefers-color-scheme: dark)').matches,
 			matchMedia('(forced-colors: active)').matches,
-		]).toEqual(readings)
+		]).toEqual(matches)
 	})
 })
 
-describe.sequential('media teardown after failure', () => {
+describe('media teardown after failure', { concurrent: false }, () => {
 	let reduced = false
 	beforeAll(() => {
 		reduced = matchMedia('(prefers-reduced-motion: reduce)').matches

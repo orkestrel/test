@@ -2,7 +2,7 @@ import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@s
 import type { StabilityOptions } from '../captures/types.js'
 import type {
 	AccessibilityNode,
-	AnimationReading,
+	AnimationResult,
 	ProtocolPoint,
 	SettleOptions,
 	StateOptions,
@@ -1548,10 +1548,10 @@ export async function driveTraversal(
 	const cap =
 		document.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR).length * FOCUS_SEGMENT_LIMIT + 10
 	const visited = new Set<Element>()
-	const landings: Array<HTMLElement | undefined> = []
+	const stops: Array<HTMLElement | undefined> = []
 	for await (const focused of stepFocus(cap)) {
-		const previous = landings.at(-1)
-		landings.push(focused)
+		const previous = stops.at(-1)
+		stops.push(focused)
 		if (focused === undefined) continue
 		try {
 			if (candidate === undefined ? matchesTraversalName(focused, name) : candidate(focused)) {
@@ -1564,14 +1564,13 @@ export async function driveTraversal(
 		if (
 			focused === previous &&
 			supportsSegmentedFocus(focused) &&
-			landings.length - landings.findLastIndex((landing) => landing !== focused) - 1 <=
-				FOCUS_SEGMENT_LIMIT
+			stops.length - stops.findLastIndex((entry) => entry !== focused) - 1 <= FOCUS_SEGMENT_LIMIT
 		)
 			continue
 		if (visited.has(focused)) break
 		visited.add(focused)
 	}
-	const trail = [...new Set(landings)]
+	const trail = [...new Set(stops)]
 		.filter((focused) => focused !== undefined)
 		.filter((focused) => visited.has(focused))
 		.map((focused) => `${focused.tagName}:${focused.innerText.slice(0, 20)}`)
@@ -1619,17 +1618,16 @@ export async function walkFocus(
 	const first = readActiveElement()
 	if (first === undefined) return []
 	const reached: HTMLElement[] = [first]
-	const landings: HTMLElement[] = [first]
+	const stops: HTMLElement[] = [first]
 	if (stop?.(first) === true) return reached
 	for await (const focused of stepFocus(countElements() * FOCUS_SEGMENT_LIMIT)) {
 		if (focused === undefined) return reached
-		const previous = landings.at(-1)
-		landings.push(focused)
+		const previous = stops.at(-1)
+		stops.push(focused)
 		if (
 			focused === previous &&
 			supportsSegmentedFocus(focused) &&
-			landings.length - landings.findLastIndex((landing) => landing !== focused) - 1 <=
-				FOCUS_SEGMENT_LIMIT
+			stops.length - stops.findLastIndex((entry) => entry !== focused) - 1 <= FOCUS_SEGMENT_LIMIT
 		)
 			continue
 		if (reached.includes(focused)) return reached
@@ -2203,13 +2201,13 @@ export async function waitForState(
 	const absent = options?.absent ?? false
 	const description = `"${name}" to ${absent ? 'stop announcing' : 'announce'} "${state}"`
 	let observed: readonly string[] = []
-	let readings = 0
+	let count = 0
 	let refused: { readonly thrown: unknown } | undefined
 	try {
 		await waitForCondition(
 			description,
 			() => {
-				readings += 1
+				count += 1
 				try {
 					observed = readStates(
 						role === undefined ? resolveRendered(name) : resolveRendered(role, name),
@@ -2231,7 +2229,7 @@ export async function waitForState(
 		// raised before any reading. Each of those leaves by identity.
 		if (refused !== undefined && cause === refused.thrown) throw cause
 		if (cause === options?.signal?.reason) throw cause
-		if (readings === 0) throw cause
+		if (count === 0) throw cause
 		if (!isError(cause)) throw cause
 		throw new Error(`${cause.message} (last states: ${JSON.stringify(observed)})`, { cause })
 	}
@@ -2341,7 +2339,7 @@ export async function waitForAnimations(element: Element, options?: WaitOptions)
  * readAnimations(document.documentElement).finite.length // 0 once every transition has settled
  * ```
  */
-export function readAnimations(element: Element): AnimationReading {
+export function readAnimations(element: Element): AnimationResult {
 	const running = element
 		.getAnimations({ subtree: true })
 		.filter((animation) => animation.playState === 'running')

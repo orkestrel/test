@@ -26,7 +26,7 @@ export const CAPTURE_PANE = 'data-capture-pane'
  * one restaging past the cap before it comes back down to the edge. Nothing measured needs a
  * fourth, so a fourth is the headroom that keeps a settling document off the refusal.
  */
-export const CAPTURE_STAGINGS = 4
+export const CAPTURE_STAGE_LIMIT = 4
 
 /**
  * Names the tester root's attribute holding the media readings observed before the first stage.

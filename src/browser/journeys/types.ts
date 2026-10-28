@@ -118,7 +118,7 @@ export interface SettleOptions extends WaitOptions {
  * An animation counts as endless when its effect declares infinite iterations. A paused, an idle,
  * and a finished animation are at rest, so neither list holds one.
  */
-export interface AnimationReading {
+export interface AnimationResult {
 	/** Lists the running animations that end, the ones `waitForAnimations` waits on. */
 	readonly finite: readonly Animation[]
 	/** Lists the running animations whose effect declares infinite iterations. */

@@ -30,6 +30,7 @@ import {
 	isExcluded,
 	isRunning,
 	matchesIdentity,
+	readCapture,
 	readErrorCode,
 	readIdentity,
 	readInventory,
@@ -46,11 +47,38 @@ import {
 	createChooserFixture,
 	DIRECTORY_LINKS,
 	FILE_LINKS,
-	FOREIGN_ROOT_SPELLINGS,
+	FOREIGN_ROOT_PATHS,
 	HOST_PROBES,
 	readChooserListeners,
 	TEMPORARY_VARIABLES,
 } from '../../setupServer.js'
+
+describe('readCapture', () => {
+	it('hashes disk bytes and detects a same-length replacement', async () => {
+		const scratch = createScratch({ files: { 'captured frame.png': 'abc' } })
+		const path = join(scratch.path, 'captured frame.png')
+		try {
+			expect(await readCapture(path)).toBe(
+				'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+			)
+			scratch.write('captured frame.png', 'abd')
+			expect(await readCapture(path)).not.toBe(
+				'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+			)
+			scratch.write('captured frame.png', '')
+			expect(await readCapture(path)).toBe(
+				'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+			)
+			scratch.remove('captured frame.png')
+			await expect(readCapture(path)).rejects.toThrow('ENOENT')
+			await expect(readCapture('relative.png')).rejects.toThrow(
+				'Capture path must be absolute: relative.png',
+			)
+		} finally {
+			scratch.destroy()
+		}
+	})
+})
 
 // The child announces itself on stdout and then parks on a timer that never fires within a test, so
 // it holds its working directory until the parent kills it. A child that self-exits on a fixed delay
@@ -126,7 +154,7 @@ function overrideTemporaryDirectory(path: string): () => void {
 // host rather than read off its name: a host placing every absolute path under one root always
 // answers relatively, so the selection is empty there and the case keyed to it does not apply.
 const HOST_ROOT = resolve(tmpdir())
-const FOREIGN_ROOTS = FOREIGN_ROOT_SPELLINGS.filter((target) =>
+const FOREIGN_ROOTS = FOREIGN_ROOT_PATHS.filter((target) =>
 	isAbsolute(relative(HOST_ROOT, resolve(HOST_ROOT, target))),
 )
 
@@ -134,8 +162,8 @@ const FOREIGN_ROOTS = FOREIGN_ROOT_SPELLINGS.filter((target) =>
 // own separator, and converts that separator to `/`. Where the host already spells a nested path with
 // `/` the conversion is a no-op and proves nothing, so the gate is that reading rather than a
 // platform name.
-const NESTED_SPELLING = relative('root', join('root', 'nested', 'file.txt'))
-const NATIVE_SEPARATOR_DIFFERS = NESTED_SPELLING.includes(sep) && !NESTED_SPELLING.includes('/')
+const NESTED_PATH = relative('root', join('root', 'nested', 'file.txt'))
+const NATIVE_SEPARATOR_DIFFERS = NESTED_PATH.includes(sep) && !NESTED_PATH.includes('/')
 
 describe('resolveContained', () => {
 	it('resolves relative and absolute contained targets and rejects escapes', () => {
@@ -156,9 +184,9 @@ describe('resolveContained', () => {
 			for (const target of FOREIGN_ROOTS) {
 				// The path-containment branch keyed to `..` is provably not the one answering: the spelling
 				// `relative` returns for this pair is absolute and names no ancestor segment.
-				const spelling = relative(root, resolve(root, target))
-				expect(isAbsolute(spelling)).toBe(true)
-				expect(spelling.startsWith('..')).toBe(false)
+				const path = relative(root, resolve(root, target))
+				expect(isAbsolute(path)).toBe(true)
+				expect(path.startsWith('..')).toBe(false)
 				expect(resolveContained(root, target)).toBeUndefined()
 			}
 
@@ -1424,10 +1452,10 @@ describe('requestUpgrade', () => {
 				'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
 			)
 		})
-		const upgrading = await createLoopback(server)
+		const upgrade = await createLoopback(server)
 		// No `upgrade` listener, so Node routes the same request to the plain handler and this
 		// server drives the refused path while the preceding one drives the claimed path.
-		const refusing = await createLoopback(
+		const refusal = await createLoopback(
 			createHTTPServer((_request, response) => {
 				response.statusCode = 426
 				response.end('this server upgrades nothing')
@@ -1445,8 +1473,8 @@ describe('requestUpgrade', () => {
 				{ budget: 1000 },
 			)
 
-			const claimed = await requestUpgrade(upgrading.port, { path: '/socket' })
-			const refused = await requestUpgrade(refusing.port)
+			const claimed = await requestUpgrade(upgrade.port, { path: '/socket' })
+			const refused = await requestUpgrade(refusal.port)
 			const rejection: unknown = await requestUpgrade(port).catch((error: unknown) => error)
 
 			// All three paths were really driven, so the following release covers each of them rather
@@ -1475,8 +1503,8 @@ describe('requestUpgrade', () => {
 			)
 		} finally {
 			for (const socket of detached) socket.destroy()
-			await upgrading.destroy()
-			await refusing.destroy()
+			await upgrade.destroy()
+			await refusal.destroy()
 		}
 	})
 })
@@ -1584,14 +1612,14 @@ describe('chooseFiles', () => {
 			const choosers = createRecorder()
 			fixture.page.on('filechooser', choosers.handler)
 			const listeners = readChooserListeners(fixture.page, 'filechooser')
-			const closing = readChooserListeners(fixture.page, 'close')
+			const closeListeners = readChooserListeners(fixture.page, 'close')
 			const request = { selector: fixture.duplicate, files: [] }
 			await expect(chooseFiles(fixture, request)).rejects.toThrow('strict mode violation')
 			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(listeners)
 			for (const files of [[{ name: 'a.txt', mime: 'text/plain', bytes: [65] }], []]) {
 				await chooseFiles(fixture, { selector: fixture.selector, files })
 				expect(readChooserListeners(fixture.page, 'filechooser')).toBe(listeners)
-				expect(readChooserListeners(fixture.page, 'close')).toBe(closing)
+				expect(readChooserListeners(fixture.page, 'close')).toBe(closeListeners)
 			}
 			expect(choosers.count).toBe(2)
 		} finally {
@@ -1604,7 +1632,7 @@ describe('chooseFiles', () => {
 		try {
 			const input = fixture.iframe.getByLabel('Attachments')
 			const listeners = readChooserListeners(fixture.page, 'filechooser')
-			const closing = readChooserListeners(fixture.page, 'close')
+			const closeListeners = readChooserListeners(fixture.page, 'close')
 			await input.evaluate((element) =>
 				element.addEventListener('click', (event) => event.preventDefault(), { once: true }),
 			)
@@ -1612,7 +1640,7 @@ describe('chooseFiles', () => {
 				chooseFiles(fixture, { selector: fixture.selector, files: [], budget: 150 }),
 			).rejects.toThrow('was not delivered')
 			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(listeners)
-			expect(readChooserListeners(fixture.page, 'close')).toBe(closing)
+			expect(readChooserListeners(fixture.page, 'close')).toBe(closeListeners)
 			await input.evaluate((element) =>
 				element.addEventListener(
 					'click',
@@ -1629,13 +1657,13 @@ describe('chooseFiles', () => {
 				'belongs to a different input',
 			)
 			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(listeners)
-			expect(readChooserListeners(fixture.page, 'close')).toBe(closing)
+			expect(readChooserListeners(fixture.page, 'close')).toBe(closeListeners)
 			await input.evaluate((element) => element.setAttribute('disabled', ''))
 			await expect(
 				chooseFiles(fixture, { selector: fixture.selector, files: [], budget: 150 }),
 			).rejects.toThrow(/Timeout|was not delivered/u)
 			expect(readChooserListeners(fixture.page, 'filechooser')).toBe(listeners)
-			expect(readChooserListeners(fixture.page, 'close')).toBe(closing)
+			expect(readChooserListeners(fixture.page, 'close')).toBe(closeListeners)
 		} finally {
 			await fixture.browser.close()
 		}

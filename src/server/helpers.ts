@@ -11,6 +11,7 @@ import type {
 	UpgradeResult,
 } from './types.js'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import {
 	lstatSync,
 	mkdirSync,
@@ -23,6 +24,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { request as requestHTTP } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -34,6 +36,25 @@ import {
 	REMOVE_TREE_RETRY_DELAY_MS,
 	REMOVE_TREE_RETRYABLE_CODES,
 } from './constants.js'
+
+/**
+ * Reads the lowercase hexadecimal SHA-256 digest of a captured file's bytes.
+ *
+ * @param path - The absolute screenshot path returned by the browser provider.
+ * @throws Thrown when the path is relative or the file cannot be read.
+ * @remarks Register a browser command that checks Vitest's file-access policy before calling this
+ * helper. Only the digest crosses back to the browser; the file is read in Node.
+ * @example
+ * ```ts
+ * const digest = await readCapture(written)
+ * ```
+ */
+export async function readCapture(path: string): Promise<string> {
+	if (!isAbsolute(path)) throw new Error(`Capture path must be absolute: ${path}`)
+	return createHash('sha256')
+		.update(await readFile(path))
+		.digest('hex')
+}
 
 /**
  * Resolves a target that stays below a root directory.

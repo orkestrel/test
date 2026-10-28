@@ -264,17 +264,17 @@ export async function waitForText(
 		throw new Error('Text departure must not appear in the text expectation')
 	}
 	const exact = options?.exact ?? false
-	let reading = ''
+	let observed = ''
 	await waitForCondition(
 		description,
 		() => {
-			reading = read()
-			const carries = exact ? reading === text : reading.includes(text)
-			return carries && (absent === undefined || !reading.includes(absent))
+			observed = read()
+			const carries = exact ? observed === text : observed.includes(text)
+			return carries && (absent === undefined || !observed.includes(absent))
 		},
 		options,
 	)
-	return reading
+	return observed
 }
 
 /**
@@ -543,7 +543,7 @@ export function decodeJSONLines(text: string): readonly unknown[] {
 export function collectSelectorClasses(selector: string): readonly string[] {
 	const escape = String.raw`\\(?:[0-9a-f]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f0-9a-f])`
 	const name = String.raw`(?:${escape}|[-\w\u{80}-\u{10FFFF}])`
-	const opening = String.raw`(?:--|-?(?:[_a-z\u{80}-\u{10FFFF}]|${escape}))`
+	const prefix = String.raw`(?:--|-?(?:[_a-z\u{80}-\u{10FFFF}]|${escape}))`
 	const quoted = String.raw`"(?:[^"\\\r\n\f]|\\(?:\r\n|[\s\S]))*"|'(?:[^'\\\r\n\f]|\\(?:\r\n|[\s\S]))*'`
 	const comment = String.raw`/\*[\s\S]*?\*/`
 	const attribute = String.raw`\[(?:${quoted}|${comment}|${escape}|/(?!\*)|[^[\]"'\\/])*\]`
@@ -552,7 +552,7 @@ export function collectSelectorClasses(selector: string): readonly string[] {
 	const tokens = [
 		...selector.matchAll(
 			new RegExp(
-				String.raw`${quoted}|${comment}|${attribute}|\.(${opening}${name}*)|${name}+|[()]|[\s>+~,*:#|&=]`,
+				String.raw`${quoted}|${comment}|${attribute}|\.(${prefix}${name}*)|${name}+|[()]|[\s>+~,*:#|&=]`,
 				'giuy',
 			),
 		),

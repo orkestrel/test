@@ -1,4 +1,4 @@
-import type { CensusFixture, CensusReading, EscapeFixture, SheetAdoption } from './types.js'
+import type { CensusFixture, CensusResult, EscapeFixture, SheetAdoption } from './types.js'
 import { collectSelectorClasses } from '@src/core'
 import { build, readStyle } from '../helpers.js'
 
@@ -170,7 +170,7 @@ export function readClasses(root: ParentNode): ReadonlySet<string> {
  * readCensus(container).undeclared // ['lead'] — no loaded stylesheet declares it
  * ```
  */
-export function readCensus(root: ParentNode): CensusReading {
+export function readCensus(root: ParentNode): CensusResult {
 	const elements = (root instanceof Element ? 1 : 0) + root.querySelectorAll('*').length
 	if (elements === 0) throw new Error('Class census walked no element')
 	const declared = readCascade()

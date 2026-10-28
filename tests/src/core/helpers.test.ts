@@ -217,15 +217,15 @@ describe('waitForCondition', () => {
 
 describe('waitForText', () => {
 	it('resolves on the first reading that contains the sentence', async () => {
-		const readings = ['Loading', 'Loading', 'Two entries waiting']
+		const texts = ['Loading', 'Loading', 'Two entries waiting']
 		let reads = 0
 
 		const settled = await waitForText(
 			'the ledger arrives',
 			() => {
-				const reading = readings[Math.min(reads, readings.length - 1)] ?? ''
+				const text = texts[Math.min(reads, texts.length - 1)] ?? ''
 				reads += 1
-				return reading
+				return text
 			},
 			'Two entries',
 			{ interval: 0 },
@@ -254,15 +254,15 @@ describe('waitForText', () => {
 	// A screen replacing one sentence with another passes through a frame carrying both, so the
 	// reading that carries the arrival and the departure together must not satisfy the wait.
 	it('waits past a reading that still carries the departing sentence', async () => {
-		const readings = ['Signed out', 'Signed out Signed in', 'Signed in']
+		const texts = ['Signed out', 'Signed out Signed in', 'Signed in']
 		let reads = 0
 
 		const settled = await waitForText(
 			'the session replaces the prompt',
 			() => {
-				const reading = readings[Math.min(reads, readings.length - 1)] ?? ''
+				const text = texts[Math.min(reads, texts.length - 1)] ?? ''
 				reads += 1
-				return reading
+				return text
 			},
 			'Signed in',
 			{ absent: 'Signed out', interval: 0 },

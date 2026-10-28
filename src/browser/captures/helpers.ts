@@ -1,16 +1,18 @@
 import type { Color } from '../types.js'
 import type {
+	CaptureReader,
 	CaptureVariant,
 	FrameOffset,
 	FrameOptions,
-	FrameReading,
+	FrameResult,
+	FrameShot,
 	MediaOptions,
 	StabilityOptions,
 } from './types.js'
-import { waitForCondition } from '@src/core'
+import { readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
 import { readStyle, sendProtocol, waitForFrame } from '../helpers.js'
-import { CAPTURE_PANE, CAPTURE_STAGINGS, MEDIA_STAGE } from './constants.js'
+import { CAPTURE_PANE, CAPTURE_STAGE_LIMIT, MEDIA_STAGE } from './constants.js'
 
 /**
  * Reads one resolved CSS length as a number of pixels.
@@ -309,6 +311,8 @@ export function measureContent(): number {
  * selector and the `--tester-transform`, `--tester-margin-left`, `--viewport-width`, and
  * `--viewport-height` custom properties are the runner's, so a Vitest release that renames any of
  * them reddens the size check that follows rather than writing a wrong frame.
+ * The custom-property overrides serve Vitest 4; `transform: none !important` on the pane and
+ * iframe also suppresses Vitest 5's direct CSS transform.
  *
  * Hand the pane straight back with {@link releasePane}. A tester pinned at a viewport taller than
  * the window puts its lower half beyond what a pointer can reach, so an ordinary press then fails
@@ -326,7 +330,8 @@ export function measureContent(): number {
  * the shot replaces the node and takes any attribute of ours with it.
  *
  * The wait is two frames rather than a delay: the first carries the resize into layout and the
- * second is the paint a screenshot reads.
+ * second is the paint a screenshot reads. An already matching viewport needs no resize command;
+ * the staging rule, paint waits, and rendered-size check still run.
  *
  * The viewport the tester had before this staging is written onto that rule element as the
  * {@link CAPTURE_PANE} value, in `<width>x<height>` form, and {@link releasePane} hands it back.
@@ -340,7 +345,9 @@ export function measureContent(): number {
  */
 export async function stagePane(width: number, height: number): Promise<void> {
 	const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`
-	await page.viewport(width, height)
+	if (window.innerWidth !== width || window.innerHeight !== height) {
+		await page.viewport(width, height)
+	}
 	const frame = window.frameElement
 	const pane = frame?.parentElement
 	const owner = pane?.ownerDocument
@@ -353,9 +360,9 @@ export async function stagePane(width: number, height: number): Promise<void> {
 		rule.setAttribute(CAPTURE_PANE, viewport)
 		rule.textContent = [
 			`[${CAPTURE_PANE}],:has(>iframe[data-vitest])`,
-			'{--tester-transform:none !important;--tester-margin-left:0px !important}',
+			'{--tester-transform:none !important;--tester-margin-left:0px !important;transform:none !important}',
 			'iframe[data-vitest]',
-			'{position:fixed !important;left:0 !important;top:0 !important;right:auto !important;',
+			'{transform:none !important;position:fixed !important;left:0 !important;top:0 !important;right:auto !important;',
 			'bottom:auto !important;width:var(--viewport-width) !important;',
 			'height:var(--viewport-height) !important;z-index:2147483647 !important}',
 		].join('')
@@ -386,7 +393,9 @@ export async function stagePane(width: number, height: number): Promise<void> {
  * otherwise read the last capture's variant. The size comes off the {@link CAPTURE_PANE} value
  * {@link stagePane} wrote onto the rule element, which is the reading taken before the first
  * staging. Calling this on an unstaged pane finds no such value, so it changes nothing and resizes
- * nothing.
+ * nothing. A staged pane sends its saved size even when the tester already holds it, because the
+ * runner refits its frame scale only on a viewport request; a release that skipped it would leave
+ * the next case shooting through the staged scale.
  *
  * That hand-back is what makes {@link stagePane} and this pair a capture's staging rather than a
  * resize: the pair puts the tester back where it found it, so a suite that used it to reach a
@@ -612,14 +621,14 @@ export async function waitForStability(
 	if (!Number.isInteger(frames) || frames < 1) {
 		throw new Error('Stability frames must be a positive integer')
 	}
-	const readings = [read()]
+	const samples = [read()]
 	await waitForCondition(
 		description,
 		async () => {
 			await waitForFrame()
-			readings.push(read())
-			const tail = readings.slice(-(frames + 1))
-			return tail.length > frames && tail.every((reading) => reading === tail[0])
+			samples.push(read())
+			const tail = samples.slice(-(frames + 1))
+			return tail.length > frames && tail.every((sample) => sample === tail[0])
 		},
 		options,
 	)
@@ -661,19 +670,19 @@ export async function releaseMedia(): Promise<void> {
 	]
 	const staged = document.documentElement.getAttribute(MEDIA_STAGE)
 	if (staged !== null) {
-		const readings = staged.split('').map((value) => value === '1')
+		const matches = staged.split('').map((value) => value === '1')
 		if (staged.length === 5) queries.push('(pointer: coarse)')
 		await sendProtocol('Emulation.setEmulatedMedia', {
-			media: readings[0] ? 'print' : 'screen',
+			media: matches[0] ? 'print' : 'screen',
 			features: [
-				{ name: 'prefers-reduced-motion', value: readings[1] ? 'reduce' : 'no-preference' },
-				{ name: 'prefers-color-scheme', value: readings[2] ? 'dark' : 'light' },
-				{ name: 'forced-colors', value: readings[3] ? 'active' : 'none' },
+				{ name: 'prefers-reduced-motion', value: matches[1] ? 'reduce' : 'no-preference' },
+				{ name: 'prefers-color-scheme', value: matches[2] ? 'dark' : 'light' },
+				{ name: 'forced-colors', value: matches[3] ? 'active' : 'none' },
 			],
 		})
 		if (staged.length === 5) {
 			await sendProtocol('Emulation.setTouchEmulationEnabled', {
-				enabled: readings[4],
+				enabled: matches[4],
 				maxTouchPoints: 1,
 			})
 		}
@@ -682,7 +691,7 @@ export async function releaseMedia(): Promise<void> {
 				queries.map((query, index) =>
 					waitForCondition(query, async () => {
 						await waitForFrame()
-						return matchMedia(query).matches === readings[index]
+						return matchMedia(query).matches === matches[index]
 					}),
 				),
 			)
@@ -710,14 +719,17 @@ export async function releaseMedia(): Promise<void> {
  * @param options - The path to write, the viewport to shoot at, and the element to shoot.
  * @returns The absolute path of the written frame, after it has been read back and matched.
  * @throws Thrown when the pane cannot be staged, when the document's height or an element frame's
- * element height never settles under {@link CAPTURE_STAGINGS} restagings, when the provider wrote
+ * element height never settles under {@link CAPTURE_STAGE_LIMIT} restagings, when the provider wrote
  * the frame somewhere else, and when the bytes on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
- * exists. The file is read back through the runner's built-in `readFile` command and compared with
- * the shot itself, which is what separates a frame this run wrote from one an earlier run left
- * behind. The provider resolves `options.path` against the calling test file and returns an absolute
+ * exists. The {@link verifyFrame} helper compares the file with the shot itself. When the page
+ * registered a `readCapture` command, {@link readCaptureReader} returns it and the comparison uses
+ * SHA-256 digests computed in Node for the file and in the browser for the returned bytes. Otherwise
+ * the runner's built-in `readFile` command supplies the base64 comparison. A command failure
+ * propagates without falling back. The provider resolves `options.path`
+ * against the calling test file and returns an absolute
  * path, so the two are compared by the segments that survive resolving `.` and `..` lexically — the
  * refusal is what a provider resolving that path against a different base would trip.
  *
@@ -727,6 +739,8 @@ export async function releaseMedia(): Promise<void> {
  * than the document — a frame that reads as the surface down to the fold and as bare canvas after
  * it. The document is therefore laid out at the declared viewport first and, where it is taller
  * than that, the pane is staged again at the height the document needs, for the shot alone.
+ * Where the tester already has the declared viewport, the reading precedes the initial staging,
+ * so fixed content stages at its final height directly. Every staged height is still read again.
  *
  * That height is {@link measureContent}, never less than `options.height`, because the declared
  * viewport is the smallest frame a variant asks for. The reading is the content's own edge rather
@@ -749,7 +763,7 @@ export async function releaseMedia(): Promise<void> {
  *
  * The re-reading stops when the pane and the edge agree, which is the pane the shot is taken at. A
  * rule that adds height with every pane never reaches that point, so the re-reading is bounded by
- * {@link CAPTURE_STAGINGS} and the shot is refused with
+ * {@link CAPTURE_STAGE_LIMIT} and the shot is refused with
  * `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane` rather than
  * written at a height that is already wrong.
  *
@@ -799,12 +813,13 @@ export async function releaseMedia(): Promise<void> {
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	const element = options.element
 	const scroll = { left: window.scrollX, top: window.scrollY }
+	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
 	try {
-		await stagePane(options.width, options.height)
+		if (!prepared) await stagePane(options.width, options.height)
 		let pane = options.height
 		let covered: number | undefined
 		let growth = 0
-		for (let staging = 0; ; staging += 1) {
+		for (let stage = 0; ; stage += 1) {
 			let height = element?.getBoundingClientRect().height
 			if (element !== undefined && height !== undefined && height > options.height) {
 				// Native alignment resolves the document's scroll clearance, including computed
@@ -844,22 +859,28 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 					}
 				}
 			}
-			const reading = Math.max(
+			const extent = Math.max(
 				height === undefined ? measureContent() : Math.ceil(height),
 				options.height,
 			)
-			if (covered !== undefined) growth = Math.max(0, reading - covered)
-			covered = reading
-			if (pane === covered) break
-			if (staging === CAPTURE_STAGINGS) {
+			if (covered !== undefined) growth = Math.max(0, extent - covered)
+			covered = extent
+			if (pane === covered) {
+				if (prepared && stage === 0) {
+					await stagePane(options.width, pane)
+					continue
+				}
+				break
+			}
+			if (stage === CAPTURE_STAGE_LIMIT) {
 				throw new Error(
-					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGINGS)} restagings: ${String(covered)} over a ${String(pane)} pane`,
+					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGE_LIMIT)} restagings: ${String(covered)} over a ${String(pane)} pane`,
 				)
 			}
 			pane = covered + growth
 			await stagePane(options.width, pane)
 		}
-		let shot: { readonly path: string; readonly base64: string }
+		let shot: FrameShot
 		if (element === undefined) {
 			shot = await page.screenshot({ path: options.path, base64: true })
 		} else {
@@ -896,20 +917,7 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 				else if (offset && style !== null) frame.setAttribute('style', style)
 			}
 		}
-		const segments: string[] = []
-		for (const segment of options.path.replaceAll('\\', '/').split('/')) {
-			if (segment === '' || segment === '.') continue
-			if (segment === '..') segments.pop()
-			else segments.push(segment)
-		}
-		if (!shot.path.replaceAll('\\', '/').endsWith(segments.join('/'))) {
-			throw new Error(
-				`Capture frame was written to ${shot.path} where ${options.path} was asked for`,
-			)
-		}
-		if ((await commands.readFile(shot.path, 'base64')) !== shot.base64) {
-			throw new Error(`Capture frame at ${options.path} is not the one this run shot`)
-		}
+		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
 		try {
@@ -917,6 +925,73 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		} finally {
 			window.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' })
 		}
+	}
+}
+
+/**
+ * Reads the optional disk-digest command the tester page registered.
+ *
+ * @returns The registered `readCapture` command, or undefined where none is registered.
+ *
+ * @remarks Vitest publishes only registered commands, so an unregistered `readCapture` reads as
+ * undefined and a capture falls back to the base64 read-back. Outside a Vitest browser page, where
+ * `commands` is no object, the command reads as undefined too, so importing this module never
+ * throws there.
+ * @example
+ * ```ts
+ * await verifyFrame(shot, '../../tmp/frame.png', readCaptureReader())
+ * ```
+ */
+export function readCaptureReader(): CaptureReader | undefined {
+	if (typeof commands !== 'object' || commands === null) return undefined
+	return readProperty<CaptureReader | undefined>(commands, 'readCapture')
+}
+
+/**
+ * Verifies a screenshot's destination and compares its returned bytes with the written file.
+ *
+ * @param shot - The provider's absolute path and base64 screenshot bytes.
+ * @param path - The requested screenshot path, relative to the test file.
+ * @param reader - The optional Node disk-digest command; omission uses Vitest's base64 read-back.
+ * @throws Thrown when the destination differs, the bytes differ, or either reading fails.
+ * @remarks Digest reads compare SHA-256 of the decoded shot with SHA-256 of the disk bytes.
+ * Command failures propagate unchanged; they never select the base64 fallback.
+ * @example
+ * ```ts
+ * await verifyFrame(shot, '../../tmp/frame.png', readCaptureReader())
+ * ```
+ */
+export async function verifyFrame(
+	shot: FrameShot,
+	path: string,
+	reader?: CaptureReader,
+): Promise<void> {
+	const segments: string[] = []
+	for (const segment of path.replaceAll('\\', '/').split('/')) {
+		if (segment === '' || segment === '.') continue
+		if (segment === '..') segments.pop()
+		else segments.push(segment)
+	}
+	if (!shot.path.replaceAll('\\', '/').endsWith(segments.join('/'))) {
+		throw new Error(`Capture frame was written to ${shot.path} where ${path} was asked for`)
+	}
+	const expected =
+		reader === undefined
+			? shot.base64
+			: [
+					...new Uint8Array(
+						await crypto.subtle.digest(
+							'SHA-256',
+							Uint8Array.from(atob(shot.base64), (character) => character.charCodeAt(0)),
+						),
+					),
+				]
+					.map((byte) => byte.toString(16).padStart(2, '0'))
+					.join('')
+	const written =
+		reader === undefined ? await commands.readFile(shot.path, 'base64') : await reader(shot.path)
+	if (written !== expected) {
+		throw new Error(`Capture frame at ${path} is not the one this run shot`)
 	}
 }
 
@@ -978,10 +1053,10 @@ export async function paintImage(
  *
  * @example
  * ```ts
- * const reading = await readFrame(written)
+ * const result = await readFrame(written)
  * ```
  */
-export async function readFrame(path: string): Promise<FrameReading> {
+export async function readFrame(path: string): Promise<FrameResult> {
 	const encoded = await commands.readFile(path, 'base64').catch((cause: unknown) => {
 		throw new Error(`Capture frame at ${path} could not be read`, { cause })
 	})

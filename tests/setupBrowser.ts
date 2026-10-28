@@ -304,18 +304,18 @@ export function dispatchFromShadow(event: Event): readonly string[] {
 	const host = buildFixture('').appendChild(document.createElement('div'))
 	const button = host.attachShadow({ mode: 'open' }).appendChild(document.createElement('button'))
 	const heard: string[] = []
-	const listening = new AbortController()
+	const controller = new AbortController()
 	document.addEventListener(
 		event.type,
 		(reached) => {
 			heard.push(reached.type)
 		},
-		{ signal: listening.signal },
+		{ signal: controller.signal },
 	)
 	try {
 		button.dispatchEvent(event)
 	} finally {
-		listening.abort()
+		controller.abort()
 	}
 	return heard
 }

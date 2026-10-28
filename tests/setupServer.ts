@@ -107,7 +107,7 @@ export const TEMPORARY_VARIABLES: readonly string[] = Object.freeze(['TMPDIR', '
  * reads no filesystem, so neither the drive nor the share has to exist for the comparison to
  * answer.
  */
-export const FOREIGN_ROOT_SPELLINGS: readonly string[] = Object.freeze([
+export const FOREIGN_ROOT_PATHS: readonly string[] = Object.freeze([
 	'Z:\\orkestrel-test-outside',
 	'\\\\orkestrel-test-host\\share\\outside',
 ])

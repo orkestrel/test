@@ -161,16 +161,16 @@ export function createRecorders<
 	TMap extends Record<string, readonly unknown[]>,
 	TName extends keyof TMap,
 >(source: EventSourceInterface<TMap>, events: readonly TName[]): RecorderMap<TMap, TName> {
-	const building: { -readonly [K in TName]?: RecorderInterface<TMap[TName]> } = {}
+	const recorders: { -readonly [K in TName]?: RecorderInterface<TMap[TName]> } = {}
 	for (const event of events) {
 		const recorder = createRecorder<TMap[TName]>()
 		source.on(event, recorder.handler)
-		building[event] = recorder
+		recorders[event] = recorder
 	}
-	if (!isRecorderMapComplete<TMap, TName>(building, events)) {
+	if (!isRecorderMapComplete<TMap, TName>(recorders, events)) {
 		throw new Error('Emitter recorder map is incomplete')
 	}
-	return building
+	return recorders
 }
 
 /**

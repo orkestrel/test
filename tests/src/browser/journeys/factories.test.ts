@@ -958,9 +958,9 @@ describe('createHarness', () => {
 		harness.destroy()
 		expect(harness.root.isConnected).toBe(false)
 
-		const remaining = document.body.childElementCount
+		const count = document.body.childElementCount
 		expect(captureError(() => harness.destroy())).toBeUndefined()
-		expect(document.body.childElementCount).toBe(remaining)
+		expect(document.body.childElementCount).toBe(count)
 		expect(harness.root.isConnected).toBe(false)
 		expect(harness.status).toBe('failed')
 	})
@@ -997,9 +997,9 @@ describe('createHarness', () => {
 		// One build mark and one reading mark per row, in that order.
 		expect(marks.length).toBe(DISCLOSURE_SCENARIOS.length * 2)
 		for (let row = 0; row < DISCLOSURE_SCENARIOS.length - 1; row += 1) {
-			const reading = requireValue(marks[row * 2 + 1])
+			const time = requireValue(marks[row * 2 + 1])
 			const next = requireValue(marks[row * 2 + 2])
-			expect(next - reading).toBeGreaterThanOrEqual(pause)
+			expect(next - time).toBeGreaterThanOrEqual(pause)
 		}
 		// Nothing waits after the last row: the run returns as soon as that row's reading is in.
 		expect(finished - requireValue(marks[marks.length - 1])).toBeLessThan(pause)

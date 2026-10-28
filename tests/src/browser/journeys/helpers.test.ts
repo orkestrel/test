@@ -1594,7 +1594,7 @@ describe('releasePointer', () => {
 	})
 })
 
-describe.sequential('pointer teardown after failure', () => {
+describe('pointer teardown after failure', { concurrent: false }, () => {
 	const releases = createRecorder<[event: PointerEvent]>()
 	beforeAll(() => document.addEventListener('pointerup', releases.handler))
 	afterAll(() => document.removeEventListener('pointerup', releases.handler))
@@ -2087,12 +2087,12 @@ describe('traverseAccessible', () => {
 				'<button>Finish</button>',
 		)
 		requireValue(container.querySelector('button')).focus()
-		const landings = createRecorder<[event: FocusEvent]>()
-		container.addEventListener('focusin', landings.handler)
+		const focus = createRecorder<[event: FocusEvent]>()
+		container.addEventListener('focusin', focus.handler)
 		const reached = await traverseAccessible('Finish')
 		expect(reached).toBe(container.querySelector('button:last-child'))
 		expect(document.activeElement).toBe(reached)
-		expect(landings.count).toBe(65)
+		expect(focus.count).toBe(65)
 	})
 
 	it('passes a matching name whose role is outside the accepted roles', async () => {
@@ -2102,10 +2102,10 @@ describe('traverseAccessible', () => {
 		)
 		requireValue(container.querySelector('button')).focus()
 		const decoy = requireValue(container.querySelector<HTMLElement>('[role="heading"]'))
-		const landings = createRecorder<[event: FocusEvent]>()
-		decoy.addEventListener('focus', landings.handler)
+		const focus = createRecorder<[event: FocusEvent]>()
+		decoy.addEventListener('focus', focus.handler)
 		const reached = await traverseAccessible('Finish')
-		expect(landings.count).toBe(1)
+		expect(focus.count).toBe(1)
 		expect(reached).toBe(container.querySelector('button:last-child'))
 		expect(document.activeElement).toBe(reached)
 	})
@@ -2179,20 +2179,20 @@ describe('traverseAccessible', () => {
 		const start = requireValue(container.querySelector('button'))
 		const finish = requireValue(container.querySelectorAll('button')[1])
 		start.focus()
-		const landings: Array<HTMLElement | undefined> = []
+		const stops: Array<HTMLElement | undefined> = []
 		for await (const focused of stepFocus(256)) {
-			landings.push(focused)
+			stops.push(focused)
 			if (focused === finish) break
 		}
-		expect(landings.at(-1)).toBe(finish)
-		expect(landings.length).toBeGreaterThan(
+		expect(stops.at(-1)).toBe(finish)
+		expect(stops.length).toBeGreaterThan(
 			container.querySelectorAll('button, input').length * 3 + 10,
 		)
-		expect(landings.length).toBeGreaterThan(countElements())
+		expect(stops.length).toBeGreaterThan(countElements())
 		expect(
 			document.querySelectorAll(FOCUSABLE_SELECTOR).length * FOCUS_SEGMENT_LIMIT +
 				10 -
-				landings.length,
+				stops.length,
 		).toBeGreaterThanOrEqual(container.querySelectorAll('input').length)
 		start.focus()
 		expect(await traverseAccessible('Finish')).toBe(finish)
@@ -2505,14 +2505,14 @@ describe('stepFocus', () => {
 		const input = requireValue(container.querySelector('input'))
 		const finish = requireValue(container.querySelectorAll('button')[1])
 		requireValue(container.querySelector('button')).focus()
-		const landings: Array<HTMLElement | undefined> = []
+		const stops: Array<HTMLElement | undefined> = []
 		for await (const focused of stepFocus(16)) {
-			landings.push(focused)
+			stops.push(focused)
 			if (focused === finish) break
 		}
-		expect(landings.at(-1)).toBe(finish)
-		expect(landings.filter((focused) => focused === input)).toHaveLength(9)
-		expect(FOCUS_SEGMENT_LIMIT).toBeGreaterThanOrEqual(landings.length)
+		expect(stops.at(-1)).toBe(finish)
+		expect(stops.filter((focused) => focused === input)).toHaveLength(9)
+		expect(FOCUS_SEGMENT_LIMIT).toBeGreaterThanOrEqual(stops.length)
 	})
 
 	it('reports repeated native segment landings for every segmented input type', async () => {
@@ -2522,15 +2522,15 @@ describe('stepFocus', () => {
 		)
 		const finish = requireValue(container.querySelectorAll('button')[1])
 		requireValue(container.querySelector('button')).focus()
-		const landings: Array<HTMLElement | undefined> = []
+		const stops: Array<HTMLElement | undefined> = []
 		for await (const focused of stepFocus(40)) {
-			landings.push(focused)
+			stops.push(focused)
 			if (focused === finish) break
 		}
 		for (const input of container.querySelectorAll('input')) {
-			expect(landings.filter((focused) => focused === input).length).toBeGreaterThan(1)
+			expect(stops.filter((focused) => focused === input).length).toBeGreaterThan(1)
 		}
-		expect(landings.at(-1)).toBe(finish)
+		expect(stops.at(-1)).toBe(finish)
 	})
 
 	it('presses Tab once per landing and yields the element focus reached, then nothing past the last', async () => {
@@ -2539,9 +2539,9 @@ describe('stepFocus', () => {
 		)
 		const [one, two] = container.querySelectorAll('button')
 		requireValue(one).focus()
-		const landings: Array<HTMLElement | undefined> = []
-		for await (const focused of stepFocus(2)) landings.push(focused)
-		expect(landings).toStrictEqual([two, undefined])
+		const stops: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(2)) stops.push(focused)
+		expect(stops).toStrictEqual([two, undefined])
 	})
 
 	it('presses no further than the consumer reads', async () => {
@@ -2561,9 +2561,9 @@ describe('stepFocus', () => {
 		const container = buildFixture('<button type="button">One</button>')
 		const button = requireValue(container.querySelector('button'))
 		button.focus()
-		const landings: Array<HTMLElement | undefined> = []
-		for await (const focused of stepFocus(0)) landings.push(focused)
-		expect(landings).toStrictEqual([])
+		const stops: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(0)) stops.push(focused)
+		expect(stops).toStrictEqual([])
 		expect(document.activeElement).toBe(button)
 	})
 
@@ -2571,9 +2571,9 @@ describe('stepFocus', () => {
 		const container = buildFixture('<button type="button">Ghost</button>')
 		const ghost = requireValue(container.querySelector('button'))
 		ghost.addEventListener('focus', () => ghost.blur())
-		const landings: Array<HTMLElement | undefined> = []
-		for await (const focused of stepFocus(1)) landings.push(focused)
-		expect(landings).toStrictEqual([undefined])
+		const stops: Array<HTMLElement | undefined> = []
+		for await (const focused of stepFocus(1)) stops.push(focused)
+		expect(stops).toStrictEqual([undefined])
 		expect(document.activeElement).toBe(document.body)
 	})
 })
@@ -3159,15 +3159,15 @@ describe('readRefusal', () => {
 		})
 
 		let threw = false
-		let reading: string | undefined = 'unread'
+		let refusal: string | undefined = 'unread'
 		try {
-			reading = readRefusal('Hostile')
+			refusal = readRefusal('Hostile')
 		} catch {
 			threw = true
 		}
 
 		expect(threw).toBe(true)
-		expect(reading).toBe('unread')
+		expect(refusal).toBe('unread')
 	})
 })
 
@@ -3730,12 +3730,12 @@ describe('waitForAnimations', () => {
 
 		expect(readStyle(panel, 'color')).toBe('rgb(190, 190, 190)')
 		panel.classList.add('settle-done')
-		const moving = readContrast(panel)
+		const contrast = readContrast(panel)
 
 		await waitForAnimations(panel, { budget: 2000 })
 		const settled = readContrast(panel)
 
-		expect(settled).toBeGreaterThan(moving)
+		expect(settled).toBeGreaterThan(contrast)
 		expect(readStyle(panel, 'color')).toBe('rgb(0, 0, 0)')
 	})
 })
@@ -3759,21 +3759,21 @@ describe('readAnimations', () => {
 		const paused = rest.animate({ opacity: [1, 0.2] }, { duration: 5000 })
 		paused.pause()
 		try {
-			const reading = readAnimations(section)
+			const animations = readAnimations(section)
 			expect(
-				reading.finite.map((animation) =>
+				animations.finite.map((animation) =>
 					animation instanceof CSSTransition ? animation.transitionProperty : animation.id,
 				),
 			).toStrictEqual(['width'])
 			expect(
-				reading.endless.map((animation) =>
+				animations.endless.map((animation) =>
 					animation instanceof CSSAnimation ? animation.animationName : animation.id,
 				),
 			).toStrictEqual(['settle-turn'])
 			// Control: the browser reports the paused animation on the section, and neither list holds
 			// it; the spinner outside the section is the outside element's alone.
 			expect(section.getAnimations({ subtree: true })).toContain(paused)
-			expect([...reading.finite, ...reading.endless]).not.toContain(paused)
+			expect([...animations.finite, ...animations.endless]).not.toContain(paused)
 			expect(readAnimations(requireValue(outside.firstElementChild)).endless).toHaveLength(1)
 			expect(readAnimations(build('div'))).toStrictEqual({ finite: [], endless: [] })
 		} finally {
