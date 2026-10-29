@@ -1,3 +1,8 @@
+import {
+	countSocketHandles,
+	overrideTemporaryDirectory,
+	probePermissionHold,
+} from '../../setupServer.js'
 import type { Duplex } from 'node:stream'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -19,8 +24,16 @@ import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { captureError, createRecorder, requireValue, waitForCondition } from '@src/core'
 import {
+	captureError,
+	createRecorder,
+	requireValue,
+	TIMER_LEAD,
+	waitForCondition,
+	waitForDelay,
+} from '@src/core'
+import {
+	alignLoopClock,
 	chooseFiles,
 	createLink,
 	createLoopback,
@@ -34,6 +47,7 @@ import {
 	readErrorCode,
 	readIdentity,
 	readInventory,
+	readLoopClock,
 	removeTree,
 	requestUpgrade,
 	requireContained,
@@ -50,8 +64,40 @@ import {
 	FOREIGN_ROOT_PATHS,
 	HOST_PROBES,
 	readChooserListeners,
-	TEMPORARY_VARIABLES,
 } from '../../setupServer.js'
+
+describe('loop clock', () => {
+	it('reads whole loop milliseconds and advances across an aligned offset', () => {
+		const before = readLoopClock()
+		const started = performance.now()
+		alignLoopClock(5)
+		expect(Number.isInteger(before)).toBe(true)
+		expect(readLoopClock()).toBeGreaterThan(before)
+		expect(performance.now() - started).toBeGreaterThanOrEqual(5)
+	})
+
+	it('bounds late-armed real timers and controls the unadjusted lower bound', async (context) => {
+		const spans: number[] = []
+		for (const _ of Array.from({ length: 50 })) {
+			alignLoopClock(0.9)
+			const started = performance.now()
+			const delayed = waitForDelay(10)
+			alignLoopClock()
+			await delayed
+			spans.push(performance.now() - started)
+		}
+		expect(spans).toHaveLength(50)
+		for (const span of spans) expect(span).toBeGreaterThanOrEqual(10 - TIMER_LEAD)
+		const minimum = Math.min(...spans)
+		if (minimum >= 10) {
+			context.skip(`No short timer in ${spans.length} samples; minimum ${minimum} ms`)
+		}
+		expect(minimum).toBeLessThan(10)
+		expect(() => {
+			for (const span of spans) expect(span).toBeGreaterThanOrEqual(10)
+		}).toThrow(/greater than or equal to 10/)
+	})
+})
 
 describe('readCapture', () => {
 	it('hashes disk bytes and detects a same-length replacement', async () => {
@@ -86,30 +132,6 @@ describe('readCapture', () => {
 // ran was a coin toss — so every following hold is bounded by the parent rather than by a clock.
 const HOLD_CWD = "process.stdout.write('ready\\n'); setTimeout(() => {}, 1e9)"
 
-/**
- * Attempt the permission hold `destroyScratch`'s POSIX case is built on, and report whether the host
- * really refused the removal.
- *
- * @returns True if removing a directory entry under a parent stripped of write permission was
- * refused; false if the host removed it anyway.
- */
-function probePermissionHold(): boolean {
-	const parent = mkdtempSync(join(tmpdir(), 'orkestrel-test-hold-probe-'))
-	const held = join(parent, 'held')
-	mkdirSync(held)
-	chmodSync(parent, 0o500)
-	let refused = false
-	try {
-		rmSync(held, { force: true, recursive: true })
-	} catch {
-		refused = true
-	} finally {
-		chmodSync(parent, 0o700)
-		rmSync(parent, { force: true, recursive: true })
-	}
-	return refused
-}
-
 // Removing a directory entry needs write permission on its parent, and two different hosts decline
 // to enforce that: Windows ignores the bit, and a POSIX uid of 0 is exempt from the check the bit
 // describes. `supportsMode` cannot answer this, because it reads whether a bit is stored rather than
@@ -117,37 +139,6 @@ function probePermissionHold(): boolean {
 // mechanism itself is attempted here — strip the parent, try the removal, read the host's answer —
 // and the following case is keyed to that refusal rather than to a platform or a user name.
 const PERMISSION_HOLD_REFUSES_REMOVAL = probePermissionHold()
-
-/**
- * Count the socket handles holding this process's event loop open.
- *
- * @returns The number of live TCP socket resources, server listeners excluded.
- */
-function countSocketHandles(): number {
-	return process.getActiveResourcesInfo().filter((name) => name === 'TCPSocketWrap').length
-}
-
-/**
- * Points every temporary-directory environment variable at one directory.
- *
- * @param path - The directory `os.tmpdir()` reports while the override holds.
- * @returns A function restoring each variable to the value it held before the call.
- */
-function overrideTemporaryDirectory(path: string): () => void {
-	const saved = new Map<string, string | undefined>()
-	for (const name of TEMPORARY_VARIABLES) {
-		saved.set(name, process.env[name])
-		process.env[name] = path
-	}
-	// Assigning `undefined` writes the string `'undefined'`, so a variable that was unset before the
-	// override is restored by deleting it rather than by assigning its saved value back.
-	return () => {
-		for (const [name, value] of saved) {
-			if (value === undefined) delete process.env[name]
-			else process.env[name] = value
-		}
-	}
-}
 
 // `resolveContained` refuses a target whose root-relative spelling is itself absolute, and `relative`
 // answers that way only where the two paths carry roots that differ. The mechanism is asked of this

@@ -4,23 +4,26 @@ import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../../setup.js'
-import { buildFixture, resetFixtures, STATES, VARIANTS } from '../../../setupBrowser.js'
+import {
+	applyDarkTheme,
+	buildFixture,
+	resetFixtures,
+	STATES,
+	VARIANTS,
+} from '../../../setupBrowser.js'
 
 // Relative to this test file, which is where the provider resolves a screenshot path from. `tmp` is
 // ignored by git, so a written portfolio never reaches a commit.
 const DIRECTORY = '../../../../tmp/capture/portfolio'
 
-let width = 0
-
-let height = 0
+const viewport = Promise.withResolvers<readonly [number, number]>()
 
 beforeAll(() => {
-	width = window.innerWidth
-	height = window.innerHeight
+	viewport.resolve([window.innerWidth, window.innerHeight])
 })
 
 afterAll(async () => {
-	await page.viewport(width, height)
+	await page.viewport(...(await viewport.promise))
 })
 
 afterEach(resetFixtures)
@@ -123,6 +126,7 @@ describe('createPortfolio', () => {
 	})
 
 	it('applies the variant, hands the viewport back, writes the file, and records it', async () => {
+		const [width, height] = await viewport.promise
 		const applied = createRecorder<[]>()
 		const portfolio = createPortfolio({
 			states: STATES,
@@ -214,7 +218,7 @@ describe('createPortfolio', () => {
 				name: 'dark-390',
 				width: 390,
 				height: 844,
-				apply: () => document.documentElement.setAttribute('data-theme', 'dark'),
+				apply: applyDarkTheme,
 			},
 		]
 		const portfolio = createPortfolio({

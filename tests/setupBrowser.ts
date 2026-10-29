@@ -1,5 +1,8 @@
 import type { CaptureVariant } from '@src/browser'
-import { render } from '@src/browser'
+import type { StateScenario } from '@src/core'
+import { requireValue } from '@src/core'
+import { TestValue } from './setup.js'
+import { clickAccessible, clickDisclosure, readStates, render } from '@src/browser'
 
 /** Lists native file-input arrangements that a journey must refuse before activation. */
 export const FILE_REFUSALS = Object.freeze([
@@ -330,4 +333,143 @@ export function dispatchFromShadow(event: Event): readonly string[] {
  */
 export function resetFixtures(): void {
 	for (const fixture of fixtures.splice(0)) fixture.remove()
+}
+
+// The worked statechart table `guides/test.md` § Patterns → "Drive a statechart table" carries. The
+// entity is a native disclosure with a second door: the summary toggles it, and a Dismiss button
+// closes it and does nothing when it is already closed. That second door is what gives the table a
+// row whose event leaves the state unchanged, which a lone `<details>` cannot have.
+export type DisclosureState = 'closed' | 'open'
+
+export type DisclosureEvent = 'toggle' | 'dismiss'
+
+export interface DisclosureContext {
+	readonly verify: (actual: DisclosureState, expected: DisclosureState) => void
+	readonly summary: HTMLElement
+}
+
+// The fixture the row before this one left on the page. A journey verb resolves its own target by
+// accessible name, so two mounted disclosures called "Advanced" are an ambiguity rather than a
+// second fixture: each build takes the previous one back out before rendering its own.
+export const mounted = new TestValue<HTMLElement | undefined>(undefined)
+
+export function buildDisclosure(
+	verify: (actual: DisclosureState, expected: DisclosureState) => void,
+): DisclosureContext {
+	mounted.value?.remove()
+	const container = buildFixture(
+		'<details><summary>Advanced</summary><p>Every setting.</p></details><button type="button">Dismiss</button>',
+	)
+	const details = requireValue(container.querySelector('details'))
+	requireValue(container.querySelector('button')).addEventListener('click', () => {
+		details.open = false
+	})
+	mounted.value = container
+	return { summary: requireValue(container.querySelector('summary')), verify }
+}
+
+export function readDisclosure(context: DisclosureContext): DisclosureState {
+	return readStates(context.summary).includes('expanded') ? 'open' : 'closed'
+}
+
+export async function arrangeDisclosure(
+	context: DisclosureContext,
+	state: DisclosureState,
+): Promise<void> {
+	if (readDisclosure(context) !== state) await clickDisclosure('Advanced')
+}
+
+// The context is unused because a journey verb resolves its own target: the summary and the button
+// are found by what a person reads, not by a node this row was handed.
+export async function actOnDisclosure(
+	_context: DisclosureContext,
+	event: DisclosureEvent,
+): Promise<void> {
+	if (event === 'toggle') await clickDisclosure('Advanced')
+	else await clickAccessible('Dismiss')
+}
+
+export function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	context.verify(readDisclosure(context), state)
+}
+
+export const DISCLOSURE_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: {
+			name: 'closed opens through the summary',
+			from: 'closed',
+			event: 'toggle',
+			to: 'open',
+		},
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+	{
+		transition: {
+			name: 'open closes through the summary',
+			from: 'open',
+			event: 'toggle',
+			to: 'closed',
+		},
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+	{
+		transition: {
+			name: 'open closes through the button',
+			from: 'open',
+			event: 'dismiss',
+			to: 'closed',
+		},
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+	{
+		transition: {
+			name: 'closed stays closed through the button',
+			from: 'closed',
+			event: 'dismiss',
+			to: 'closed',
+		},
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+// One row whose `to` state the event cannot reach. Nothing about the row is malformed: the summary
+// really does open the disclosure, so only `assert` can catch it.
+export const MISMATCHED_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: {
+			name: 'the summary leaves it closed',
+			from: 'closed',
+			event: 'toggle',
+			to: 'closed',
+		},
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+// The same table with the mismatched row second, so the rows after a failing row are observable.
+export const MIXED_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	requireValue(DISCLOSURE_SCENARIOS[0]),
+	requireValue(MISMATCHED_SCENARIOS[0]),
+	requireValue(DISCLOSURE_SCENARIOS[2]),
+	requireValue(DISCLOSURE_SCENARIOS[3]),
+]
+
+export function applyDarkTheme(): void {
+	document.documentElement.setAttribute('data-theme', 'dark')
 }

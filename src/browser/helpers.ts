@@ -23,19 +23,30 @@ export async function sendProtocol(
 	method: string,
 	params?: Readonly<Record<string, unknown>>,
 ): Promise<unknown> {
-	let session: unknown
-	let send: unknown
-	try {
-		session = cdp()
-		send = readProperty<unknown>(session, 'send')
-	} catch (cause) {
-		throw new Error('Browser provider exposes no DevTools session', { cause })
-	}
+	const [session, send] = readProtocolSession()
 	if (typeof send !== 'function') {
 		throw new Error('Browser provider exposes no DevTools session')
 	}
 	const reply = await invokeUnchecked<Promise<unknown>>(session, send, [method, params])
 	return reply
+}
+
+/**
+ * Reads the browser provider's DevTools session and its send member.
+ *
+ * @throws Thrown when the provider or member read fails.
+ * @example
+ * ```ts
+ * const [session, send] = readProtocolSession()
+ * ```
+ */
+export function readProtocolSession(): readonly [unknown, unknown] {
+	try {
+		const session: unknown = cdp()
+		return [session, readProperty<unknown>(session, 'send')]
+	} catch (cause) {
+		throw new Error('Browser provider exposes no DevTools session', { cause })
+	}
 }
 
 /**

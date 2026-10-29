@@ -1,14 +1,12 @@
-import type {
-	JSONSafe,
-	RecorderInterface,
-	SignalRegistration,
-	StatechartStatus,
-	StateScenario,
-} from '@src/core'
+import type { DisclosureContext } from '../../setup.js'
+import type { JSONSafe, SignalRegistration, StatechartStatus } from '@src/core'
 import {
 	buildRefusal,
 	buildRetryExhausted,
 	captureError,
+	captureProduction,
+	renderRetryValue,
+	TIMER_LEAD,
 	checkBounds,
 	collect,
 	collectSelectorClasses,
@@ -34,7 +32,20 @@ import {
 	waitForText,
 } from '@src/core'
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { createAsyncSource, createStreamSource, REFUSAL } from '../../setup.js'
+import {
+	buildDisclosure,
+	ignoreEvent,
+	createEventListener,
+	DISCLOSURE_SCENARIOS,
+	MISMATCHED_SCENARIOS,
+	readFixtureValue,
+	REFUSED_SCENARIO,
+	createAsyncSource,
+	createStreamSource,
+	REFUSAL,
+	TestCounter,
+	TestValue,
+} from '../../setup.js'
 
 // Interfaces rather than type aliases: TypeScript grants an implicit index signature to an alias
 // and never to an interface, so only an interface exercises what the `JSONValue` bound rejected.
@@ -61,20 +72,19 @@ interface Tagged {
 
 describe('waitForDelay', () => {
 	it('uses a real timer for the default delay', async () => {
-		let resolved = false
+		const resolved = new TestCounter()
 		const pending = waitForDelay().then(() => {
-			resolved = true
+			resolved.increment()
 		})
 		await Promise.resolve()
-		expect(resolved).toBe(false)
+		expect(resolved.count > 0).toBe(false)
 		await expect(pending).resolves.toBeUndefined()
-		expect(resolved).toBe(true)
+		expect(resolved.count > 0).toBe(true)
 	})
 
 	it('waits for the requested delay', async () => {
 		const delay = 20
-		const clockSlop = 2
-		const floor = delay - clockSlop
+		const floor = delay - TIMER_LEAD
 		const start = performance.now()
 		await waitForDelay(delay)
 		const elapsed = performance.now() - start
@@ -92,49 +102,49 @@ describe('waitForAbort', () => {
 
 	it('parks until the signal aborts', async () => {
 		const controller = new AbortController()
-		let resolved = false
+		const resolved = new TestCounter()
 		const pending = waitForAbort(controller.signal).then(() => {
-			resolved = true
+			resolved.increment()
 		})
 		await Promise.resolve()
-		expect(resolved).toBe(false)
+		expect(resolved.count > 0).toBe(false)
 
 		controller.abort()
 
 		await expect(pending).resolves.toBeUndefined()
-		expect(resolved).toBe(true)
+		expect(resolved.count > 0).toBe(true)
 	})
 })
 
 describe('waitForCondition', () => {
 	it('returns after one immediate read with a zero budget', async () => {
-		let reads = 0
+		const reads = new TestCounter()
 
 		await waitForCondition(
 			'ready immediately',
 			() => {
-				reads += 1
+				reads.increment()
 				return true
 			},
 			{ budget: 0, interval: 50 },
 		)
 
-		expect(reads).toBe(1)
+		expect(reads.count).toBe(1)
 	})
 
 	it('returns when a later read holds', async () => {
-		let reads = 0
+		const reads = new TestCounter()
 
 		await waitForCondition(
 			'ready later',
 			() => {
-				reads += 1
-				return reads === 3
+				reads.increment()
+				return reads.count === 3
 			},
 			{ interval: 0 },
 		)
 
-		expect(reads).toBe(3)
+		expect(reads.count).toBe(3)
 	})
 
 	it('awaits an asynchronous condition', async () => {
@@ -154,14 +164,12 @@ describe('waitForCondition', () => {
 
 	it('propagates a condition throw unchanged', async () => {
 		const thrown = new Error('condition failed')
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await waitForCondition('throwing condition', () => {
 				throw thrown
 			})
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(thrown)
 	})
@@ -169,40 +177,38 @@ describe('waitForCondition', () => {
 	it('rejects an aborted wait with the signal reason and stops reading', async () => {
 		const controller = new AbortController()
 		const reason = new Error('wait aborted')
-		let reads = 0
+		const reads = new TestCounter()
 		setTimeout(() => controller.abort(reason), 0)
 
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await waitForCondition(
 				'aborted condition',
 				() => {
-					reads += 1
+					reads.increment()
 					return false
 				},
 				{ budget: 100, interval: 20, signal: controller.signal },
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(reason)
-		expect(reads).toBe(1)
+		expect(reads.count).toBe(1)
 	})
 
 	it('accepts a true reading taken after the final interval', async () => {
-		let reads = 0
+		const reads = new TestCounter()
 
 		await waitForCondition(
 			'final reading',
 			() => {
-				reads += 1
-				return reads === 2
+				reads.increment()
+				return reads.count === 2
 			},
 			{ budget: 10, interval: 20 },
 		)
 
-		expect(reads).toBe(2)
+		expect(reads.count).toBe(2)
 	})
 
 	it('refuses invalid budgets and intervals', async () => {
@@ -218,13 +224,13 @@ describe('waitForCondition', () => {
 describe('waitForText', () => {
 	it('resolves on the first reading that contains the sentence', async () => {
 		const texts = ['Loading', 'Loading', 'Two entries waiting']
-		let reads = 0
+		const reads = new TestCounter()
 
 		const settled = await waitForText(
 			'the ledger arrives',
 			() => {
-				const text = texts[Math.min(reads, texts.length - 1)] ?? ''
-				reads += 1
+				const text = texts[Math.min(reads.count, texts.length - 1)] ?? ''
+				reads.increment()
 				return text
 			},
 			'Two entries',
@@ -232,7 +238,7 @@ describe('waitForText', () => {
 		)
 
 		expect(settled).toBe('Two entries waiting')
-		expect(reads).toBe(3)
+		expect(reads.count).toBe(3)
 	})
 
 	// The containing reading is the control: it satisfies the default and must not satisfy `exact`,
@@ -255,13 +261,13 @@ describe('waitForText', () => {
 	// reading that carries the arrival and the departure together must not satisfy the wait.
 	it('waits past a reading that still carries the departing sentence', async () => {
 		const texts = ['Signed out', 'Signed out Signed in', 'Signed in']
-		let reads = 0
+		const reads = new TestCounter()
 
 		const settled = await waitForText(
 			'the session replaces the prompt',
 			() => {
-				const text = texts[Math.min(reads, texts.length - 1)] ?? ''
-				reads += 1
+				const text = texts[Math.min(reads.count, texts.length - 1)] ?? ''
+				reads.increment()
 				return text
 			},
 			'Signed in',
@@ -269,7 +275,7 @@ describe('waitForText', () => {
 		)
 
 		expect(settled).toBe('Signed in')
-		expect(reads).toBe(3)
+		expect(reads.count).toBe(3)
 	})
 
 	it('refuses an empty expectation and an empty departure', async () => {
@@ -286,13 +292,13 @@ describe('waitForText', () => {
 	// reading that satisfies the arrival carries the departure too. The reader tally is what shows
 	// the refusal is eager rather than a timeout the budget paid for.
 	it('refuses a departure the expectation carries, before it reads anything', async () => {
-		let reads = 0
+		const reads = new TestCounter()
 
 		await expect(
 			waitForText(
 				'the ledger arrives',
 				() => {
-					reads += 1
+					reads.increment()
 					return 'Two entries waiting'
 				},
 				'Two entries',
@@ -306,7 +312,7 @@ describe('waitForText', () => {
 			waitForText(
 				'the ledger arrives',
 				() => {
-					reads += 1
+					reads.increment()
 					return 'Two entries'
 				},
 				'Two entries',
@@ -314,7 +320,7 @@ describe('waitForText', () => {
 			),
 		).rejects.toThrow(new Error('Text departure must not appear in the text expectation'))
 
-		expect(reads).toBe(0)
+		expect(reads.count).toBe(0)
 
 		// The control: a departure the expectation does not carry is satisfiable, and the wait takes
 		// its readings as it always did, under `exact` and without it alike.
@@ -333,8 +339,7 @@ describe('waitForText', () => {
 
 	it('propagates a reader throw unchanged', async () => {
 		const thrown = new Error('the region is not rendered')
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await waitForText(
 				'the region arrives',
 				() => {
@@ -342,9 +347,8 @@ describe('waitForText', () => {
 				},
 				'Ready',
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(thrown)
 	})
@@ -363,16 +367,14 @@ describe('waitForText', () => {
 		const reason = new Error('journey aborted')
 		setTimeout(() => controller.abort(reason), 0)
 
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await waitForText('the ledger arrives', () => 'Loading', 'Two entries', {
 				budget: 100,
 				interval: 20,
 				signal: controller.signal,
 			})
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(reason)
 	})
@@ -385,37 +387,62 @@ describe('waitForText', () => {
 })
 
 describe('retryUntil', () => {
+	it('exhausts a synchronous producer failure before its queued abort runs', async () => {
+		const controller = new AbortController()
+		const producer = new Error('producer refused')
+		const abort = new Error('queued abort')
+		const pending = retryUntil(
+			'synchronous refusal',
+			() => {
+				queueMicrotask(() => controller.abort(abort))
+				throw producer
+			},
+			() => true,
+			{ attempts: 1, budget: 60_000, signal: controller.signal },
+		)
+		const outcome = await captureProduction(() => pending)
+		if (outcome.status !== 'rejected') throw new Error('Expected attempt exhaustion')
+		expect(outcome.reason).toBeInstanceOf(Error)
+		if (!(outcome.reason instanceof Error)) throw new Error('Expected an exhaustion error')
+		expect(outcome.reason.message).toBe(
+			'Retry "synchronous refusal" did not succeed within 1 attempts',
+		)
+		expect(outcome.reason.cause).toBe(producer)
+		expect(outcome.reason).not.toBe(abort)
+		expect(controller.signal.reason).toBe(abort)
+	})
+
 	it('returns after the first satisfying attempt', async () => {
-		let calls = 0
+		const calls = new TestCounter()
 
 		const value = await retryUntil(
 			'first value',
 			() => {
-				calls += 1
+				calls.increment()
 				return 'ready'
 			},
 			(candidate) => candidate === 'ready',
 		)
 
 		expect(value).toBe('ready')
-		expect(calls).toBe(1)
+		expect(calls.count).toBe(1)
 	})
 
 	it('returns a value from a later attempt', async () => {
-		let calls = 0
+		const calls = new TestCounter()
 
 		const value = await retryUntil(
 			'later value',
 			() => {
-				calls += 1
-				return calls
+				calls.increment()
+				return calls.count
 			},
 			(candidate) => candidate === 3,
 			{ interval: 0 },
 		)
 
 		expect(value).toBe(3)
-		expect(calls).toBe(3)
+		expect(calls.count).toBe(3)
 	})
 
 	it('rejects when the attempt bound is exhausted', async () => {
@@ -429,29 +456,29 @@ describe('retryUntil', () => {
 	})
 
 	it('rejects when the time budget is exhausted', async () => {
-		let calls = 0
+		const calls = new TestCounter()
 		await expect(
 			retryUntil(
 				'time limit',
 				() => {
-					calls += 1
+					calls.increment()
 					return false
 				},
 				Boolean,
 				{ attempts: 1, budget: 0, interval: 10 },
 			),
 		).rejects.toThrow('Retry "time limit" did not succeed within 0ms')
-		expect(calls).toBe(1)
+		expect(calls.count).toBe(1)
 	})
 
 	it('names the last produced value when exhausted', async () => {
-		let value = 'earlier'
+		const reading = new TestValue('earlier')
 		await expect(
 			retryUntil(
 				'last value',
 				() => {
-					const current = value
-					value = 'latest'
+					const current = reading.value
+					reading.value = 'latest'
 					return current
 				},
 				() => false,
@@ -461,8 +488,7 @@ describe('retryUntil', () => {
 	})
 
 	it('bounds the rendered last value in the exhaustion message', async () => {
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await retryUntil(
 				'bounded value',
 				() => 'x'.repeat(400),
@@ -472,9 +498,8 @@ describe('retryUntil', () => {
 					budget: 100,
 				},
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBeInstanceOf(Error)
 		if (!(caught instanceof Error)) throw new Error('Expected a retry error')
@@ -496,23 +521,21 @@ describe('retryUntil', () => {
 	it('counts producer throws and uses the last error as the exhaustion cause', async () => {
 		const first = new Error('first failure')
 		const last = new Error('last failure')
-		let calls = 0
-		let caught: unknown
-		try {
+		const calls = new TestCounter()
+		const outcome = await captureProduction(async () => {
 			await retryUntil(
 				'throwing producer',
 				() => {
-					calls += 1
-					throw calls === 1 ? first : last
+					calls.increment()
+					throw calls.count === 1 ? first : last
 				},
 				() => true,
 				{ attempts: 2, budget: 100, interval: 0 },
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
-		expect(calls).toBe(2)
+		expect(calls.count).toBe(2)
 		expect(caught).toBeInstanceOf(Error)
 		if (!(caught instanceof Error)) throw new Error('Expected a retry error')
 		expect(caught.cause).toBe(last)
@@ -520,8 +543,7 @@ describe('retryUntil', () => {
 
 	it('propagates a predicate throw unchanged', async () => {
 		const thrown = new Error('predicate failed')
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await retryUntil(
 				'throwing predicate',
 				() => 'value',
@@ -529,9 +551,8 @@ describe('retryUntil', () => {
 					throw thrown
 				},
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(thrown)
 	})
@@ -539,35 +560,36 @@ describe('retryUntil', () => {
 	it('rejects an aborted retry with the signal reason', async () => {
 		const controller = new AbortController()
 		const reason = new Error('retry aborted')
-		let calls = 0
+		const calls = new TestCounter()
 		setTimeout(() => controller.abort(reason), 0)
 
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await retryUntil(
 				'aborted retry',
 				() => {
-					calls += 1
+					calls.increment()
 					return false
 				},
 				Boolean,
 				{ budget: 100, interval: 20, signal: controller.signal },
 			)
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(reason)
-		expect(calls).toBe(1)
+		expect(calls.count).toBe(1)
 	})
 })
 
 describe('waitForEvent', () => {
 	it('resolves with the exact delivered tuple', async () => {
-		let deliver: ((name: string, count: number) => void) | undefined
+		const subscription = new TestValue<((name: string, count: number) => void) | undefined>(
+			undefined,
+		)
 		const pending = waitForEvent<[name: string, count: number]>((listener) => {
-			deliver = listener
+			subscription.value = listener
 		}, 'job completed')
+		const deliver = subscription.value
 		if (deliver === undefined) throw new Error('Expected an event listener')
 
 		deliver('ready', 2)
@@ -576,26 +598,26 @@ describe('waitForEvent', () => {
 	})
 
 	it('names the event and budget on timeout and invokes cleanup', async () => {
-		let cleanups = 0
+		const cleanups = new TestCounter()
 		const pending = waitForEvent(
 			() => () => {
-				cleanups += 1
+				cleanups.increment()
 			},
 			'worker exit',
 			{ budget: 5 },
 		)
 
 		await expect(pending).rejects.toThrow('Event "worker exit" was not delivered within 5ms')
-		expect(cleanups).toBe(1)
+		expect(cleanups.count).toBe(1)
 	})
 
 	it('rejects with the abort reason and invokes cleanup', async () => {
 		const controller = new AbortController()
 		const reason = new Error('event aborted')
-		let cleanups = 0
+		const cleanups = new TestCounter()
 		const pending = waitForEvent(
 			() => () => {
-				cleanups += 1
+				cleanups.increment()
 			},
 			'aborted event',
 			{ budget: 100, signal: controller.signal },
@@ -603,14 +625,12 @@ describe('waitForEvent', () => {
 
 		controller.abort(reason)
 
-		let caught: unknown
-		try {
+		const outcome = await captureProduction(async () => {
 			await pending
-		} catch (error) {
-			caught = error
-		}
+		})
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 		expect(caught).toBe(reason)
-		expect(cleanups).toBe(1)
+		expect(cleanups.count).toBe(1)
 	})
 
 	it('ignores a second delivery after settlement', async () => {
@@ -649,12 +669,9 @@ describe('decodeJSONLines', () => {
 	})
 
 	it('names a malformed physical line and keeps the native syntax error as cause', () => {
-		let caught: unknown
-		try {
+		const caught = captureError(() => {
 			decodeJSONLines('{}\n\n{')
-		} catch (error) {
-			caught = error
-		}
+		})
 
 		expect(caught).toBeInstanceOf(Error)
 		if (!(caught instanceof Error)) throw new Error('Expected a JSON Lines error')
@@ -665,12 +682,12 @@ describe('decodeJSONLines', () => {
 
 describe('captureError', () => {
 	it('invokes a completing thunk exactly once', () => {
-		let count = 0
+		const count = new TestCounter()
 		captureError(() => {
-			count += 1
+			count.increment()
 		})
 
-		expect(count).toBe(1)
+		expect(count.count).toBe(1)
 	})
 
 	it('returns undefined when the thunk does not throw', () => {
@@ -854,7 +871,7 @@ describe('roundTripJSON', () => {
 	it('refuses undefined, a function, and a symbol at depth under an unknown member', () => {
 		const message = 'JSON values must not contain undefined, functions, or symbols'
 		const absent: Record<string, unknown> = { nested: { deep: [undefined] } }
-		const called: Record<string, unknown> = { nested: { deep: [() => 'value'] } }
+		const called: Record<string, unknown> = { nested: { deep: [readFixtureValue] } }
 		const keyed: Record<string, unknown> = { nested: { deep: [Symbol('control')] } }
 		const omitted: Record<string, unknown> = { nested: { deep: undefined } }
 
@@ -975,9 +992,9 @@ describe('buildRetryExhausted', () => {
 describe('dropRegistration', () => {
 	it('drops the registration naming the installed listener and aborts its cleanup', () => {
 		const cleanup = new AbortController()
-		const listener: EventListener = () => undefined
-		const installed: EventListenerObject = { handleEvent: () => undefined }
-		const other: EventListenerObject = { handleEvent: () => undefined }
+		const listener: EventListener = ignoreEvent
+		const installed = createEventListener()
+		const other = createEventListener()
 		const kept: SignalRegistration = [listener, other, false, undefined]
 		const registrations: SignalRegistration[] = [kept, [listener, installed, true, cleanup]]
 
@@ -990,8 +1007,8 @@ describe('dropRegistration', () => {
 	})
 
 	it('drops an unscoped registration, which carries no cleanup to abort', () => {
-		const installed: EventListenerObject = { handleEvent: () => undefined }
-		const listener: EventListener = () => undefined
+		const installed = createEventListener()
+		const listener: EventListener = ignoreEvent
 		const registrations: SignalRegistration[] = [[listener, installed, false, undefined]]
 
 		expect(dropRegistration(registrations, installed)?.[3]).toBeUndefined()
@@ -999,9 +1016,9 @@ describe('dropRegistration', () => {
 	})
 
 	it('answers undefined for a listener the list does not hold and changes nothing', () => {
-		const listener: EventListener = () => undefined
-		const installed: EventListenerObject = { handleEvent: () => undefined }
-		const absent: EventListenerObject = { handleEvent: () => undefined }
+		const listener: EventListener = ignoreEvent
+		const installed = createEventListener()
+		const absent = createEventListener()
 		const registrations: SignalRegistration[] = [[listener, installed, false, undefined]]
 
 		expect(dropRegistration(registrations, absent)).toBeUndefined()
@@ -1023,96 +1040,6 @@ describe('resolveRoot', () => {
 // The statechart cases drive one real entity rather than a scripted stand-in: a disclosure that is
 // closed or open and accepts a show or a hide. The scenarios sit at module scope so each phase reads
 // its subject from its own parameters, which is the shape the published contract asks a consumer for.
-type DisclosureState = 'closed' | 'open'
-
-type DisclosureEvent = 'show' | 'hide'
-
-interface DisclosureContext {
-	readonly disclosure: Disclosure
-	readonly trail: RecorderInterface<readonly [phase: string, subject: string]>
-}
-
-class Disclosure {
-	#state: DisclosureState = 'closed'
-
-	get state(): DisclosureState {
-		return this.#state
-	}
-
-	show(): void {
-		this.#state = 'open'
-	}
-
-	hide(): void {
-		this.#state = 'closed'
-	}
-}
-
-function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
-	context.trail.handler('arrange', state)
-	if (state === 'open') context.disclosure.show()
-}
-
-// Asynchronous on purpose: an unawaited act would leave the entity in its arranged state, so the
-// happy path fails rather than passes if `executeScenario` stops awaiting a phase.
-async function actOnDisclosure(context: DisclosureContext, event: DisclosureEvent): Promise<void> {
-	context.trail.handler('act', event)
-	await waitForDelay()
-	if (event === 'show') context.disclosure.show()
-	else context.disclosure.hide()
-}
-
-function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
-	context.trail.handler('assert', state)
-	expect(context.disclosure.state).toBe(state)
-}
-
-function buildDisclosure(
-	trail: RecorderInterface<readonly [phase: string, subject: string]>,
-): DisclosureContext {
-	return { disclosure: new Disclosure(), trail }
-}
-
-const DISCLOSURE_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-	{
-		transition: { name: 'open closes on hide', from: 'open', event: 'hide', to: 'closed' },
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
-// The control, drawn from outside the preceding population: the same entity and the same three phases,
-// with a `to` state the event cannot reach. Nothing about the row is malformed, so the assertion is
-// the only thing that can catch it.
-const MISMATCHED_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
-const REFUSED_SCENARIO: StateScenario<DisclosureState, DisclosureEvent, DisclosureContext> = {
-	transition: { name: 'arrange refuses', from: 'closed', event: 'show', to: 'open' },
-	arrange() {
-		throw REFUSAL
-	},
-	act: actOnDisclosure,
-	assert: assertDisclosure,
-}
-
 // T3-C12. One spelling of a refused build, reached by the bare runner here and by the browser
 // harness in `tests/src/browser/journeys/factories.test.ts`.
 describe('buildRefusal', () => {
@@ -1130,9 +1057,10 @@ describe('buildRefusal', () => {
 	it('is the sentence the bare runner raises for a refused row', async () => {
 		const refusal = new Error('no fixture')
 
-		const thrown = await executeScenarios(MISMATCHED_SCENARIOS, () => {
+		const pending = executeScenarios(MISMATCHED_SCENARIOS, () => {
 			throw refusal
-		}).catch((error: unknown) => error)
+		})
+		const thrown = await pending.catch((error: unknown) => error)
 
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(failure.message).toBe(buildRefusal('show leaves it closed', refusal).message)
@@ -1143,7 +1071,9 @@ describe('buildRefusal', () => {
 describe('executeScenario', () => {
 	it('drives arrange, act, and assert in order, each against its own part of the transition', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
-		const context = buildDisclosure(trail)
+		const context = buildDisclosure(trail, waitForDelay, (actual, expected) => {
+			expect(actual).toBe(expected)
+		})
 
 		await executeScenario(requireValue(DISCLOSURE_SCENARIOS[0]), context)
 
@@ -1157,7 +1087,9 @@ describe('executeScenario', () => {
 
 	it('arranges the from state before the event is applied', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
-		const context = buildDisclosure(trail)
+		const context = buildDisclosure(trail, waitForDelay, (actual, expected) => {
+			expect(actual).toBe(expected)
+		})
 
 		await executeScenario(requireValue(DISCLOSURE_SCENARIOS[1]), context)
 
@@ -1172,10 +1104,13 @@ describe('executeScenario', () => {
 	it('names the failing row and keeps the assertion it failed on as the cause', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
 
-		const thrown = await executeScenario(
+		const pending = executeScenario(
 			requireValue(MISMATCHED_SCENARIOS[0]),
-			buildDisclosure(trail),
-		).catch((error: unknown) => error)
+			buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			}),
+		)
+		const thrown = await pending.catch((error: unknown) => error)
 
 		expect(thrown).toBeInstanceOf(Error)
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
@@ -1191,9 +1126,13 @@ describe('executeScenario', () => {
 	it('names a non-error throw by its type and hands the value back as the cause', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
 
-		const thrown = await executeScenario(REFUSED_SCENARIO, buildDisclosure(trail)).catch(
-			(error: unknown) => error,
+		const pending = executeScenario(
+			REFUSED_SCENARIO,
+			buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			}),
 		)
+		const thrown = await pending.catch((error: unknown) => error)
 
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(failure.message).toBe('arrange refuses: threw a non-error object value')
@@ -1208,7 +1147,9 @@ describe('executeScenarios', () => {
 		const contexts = createRecorder<readonly [context: DisclosureContext]>()
 
 		await executeScenarios(DISCLOSURE_SCENARIOS, () => {
-			const context = buildDisclosure(trail)
+			const context = buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			})
 			contexts.handler(context)
 			return context
 		})
@@ -1232,7 +1173,9 @@ describe('executeScenarios', () => {
 		await executeScenarios(DISCLOSURE_SCENARIOS, async (scenario) => {
 			rows.handler(scenario.transition.name)
 			await waitForDelay()
-			return buildDisclosure(trail)
+			return buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			})
 		})
 
 		expect(rows.calls).toStrictEqual([['closed opens on show'], ['open closes on hide']])
@@ -1249,9 +1192,12 @@ describe('executeScenarios', () => {
 	it('stops at the first failing row and never starts the rows after it', async () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
 
-		const thrown = await executeScenarios([...MISMATCHED_SCENARIOS, ...DISCLOSURE_SCENARIOS], () =>
-			buildDisclosure(trail),
-		).catch((error: unknown) => error)
+		const pending = executeScenarios([...MISMATCHED_SCENARIOS, ...DISCLOSURE_SCENARIOS], () => {
+			return buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			})
+		})
+		const thrown = await pending.catch((error: unknown) => error)
 
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(failure.message.startsWith('show leaves it closed: ')).toBe(true)
@@ -1266,11 +1212,14 @@ describe('executeScenarios', () => {
 		const trail = createRecorder<readonly [phase: string, subject: string]>()
 		const rows = createRecorder<readonly [name: string]>()
 
-		const thrown = await executeScenarios(DISCLOSURE_SCENARIOS, (scenario) => {
+		const pending = executeScenarios(DISCLOSURE_SCENARIOS, (scenario) => {
 			rows.handler(scenario.transition.name)
 			if (scenario.transition.name === 'open closes on hide') throw REFUSAL
-			return buildDisclosure(trail)
-		}).catch((error: unknown) => error)
+			return buildDisclosure(trail, waitForDelay, (actual, expected) => {
+				expect(actual).toBe(expected)
+			})
+		})
+		const thrown = await pending.catch((error: unknown) => error)
 
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(failure.message).toBe('open closes on hide: build refused')
@@ -1285,11 +1234,12 @@ describe('executeScenarios', () => {
 		const rows = createRecorder<readonly [name: string]>()
 		const refusal = new Error('no fixture')
 
-		const thrown = await executeScenarios(DISCLOSURE_SCENARIOS, async (scenario) => {
+		const pending = executeScenarios(DISCLOSURE_SCENARIOS, async (scenario) => {
 			rows.handler(scenario.transition.name)
 			await waitForDelay()
 			throw refusal
-		}).catch((error: unknown) => error)
+		})
+		const thrown = await pending.catch((error: unknown) => error)
 
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(failure.message).toBe('closed opens on show: build refused')
@@ -1310,7 +1260,7 @@ describe('collectSelectorClasses', () => {
 			collectSelectorClasses(
 				String.raw`.\31 0, .a\:b, .\000061 lpha, .x\00002e y, .café, .\0 , .\110000 `,
 			),
-		).toStrictEqual(['10', 'a:b', 'alpha', 'café', 'x.y', '�'])
+		).toStrictEqual(['10', 'a:b', 'alpha', 'café', 'x.y', '\uFFFD'])
 		expect(
 			collectSelectorClasses(
 				String.raw`[title='escaped\' .false'][data-value=\.ignored] .real /* .comment */ :lang('.string')`,
@@ -1380,5 +1330,39 @@ describe('STATECHART_STATUSES', () => {
 		expect(terminal.has('running')).toBe(false)
 		expect([...terminal]).toStrictEqual(['passed', 'failed'])
 		expect([...terminal].every((member) => STATECHART_STATUSES.includes(member))).toBe(true)
+	})
+})
+describe('captureProduction', () => {
+	it('preserves a returned value and a thrown undefined across asynchronous settlement', async () => {
+		const value = { ready: true }
+		expect(await captureProduction(() => value)).toEqual({ status: 'fulfilled', value })
+		expect(
+			await captureProduction(() => {
+				throw undefined
+			}),
+		).toEqual({ status: 'rejected', reason: undefined })
+		expect(await captureProduction(() => Promise.reject(value))).toEqual({
+			status: 'rejected',
+			reason: value,
+		})
+	})
+})
+
+describe('renderRetryValue', () => {
+	it('falls back from JSON to text and preserves an unrenderable refusal', () => {
+		expect(renderRetryValue({ ready: false })).toBe('{"ready":false}')
+		expect(renderRetryValue(undefined)).toBe('undefined')
+		expect(renderRetryValue(1n)).toBe('1')
+		expect(renderRetryValue(Object.create(null))).toBe('{}')
+		expect(
+			renderRetryValue({
+				toJSON() {
+					throw undefined
+				},
+				toString() {
+					throw undefined
+				},
+			}),
+		).toBe('[unrenderable]')
 	})
 })

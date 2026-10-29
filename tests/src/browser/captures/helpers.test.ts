@@ -1,3 +1,4 @@
+import { TestValue } from '../../../setup.js'
 import { isNumber, isRecord } from '@orkestrel/contract'
 import * as browser from '@src/browser'
 import {
@@ -17,6 +18,7 @@ import {
 	readCaptureReader,
 	readClippedBlock,
 	readFrame,
+	readFrameHeight,
 	readPixels,
 	readShotPixel,
 	readStyle,
@@ -25,8 +27,10 @@ import {
 	releasePointer,
 	resolveAccessible,
 	sendProtocol,
+	settleFrame,
 	stageMedia,
 	stagePane,
+	takeFrameShot,
 	verifyFrame,
 	waitForFrame,
 	waitForStability,
@@ -51,17 +55,14 @@ const FRAMES = '../../../../tmp/capture/frame'
 
 // The viewport the runner handed this file, restored after every test that stages a pane, so a
 // resized tester never reaches the next test or the next file.
-let width = 0
-
-let height = 0
+const originalViewport = Promise.withResolvers<readonly [number, number]>()
 
 beforeAll(() => {
-	width = window.innerWidth
-	height = window.innerHeight
+	originalViewport.resolve([window.innerWidth, window.innerHeight])
 })
 
 afterAll(async () => {
-	await page.viewport(width, height)
+	await page.viewport(...(await originalViewport.promise))
 })
 
 afterEach(resetFixtures)
@@ -69,6 +70,24 @@ afterEach(resetFixtures)
 afterEach(releasePointer)
 
 afterEach(releaseMedia)
+
+describe('capture frame stages', () => {
+	it('reads the subject height and captures a settled pane through the provider', async () => {
+		const element = buildFixture('<div style="height: 80px; background: black">Frame</div>')
+		const options = { path: `${FRAMES}-stages.png`, width: 390, height: 844 }
+		expect(readFrameHeight(options, undefined, 844)).toBeUndefined()
+		expect(readFrameHeight(options, element, 844)).toBe(element.getBoundingClientRect().height)
+		try {
+			await stagePane(options.width, options.height)
+			await settleFrame(options, element, true)
+			const shot = await takeFrameShot(options, element)
+			expect(shot.base64.length).toBeGreaterThan(0)
+			await verifyFrame(shot, options.path)
+		} finally {
+			await releasePane()
+		}
+	})
+})
 
 describe('clipsOverflow', () => {
 	it('reports a clipping or scrolling overflow and a paint containment, and nothing else', () => {
@@ -1908,35 +1927,35 @@ describe('releaseMedia', () => {
 })
 
 describe('media teardown after failure', { concurrent: false }, () => {
-	let reduced = false
+	const reduced = new TestValue(false)
 	beforeAll(() => {
-		reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+		reduced.value = matchMedia('(prefers-reduced-motion: reduce)').matches
 	})
 
 	// An assertion inside an it.fails body cannot fail the suite; the following case carries the proof.
 	it.fails('throws a sentinel after staging and leaves the release to afterEach', async () => {
-		await stageMedia({ print: true, motion: reduced })
+		await stageMedia({ print: true, motion: reduced.value })
 		expect(matchMedia('print').matches).toBe(true)
-		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced.value)
 		throw new Error('media sentinel')
 	})
 
 	it('reads restored media in the following case', () => {
 		expect(matchMedia('print').matches).toBe(false)
-		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced.value)
 	})
 
 	it('releases explicitly before its afterEach hook', async () => {
-		await stageMedia({ print: true, motion: reduced })
-		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced)
+		await stageMedia({ print: true, motion: reduced.value })
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(!reduced.value)
 		await releaseMedia()
 		expect(matchMedia('print').matches).toBe(false)
-		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced.value)
 	})
 
 	it('reads provider defaults after the repeated release', () => {
 		expect(matchMedia('print').matches).toBe(false)
-		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced)
+		expect(matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(reduced.value)
 	})
 })
 

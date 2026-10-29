@@ -5,13 +5,14 @@ import {
 	expandCaptures,
 	mount,
 	readPixels,
+	readProtocolSession,
 	readStyle,
 	render,
 	resolveAccessible,
 	sendProtocol,
 	waitForFrame,
 } from '@src/browser'
-import { createTeardown, requireValue } from '@src/core'
+import { createRecorder, createTeardown, requireValue } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildFixture, buildStylesheet, resetFixtures } from '../../setupBrowser.js'
 
@@ -19,16 +20,21 @@ afterEach(resetFixtures)
 
 describe('waitForFrame', () => {
 	it('resolves after the frame callbacks already queued have run', async () => {
-		let painted = false
+		const painted = createRecorder<readonly [boolean]>()
 		requestAnimationFrame(() => {
-			painted = true
+			painted.handler(true)
 		})
 		await waitForFrame()
-		expect(painted).toBe(true)
+		expect(painted.calls).toStrictEqual([[true]])
 	})
 })
 
 describe('sendProtocol', () => {
+	it('reads a live protocol session and its callable send member', () => {
+		const [session, send] = readProtocolSession()
+		expect(session).toBeDefined()
+		expect(typeof send).toBe('function')
+	})
 	it('resolves the reply the browser gave the command', async () => {
 		const reply = await sendProtocol('Runtime.evaluate', { expression: '1 + 1' })
 		expect(reply).toMatchObject({ result: { type: 'number', value: 2 } })

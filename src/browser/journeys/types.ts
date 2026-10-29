@@ -164,6 +164,16 @@ export interface StorageOptions {
 export interface WebStorageInterface extends Storage {
 	/** Grants the reads and the writes the host withheld, and replenishes no quota. */
 	permit(): void
+	/** Removes every stored entry when the host permits writes. */
+	clear(): void
+	/** Reads a stored value when the host permits reads, or returns `null` for an absent key. */
+	getItem(key: string): string | null
+	/** Reads the key at an insertion-order index when permitted, or returns `null` beyond the store. */
+	key(index: number): string | null
+	/** Removes a stored entry when the host permits writes, consuming no quota. */
+	removeItem(key: string): void
+	/** Stores a value when writes are permitted and consumes an accepted write from the quota. */
+	setItem(key: string, value: string): void
 }
 
 /**

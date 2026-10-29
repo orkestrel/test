@@ -1,3 +1,10 @@
+import type {
+	EventSourceInterface,
+	RecorderInterface,
+	SignalInterface,
+	StateScenario,
+	invokeUnchecked,
+} from '@src/core'
 import { isObject } from '@orkestrel/contract'
 
 /**
@@ -223,7 +230,43 @@ export const MODULES: Readonly<Record<string, string>> = Object.freeze({
  * forgotten — and the assertion in `tests/guides.test.ts` that reads this table fails when a name
  * here stops being stranded, so the list cannot rot.
  */
-export const INTERNAL: readonly string[] = Object.freeze([])
+export const INTERNAL: readonly string[] = Object.freeze([
+	'class Production',
+	'class Teardown',
+	'class Loopback',
+	'class Journal',
+	'class WebStorage',
+])
+
+/** Counts callback invocations within one test fixture. */
+export class TestCounter {
+	#count = 0
+
+	get count(): number {
+		return this.#count
+	}
+
+	increment(): number {
+		return ++this.#count
+	}
+}
+
+/** Holds the value a test fixture changes between asynchronous observations. */
+export class TestValue<T> {
+	#value: T
+
+	constructor(value: T) {
+		this.#value = value
+	}
+
+	get value(): T {
+		return this.#value
+	}
+
+	set value(value: T) {
+		this.#value = value
+	}
+}
 
 /**
  * Carries the refusal a scenario phase throws by identity, so a case over a non-error throw asserts on
@@ -231,3 +274,304 @@ export const INTERNAL: readonly string[] = Object.freeze([])
  * is the whole of what such a case turns on.
  */
 export const REFUSAL = Object.freeze({ reason: 'refused' })
+
+// The emitter fence drives `createRecorders` from a loader that emits `read` for every file it read
+// and `fail` for every file it could not. That loader is the consumer's own code, so what stands here
+// is the smallest real event source in its place: it registers the handlers it is given and delivers
+// real tuples to them. Nothing this package owns is stood in for.
+export type LoaderEvents = {
+	readonly read: readonly [path: string]
+	readonly fail: readonly [reason: string, retryable: boolean]
+}
+
+export type InvokeFunction = typeof invokeUnchecked
+
+export class ScriptedLoader implements EventSourceInterface<LoaderEvents> {
+	readonly #listeners: RecorderInterface<readonly [event: keyof LoaderEvents, handler: unknown]>
+	readonly #invoke: InvokeFunction
+
+	constructor(
+		listeners: RecorderInterface<readonly [event: keyof LoaderEvents, handler: unknown]>,
+		invoke: InvokeFunction,
+	) {
+		this.#listeners = listeners
+		this.#invoke = invoke
+	}
+
+	on<K extends keyof LoaderEvents>(event: K, handler: (...args: LoaderEvents[K]) => void): void {
+		this.#listeners.handler(event, handler)
+	}
+
+	emit(event: keyof LoaderEvents, args: readonly unknown[]): void {
+		for (const [name, handler] of this.#listeners.calls) {
+			if (name === event) this.#invoke<void>(this, handler, args)
+		}
+	}
+}
+
+// A fence opens on a run of three or more backticks indented no more than three spaces, and closes
+// on a run at least as long carrying nothing after it. That pair is CommonMark's, and the indented
+// form is the one a bare `startsWith` on the delimiter walks straight past. An opening run's info
+// string carries no backtick, which is what keeps prose about a delimiter out of the walk.
+export const FENCE_OPEN = /^ {0,3}(`{3,})[^`]*$/
+export const FENCE_CLOSE = /^ {0,3}(`{3,})[ \t]*$/
+
+export const HEADING = /^(#{1,6}) (.+)$/
+
+// A carrier opens with this line, and the totality guard builds it from the guide's own headings.
+// Reading the marker back out of a file is what makes a transcription and a routed carrier the same
+// kind of evidence, so neither can go missing without the guard naming the heading it belonged to.
+export function buildMarker(section: string, heading: string): string {
+	return `// guides/test.md → ${section} → "${heading}"`
+}
+
+// A marker opens its own line, so a file carries one only when some line begins with it after its
+// indentation. Reading the whole file for the substring accepts the same text quoted inside a
+// sentence, and prose about a fence is not the comment that carries it.
+export function carriesMarker(text: string, marker: string): boolean {
+	return text.split(/\r\n|\n/).some((line) => line.trim().startsWith(marker))
+}
+
+// A README example states a long result across several comment lines, and where the wrap falls is
+// the formatter's decision rather than the claim. Dropping the comment markers and every space
+// compares what the example says a call returns against what it returns, and leaves a key that was
+// added, removed, or renamed still moving the compared text.
+export function normalizeComments(text: string): string {
+	return text
+		.split(/\r\n|\n/)
+		.map((line) => (line.startsWith('//') ? line.slice(2) : line))
+		.join('\n')
+		.replaceAll(/\s+/gu, '')
+}
+
+// The shape a README example prints a key list in.
+export function renderKeys(keys: readonly string[]): string {
+	return `[${keys.map((key) => `'${key}'`).join(', ')}]`
+}
+
+// Models the interface-typed value in the "Copy a JSON value" guide fence.
+export interface JSONCopyFixture {
+	readonly name: string
+	readonly tags: readonly string[]
+}
+
+// The "Prove a wire fixpoint" fence takes `schema`, `parseSchema`, and `serializeSchema` from the
+// consumer, because the comparison is the consumer's own. This is that consumer's part: a fixture
+// schema, a serializer that puts the wire in canonical order, and a parser that refuses anything
+// else. The serializer sorts, so a fixpoint that held only by echoing bytes back would not hold.
+export interface Schema {
+	readonly name: string
+	readonly fields: readonly string[]
+}
+
+export function serializeSchema(schema: Schema): Readonly<Record<string, unknown>> {
+	return { name: schema.name, fields: [...schema.fields].sort() }
+}
+
+export function parseSchema(
+	value: unknown,
+	guard: (candidate: unknown) => candidate is Readonly<Record<string, unknown>>,
+): Schema | undefined {
+	if (!guard(value)) return undefined
+	const name = value.name
+	const fields: unknown = value.fields
+	if (typeof name !== 'string' || !Array.isArray(fields)) return undefined
+	const members: readonly unknown[] = fields
+	if (!members.every((field): field is string => typeof field === 'string')) return undefined
+	return { name, fields: members }
+}
+
+export interface GuideScan {
+	readonly section: string
+	readonly heading: string | undefined
+	readonly open: string | undefined
+	readonly markers: ReadonlyArray<readonly [string, string]>
+}
+
+export function advanceGuideScan(previous: GuideScan, line: string): GuideScan {
+	if (previous.open !== undefined) {
+		const close = FENCE_CLOSE.exec(line)
+		return close !== null && (close[1]?.length ?? 0) >= previous.open.length
+			? { ...previous, open: undefined }
+			: previous
+	}
+	const fence = FENCE_OPEN.exec(line)
+	if (fence !== null) {
+		const heading = previous.heading
+		return {
+			...previous,
+			open: fence[1],
+			markers:
+				heading === undefined
+					? previous.markers
+					: [...previous.markers, [heading, buildMarker(previous.section, heading)]],
+		}
+	}
+	const head = HEADING.exec(line)
+	if (head === null) return previous
+	const depth = head[1]
+	const title = head[2]
+	if (depth === undefined || title === undefined) throw new Error('Heading pattern omitted a group')
+	if (depth === '###') return { ...previous, heading: title }
+	if (depth.length > 3) return previous
+	return { ...previous, section: depth === '##' ? title : previous.section, heading: undefined }
+}
+
+export function createSignalListener(
+	heard: RecorderInterface<readonly [receiver: unknown, count: number, scopes: number]>,
+	instrument: SignalInterface,
+	lifetime: SignalInterface,
+): EventListenerObject {
+	return {
+		handleEvent() {
+			heard.handler(this, instrument.count, lifetime.count)
+		},
+	}
+}
+
+export type ScriptedEventMap = {
+	readonly progress: readonly [step: number]
+	readonly ready: readonly [name: string, step: number]
+}
+
+export class ScriptedEventSource implements EventSourceInterface<ScriptedEventMap> {
+	readonly #subscriptions: RecorderInterface<
+		readonly [event: keyof ScriptedEventMap, handler: unknown]
+	>
+	readonly #invoke: InvokeFunction
+
+	constructor(
+		subscriptions: RecorderInterface<readonly [event: keyof ScriptedEventMap, handler: unknown]>,
+		invoke: InvokeFunction,
+	) {
+		this.#subscriptions = subscriptions
+		this.#invoke = invoke
+	}
+
+	get count(): number {
+		return this.#subscriptions.count
+	}
+
+	on<K extends keyof ScriptedEventMap>(
+		event: K,
+		handler: (...args: ScriptedEventMap[K]) => void,
+	): void {
+		this.#subscriptions.handler(event, handler)
+	}
+
+	emit(event: keyof ScriptedEventMap, args: readonly unknown[]): void {
+		for (const [name, handler] of this.#subscriptions.calls) {
+			if (name === event) this.#invoke<void>(this, handler, args)
+		}
+	}
+}
+
+export type DisclosureState = 'closed' | 'open'
+
+export type DisclosureEvent = 'show' | 'hide'
+
+export interface DisclosureContext {
+	readonly delay: () => Promise<void>
+	readonly verify: (actual: DisclosureState, expected: DisclosureState) => void
+	readonly disclosure: Disclosure
+	readonly trail: RecorderInterface<readonly [phase: string, subject: string]>
+}
+
+export class Disclosure {
+	#state: DisclosureState = 'closed'
+
+	get state(): DisclosureState {
+		return this.#state
+	}
+
+	show(): void {
+		this.#state = 'open'
+	}
+
+	hide(): void {
+		this.#state = 'closed'
+	}
+}
+
+export function arrangeDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	context.trail.handler('arrange', state)
+	if (state === 'open') context.disclosure.show()
+}
+
+// Asynchronous on purpose: an unawaited act would leave the entity in its arranged state, so the
+// happy path fails rather than passes if `executeScenario` stops awaiting a phase.
+export async function actOnDisclosure(
+	context: DisclosureContext,
+	event: DisclosureEvent,
+): Promise<void> {
+	context.trail.handler('act', event)
+	await context.delay()
+	if (event === 'show') context.disclosure.show()
+	else context.disclosure.hide()
+}
+
+export function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
+	context.trail.handler('assert', state)
+	context.verify(context.disclosure.state, state)
+}
+
+export function buildDisclosure(
+	trail: RecorderInterface<readonly [phase: string, subject: string]>,
+	delay: () => Promise<void>,
+	verify: (actual: DisclosureState, expected: DisclosureState) => void,
+): DisclosureContext {
+	return { disclosure: new Disclosure(), trail, delay, verify }
+}
+
+export const DISCLOSURE_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'closed opens on show', from: 'closed', event: 'show', to: 'open' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+	{
+		transition: { name: 'open closes on hide', from: 'open', event: 'hide', to: 'closed' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+// The control, drawn from outside the preceding population: the same entity and the same three phases,
+// with a `to` state the event cannot reach. Nothing about the row is malformed, so the assertion is
+// the only thing that can catch it.
+export const MISMATCHED_SCENARIOS: ReadonlyArray<
+	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
+> = [
+	{
+		transition: { name: 'show leaves it closed', from: 'closed', event: 'show', to: 'closed' },
+		arrange: arrangeDisclosure,
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	},
+]
+
+export const REFUSED_SCENARIO: StateScenario<DisclosureState, DisclosureEvent, DisclosureContext> =
+	{
+		transition: { name: 'arrange refuses', from: 'closed', event: 'show', to: 'open' },
+		arrange() {
+			throw REFUSAL
+		},
+		act: actOnDisclosure,
+		assert: assertDisclosure,
+	}
+
+export function readFixtureValue(): string {
+	return 'value'
+}
+
+export function ignoreEvent(): void {
+	return undefined
+}
+
+export function createEventListener(): EventListenerObject {
+	return { handleEvent: ignoreEvent }
+}

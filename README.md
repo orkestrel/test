@@ -109,8 +109,8 @@ const root = resolveRoot(import.meta)
 const sources = readInventory(root, ['src/core', 'src/server'], { extensions: ['.ts'] })
 
 Object.keys(sources)
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts', 'src/core/validators.ts', 'src/server/constants.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+//  'src/core/types.ts', 'src/core/validators.ts', 'src/server/Loopback.ts', 'src/server/constants.ts',
 //  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts',
 //  'src/server/types.ts']
 
@@ -121,21 +121,21 @@ sources['src/core/index.ts']
 
 // A target is a file or a directory. A named file is read whatever the extension filter says.
 Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] }))
-// ['package.json', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
+// ['package.json', 'src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
 //  'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 // An `exclude` entry matches whole key segments. A file key drops that file.
 Object.keys(
 	readInventory(root, ['src/core'], { extensions: ['.ts'], exclude: ['src/core/index.ts'] }),
 )
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/types.ts',
 //  'src/core/validators.ts']
 
 // A directory key prunes its whole subtree.
 Object.keys(
 	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
 )
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts', 'src/core/validators.ts']
 ```
 

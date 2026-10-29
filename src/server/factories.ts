@@ -5,7 +5,7 @@ import type {
 	ScratchInterface,
 	ScratchOptions,
 } from './types.js'
-import { isFunction, isNumber, isObject } from '@orkestrel/contract'
+import { isNumber, isObject } from '@orkestrel/contract'
 import { once } from 'node:events'
 import {
 	lstatSync,
@@ -26,6 +26,7 @@ import {
 	removeTree,
 	requireContained,
 } from './helpers.js'
+import { Loopback } from './Loopback.js'
 
 /**
  * Allocates an owned temporary directory with contained file operations.
@@ -210,30 +211,11 @@ export async function createLoopback(server: Server): Promise<LoopbackInterface>
 	}
 
 	const port = address.port
-	let destruction: Promise<void> | undefined
+	const loopback = new Loopback(server)
 	return {
 		url: `http://127.0.0.1:${port}`,
 		port,
-		destroy() {
-			if (destruction === undefined) {
-				destruction = new Promise<void>((resolveClose, rejectClose) => {
-					if ('closeAllConnections' in server && isFunction(server.closeAllConnections)) {
-						server.closeAllConnections()
-					}
-					server.close((error) => {
-						if (
-							error === undefined ||
-							('code' in error && error.code === 'ERR_SERVER_NOT_RUNNING')
-						) {
-							resolveClose()
-						} else {
-							rejectClose(error)
-						}
-					})
-				})
-			}
-			return destruction
-		},
+		destroy: loopback.destroy.bind(loopback),
 	}
 }
 

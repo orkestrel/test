@@ -2,13 +2,13 @@ import type {
 	HarnessInterface,
 	HarnessOptions,
 	JournalInterface,
-	JournalStep,
 	StorageOptions,
 	WebStorageInterface,
 } from './types.js'
 import { isError } from '@orkestrel/contract'
 import {
 	buildRefusal,
+	captureProduction,
 	executeScenario,
 	requireValue,
 	STATECHART_ATTRIBUTES,
@@ -16,7 +16,8 @@ import {
 	waitForDelay,
 } from '@src/core'
 import { build, mount } from '../helpers.js'
-import { buildDenial } from './helpers.js'
+import { Journal } from './Journal.js'
+import { WebStorage } from './WebStorage.js'
 
 /**
  * Creates one console channel that records every call it receives and hands that call on unchanged.
@@ -78,63 +79,17 @@ export function createChannel(
  * ```
  */
 export function createJournal(): JournalInterface {
-	const steps: JournalStep[] = []
-	const output: string[] = []
-	// The channels the page was writing to when the journal started. Their presence is what "started"
-	// means, so no second flag can disagree with it. The listeners are dropped through one signal,
-	// which is why no handler reference has to be kept to take them off again.
-	let intercepted: Pick<Console, 'debug' | 'error' | 'info' | 'log' | 'warn'> | undefined
-	let listeners: AbortController | undefined
+	const journal = new Journal()
 	return {
 		get steps() {
-			return [...steps]
+			return journal.steps
 		},
 		get output() {
-			return [...output]
+			return journal.output
 		},
-		start() {
-			steps.length = 0
-			output.length = 0
-			if (intercepted !== undefined) return
-			const forwarded = {
-				debug: console.debug,
-				error: console.error,
-				info: console.info,
-				log: console.log,
-				warn: console.warn,
-			}
-			intercepted = forwarded
-			for (const channel of ['debug', 'error', 'info', 'log', 'warn'] as const) {
-				console[channel] = createChannel(channel, output, forwarded[channel])
-			}
-			const dropped = new AbortController()
-			listeners = dropped
-			window.addEventListener(
-				'error',
-				(event) => {
-					output.push(`error: ${event.message}`)
-				},
-				{ signal: dropped.signal },
-			)
-			window.addEventListener(
-				'unhandledrejection',
-				(event) => {
-					output.push(`rejection: ${String(event.reason)}`)
-				},
-				{ signal: dropped.signal },
-			)
-		},
-		stop() {
-			if (intercepted === undefined) return
-			Object.assign(console, intercepted)
-			intercepted = undefined
-			listeners?.abort()
-			listeners = undefined
-		},
-		record(action, trigger, result) {
-			if (intercepted === undefined) return
-			steps.push(Object.freeze({ action, trigger, result }))
-		},
+		start: journal.start.bind(journal),
+		stop: journal.stop.bind(journal),
+		record: journal.record.bind(journal),
 	}
 }
 
@@ -185,43 +140,17 @@ export function createStorage(options?: StorageOptions): WebStorageInterface {
 	if (quota !== undefined && (!Number.isSafeInteger(quota) || quota < 0)) {
 		throw new Error('Storage quota must be a non-negative integer')
 	}
-	const values = new Map<string, string>(Object.entries(options?.values ?? {}))
-	let reads = options?.reads ?? true
-	let writes = options?.writes ?? true
-	let room = quota
+	const storage = new WebStorage(options, quota)
 	return {
 		get length() {
-			if (!reads) throw buildDenial('length')
-			return values.size
+			return storage.length
 		},
-		permit() {
-			reads = true
-			writes = true
-		},
-		clear() {
-			if (!writes) throw buildDenial('clear')
-			values.clear()
-		},
-		getItem(key) {
-			if (!reads) throw buildDenial('getItem', key)
-			return values.get(key) ?? null
-		},
-		key(index) {
-			if (!reads) throw buildDenial('key')
-			return [...values.keys()][index] ?? null
-		},
-		removeItem(key) {
-			if (!writes) throw buildDenial('removeItem', key)
-			values.delete(key)
-		},
-		setItem(key, value) {
-			if (!writes) throw buildDenial('setItem', key)
-			if (room !== undefined) {
-				if (room === 0) throw new DOMException(`No room is left for ${key}`, 'QuotaExceededError')
-				room -= 1
-			}
-			values.set(key, value)
-		},
+		permit: storage.permit.bind(storage),
+		clear: storage.clear.bind(storage),
+		getItem: storage.getItem.bind(storage),
+		key: storage.key.bind(storage),
+		removeItem: storage.removeItem.bind(storage),
+		setItem: storage.setItem.bind(storage),
 	}
 }
 
@@ -332,38 +261,33 @@ export function createHarness<TState extends string, TEvent extends string, TCon
 			for (const row of table) row.element.removeAttribute(STATECHART_ATTRIBUTES.result)
 			state.removeAttribute(STATECHART_ATTRIBUTES.state)
 			state.textContent = ''
-			let passed = 0
-			let failed = 0
+			const outcomes: boolean[] = []
 			root.setAttribute(STATECHART_ATTRIBUTES.passed, '0')
 			root.setAttribute(STATECHART_ATTRIBUTES.failed, '0')
 			root.setAttribute(STATECHART_ATTRIBUTES.status, 'running')
 			announcer.textContent = `Statechart harness is running, 0 passed and 0 failed of ${table.length}.`
 			try {
 				for (const [index, row] of table.entries()) {
-					// The box's presence is what "the builder returned" means, so a context of `undefined`
-					// runs its phases like any other and only a refused build skips them.
-					let built: { readonly context: TContext } | undefined
-					let refusal: string | undefined
-					try {
-						built = { context: await options.build(row.scenario) }
-					} catch (cause) {
-						refusal = buildRefusal(row.scenario.transition.name, cause).message
-					}
-					if (built !== undefined) {
-						try {
-							await executeScenario(row.scenario, built.context)
-						} catch (cause) {
-							// `executeScenario` raises an `Error` for every failing phase, so anything else
-							// came from outside this contract and is the caller's to see unchanged.
-							if (!isError(cause)) throw cause
-							refusal = cause.message
-						}
-						const current = options.state(built.context)
+					const built = await captureProduction(() => options.build(row.scenario))
+					const executed =
+						built.status === 'fulfilled'
+							? await captureProduction(() => executeScenario(row.scenario, built.value))
+							: undefined
+					if (executed?.status === 'rejected' && !isError(executed.reason)) throw executed.reason
+					const refusal =
+						built.status === 'rejected'
+							? buildRefusal(row.scenario.transition.name, built.reason).message
+							: executed?.status === 'rejected' && isError(executed.reason)
+								? executed.reason.message
+								: undefined
+					if (built.status === 'fulfilled') {
+						const current = options.state(built.value)
 						state.setAttribute(STATECHART_ATTRIBUTES.state, current)
 						state.textContent = current
 					}
-					if (refusal === undefined) passed += 1
-					else failed += 1
+					outcomes.push(refusal === undefined)
+					const passed = outcomes.filter((outcome) => outcome).length
+					const failed = outcomes.length - passed
 					row.element.setAttribute(
 						STATECHART_ATTRIBUTES.result,
 						refusal === undefined ? 'passed' : 'failed',
@@ -380,10 +304,14 @@ export function createHarness<TState extends string, TEvent extends string, TCon
 				// terminal reading before the value leaves by identity. The row is not counted as failed:
 				// a reader's defect is not the entity's. A completed run never reaches this, which is why
 				// the write is here rather than in a `finally`.
+				const passed = outcomes.filter((outcome) => outcome).length
+				const failed = outcomes.length - passed
 				root.setAttribute(STATECHART_ATTRIBUTES.status, 'failed')
 				announcer.textContent = `Statechart harness failed, ${passed} passed and ${failed} failed of ${table.length}.`
 				throw cause
 			}
+			const passed = outcomes.filter((result) => result).length
+			const failed = outcomes.length - passed
 			const outcome = failed === 0 ? 'passed' : 'failed'
 			root.setAttribute(STATECHART_ATTRIBUTES.status, outcome)
 			announcer.textContent = `Statechart harness ${outcome}, ${passed} passed and ${failed} failed of ${table.length}.`

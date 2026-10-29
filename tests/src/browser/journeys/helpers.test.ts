@@ -1,4 +1,4 @@
-import { isString } from '@orkestrel/contract'
+import { attempt, isString } from '@orkestrel/contract'
 import * as browser from '@src/browser'
 import {
 	ACCESSIBLE_ROLES,
@@ -10,6 +10,7 @@ import {
 	clickAccessibleWithin,
 	clickDisclosure,
 	collectScrollRegions,
+	collectShadowHosts,
 	collectTabStops,
 	commitInput,
 	computeNamePattern,
@@ -100,17 +101,14 @@ const GLYPH_ICON = '<i class="glyph" aria-hidden="true"></i>'
 
 // The viewport the runner handed this file, restored after every test that stages a pane, so a
 // resized tester never reaches the next test or the next file.
-let width = 0
-
-let height = 0
+const viewport = Promise.withResolvers<readonly [number, number]>()
 
 beforeAll(() => {
-	width = window.innerWidth
-	height = window.innerHeight
+	viewport.resolve([window.innerWidth, window.innerHeight])
 })
 
 afterAll(async () => {
-	await page.viewport(width, height)
+	await page.viewport(...(await viewport.promise))
 })
 
 afterEach(resetFixtures)
@@ -1283,7 +1281,88 @@ describe('clickAccessibleWithin', () => {
 	})
 })
 
+describe('collectShadowHosts', () => {
+	it('walks nested shadow hosts and stops at the document', () => {
+		const outer = buildFixture('<div></div>')
+		const host = document.createElement('div')
+		outer.attachShadow({ mode: 'open' }).append(host)
+		const button = document.createElement('button')
+		host.attachShadow({ mode: 'closed' }).append(button)
+		expect(collectShadowHosts(button)).toEqual([button, host, outer])
+		expect(collectShadowHosts(document.body)).toEqual([document.body])
+	})
+})
+
 describe('resolveAccessibleWithin', () => {
+	it.each(['Text utilities', 'Context'])('prefers exact Text beside %s', (sibling) => {
+		const container = buildFixture(
+			`<section aria-label="Ledger"><a href="#text">Text</a><a href="#sibling">${sibling}</a></section>`,
+		)
+		expect(resolveAccessibleWithin('Ledger', 'link', 'Text')).toBe(container.querySelector('a'))
+	})
+
+	it('matches a glyph-joined exact name through the region and document RegExp queries', () => {
+		buildStylesheet(GLYPH_STYLE)
+		const container = buildFixture(
+			`<section aria-label="Ledger"><a href="#text">${GLYPH_ICON} Text</a><a href="#utilities">Text utilities</a></section>`,
+		)
+		const options = { name: computeNamePattern('Text'), exact: true, includeHidden: true }
+		const documentMatches = page.getByRole('link', options).elements()
+		const regionMatches = page
+			.getByRole('region', { name: 'Ledger', exact: true })
+			.getByRole('link', options)
+			.elements()
+		expect(documentMatches).toEqual([container.querySelector('a')])
+		expect(regionMatches).toEqual(documentMatches)
+		expect(resolveAccessibleWithin('Ledger', 'link', 'Text')).toBe(container.querySelector('a'))
+	})
+
+	it.each(['hidden', 'aria-disabled="true"'])(
+		'refuses an exact Text marked %s beside a reachable loose match',
+		(attribute) => {
+			buildFixture(
+				`<section aria-label="Ledger"><button ${attribute}>Text</button><button>Text utilities</button></section>`,
+			)
+			expect(() => resolveAccessibleWithin('Ledger', 'button', 'Text')).toThrow(
+				'Interactive target "Text" is not reachable inside "Ledger"',
+			)
+		},
+	)
+
+	it('refuses duplicate reachable exact Add controls', () => {
+		buildFixture('<section aria-label="Ledger"><button>Add</button><button>Add</button></section>')
+		expect(() => resolveAccessibleWithin('Ledger', 'button', 'Add')).toThrow(
+			'Interactive target "Add" is ambiguous across 2 elements inside "Ledger"',
+		)
+	})
+
+	it('falls back to a longer loose name only when no exact name exists', () => {
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button>Monthly income, 3 items</button></section>',
+		)
+		expect(resolveAccessibleWithin('Ledger', 'button', 'Monthly income')).toBe(
+			container.querySelector('button'),
+		)
+	})
+
+	it('keeps the exact tier case-sensitive before loose ambiguity', () => {
+		buildFixture(
+			'<section aria-label="Ledger"><button>Text</button><button>Text utilities</button></section>',
+		)
+		expect(() => resolveAccessibleWithin('Ledger', 'button', 'text')).toThrow(
+			'Interactive target "text" is ambiguous across 2 elements inside "Ledger"',
+		)
+	})
+
+	it('normalizes whitespace in the exact request', () => {
+		const container = buildFixture(
+			'<section aria-label="Ledger"><button>Text utilities</button><button>Text utilities extended</button></section>',
+		)
+		expect(resolveAccessibleWithin('Ledger', 'button', 'Text  utilities')).toBe(
+			container.querySelector('button'),
+		)
+	})
+
 	it('resolves the control inside the named region and leaves its twin alone', () => {
 		const container = buildFixture(
 			'<section aria-label="Ledger"><button type="button">Monthly income · ready</button></section>' +
@@ -3135,12 +3214,8 @@ describe('readRefusal', () => {
 			},
 		})
 
-		let caught: unknown
-		try {
-			readRefusal('Hostile')
-		} catch (error) {
-			caught = error
-		}
+		const outcome = attempt(() => readRefusal('Hostile'))
+		const caught = outcome.success ? undefined : outcome.error
 
 		expect(caught).toBe('the host refused the reading')
 	})
@@ -3158,13 +3233,9 @@ describe('readRefusal', () => {
 			},
 		})
 
-		let threw = false
-		let refusal: string | undefined = 'unread'
-		try {
-			refusal = readRefusal('Hostile')
-		} catch {
-			threw = true
-		}
+		const outcome = attempt(() => readRefusal('Hostile'))
+		const threw = !outcome.success
+		const refusal = outcome.success ? outcome.value : 'unread'
 
 		expect(threw).toBe(true)
 		expect(refusal).toBe('unread')

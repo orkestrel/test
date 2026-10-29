@@ -1,3 +1,4 @@
+import type { Result } from '@orkestrel/contract'
 import type { ChoiceOptions, ChooserRequest, FixtureFile, WaitOptions } from '@src/core'
 import type { StabilityOptions } from '../captures/types.js'
 import type {
@@ -7,8 +8,17 @@ import type {
 	SettleOptions,
 	StateOptions,
 } from './types.js'
-import { isArray, isError, isNumber, isRecord, isString, resolveField } from '@orkestrel/contract'
 import {
+	attempt,
+	isArray,
+	isError,
+	isNumber,
+	isRecord,
+	isString,
+	resolveField,
+} from '@orkestrel/contract'
+import {
+	captureProduction,
 	checkBounds,
 	invokeUnchecked,
 	readProperty,
@@ -263,12 +273,7 @@ export function isOutsideViewport(rectangle: DOMRectReadOnly): boolean {
  */
 export function isReachable(element: Element): boolean {
 	if (!(element instanceof HTMLElement) && !(element instanceof SVGElement)) return false
-	const chain: Element[] = [element]
-	let root = element.getRootNode()
-	while (root instanceof ShadowRoot) {
-		chain.push(root.host)
-		root = root.host.getRootNode()
-	}
+	const chain = collectShadowHosts(element)
 	const rectangle = element.getBoundingClientRect()
 	return (
 		element.isConnected &&
@@ -282,6 +287,26 @@ export function isReachable(element: Element): boolean {
 			(dialog) => !isRendered(dialog) || chain.some((node) => dialog.contains(node)),
 		)
 	)
+}
+
+/**
+ * Collects an element and the successive hosts of its containing shadow roots.
+ *
+ * @param element - The element that opens the collected chain.
+ * @param root - The root already read by an outer traversal step, or the element's current root.
+ * @example
+ * ```ts
+ * collectShadowHosts(document.body) // [document.body]
+ * ```
+ */
+export function collectShadowHosts(
+	element: Element,
+	root = element.getRootNode(),
+): readonly Element[] {
+	if (!(root instanceof ShadowRoot)) return [element]
+	const host = root.host
+	const outer = root.host.getRootNode()
+	return [element, ...collectShadowHosts(host, outer)]
 }
 
 /**
@@ -519,13 +544,12 @@ export function resolveAccessible(name: string): HTMLElement
 export function resolveAccessible(role: string, name: string): HTMLElement
 export function resolveAccessible(first: string, second?: string): HTMLElement {
 	const target = resolveRendered(first, second)
-	let rectangle = target.getBoundingClientRect()
+	const rectangle = target.getBoundingClientRect()
 	if (isOutsideViewport(rectangle)) {
 		target.scrollIntoView({ block: 'nearest', behavior: 'instant' })
-		rectangle = target.getBoundingClientRect()
-	}
-	if (isOutsideViewport(rectangle)) {
-		throw new Error(`Interactive target "${second ?? first}" is unreachable after scrolling`)
+		if (isOutsideViewport(target.getBoundingClientRect())) {
+			throw new Error(`Interactive target "${second ?? first}" is unreachable after scrolling`)
+		}
 	}
 	return target
 }
@@ -666,10 +690,10 @@ export async function clickAccessibleWithin(
  * @throws When the named control is absent, unreachable, or ambiguous inside the region.
  *
  * @remarks
- * The region's name is matched exactly and the control's name loosely, over a computed name that
- * includes hidden subtrees, so a glyph joins the text rather than displacing it. One pass answers
- * this: a control the region cannot reach is refused whether it is absent or hidden. This is the
- * resolver the region-scoped verbs share.
+ * The region's name is matched exactly. The control first matches the case-sensitive pattern
+ * from `computeNamePattern`, with hidden subtrees included. Any exact candidates own the result,
+ * including unreachable or ambiguous candidates. Only an empty exact tier selects the loose query.
+ * Both tiers refuse zero reachable candidates and several reachable candidates.
  *
  * @example
  * ```ts
@@ -677,10 +701,14 @@ export async function clickAccessibleWithin(
  * ```
  */
 export function resolveAccessibleWithin(region: string, role: string, name: string): HTMLElement {
-	const matches = page
-		.getByRole('region', { name: region, exact: true })
-		.getByRole(role, { name, exact: false, includeHidden: true })
+	const scope = page.getByRole('region', { name: region, exact: true })
+	const exact = scope
+		.getByRole(role, { name: computeNamePattern(name), exact: true, includeHidden: true })
 		.elements()
+	const matches =
+		exact.length > 0
+			? exact
+			: scope.getByRole(role, { name, exact: false, includeHidden: true }).elements()
 	const reachable = matches.filter(
 		(element) => element instanceof HTMLElement && isReachable(element),
 	)
@@ -952,24 +980,14 @@ export async function parkPointer(): Promise<void> {
  */
 export async function releasePointer(): Promise<void> {
 	const held = document.documentElement.getAttribute(POINTER_HOLD)
-	let released = held === null
-	let rejection: unknown
-	try {
-		if (held !== null) {
-			const [x, y] = held.split('x').map(Number)
-			await sendProtocol('Input.dispatchMouseEvent', {
-				type: 'mouseReleased',
-				x,
-				y,
-				button: 'left',
-				buttons: 0,
-				clickCount: 1,
-			})
-			released = true
-		}
-	} catch (cause) {
-		rejection = cause
-	}
+	const [x, y] = held === null ? [] : held.split('x').map(Number)
+	const request = { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }
+	const release =
+		held === null
+			? undefined
+			: await captureProduction(() => sendProtocol('Input.dispatchMouseEvent', request))
+	const released = release === undefined || release.status === 'fulfilled'
+	const rejection = release?.status === 'rejected' ? release.reason : undefined
 	if (released) document.documentElement.removeAttribute(POINTER_HOLD)
 	try {
 		await parkPointer()
@@ -1865,7 +1883,9 @@ export function readRefusal(first: string, second?: string): string | undefined 
 export function readText(element: Element): string {
 	const parts: string[] = []
 	const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-	for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+	while (true) {
+		const node = walker.nextNode()
+		if (node === null) break
 		const owner = node.parentElement
 		if (owner === null || owner.closest('[aria-hidden="true"]') !== null) continue
 		parts.push(node.textContent ?? '')
@@ -2066,18 +2086,18 @@ export function describeTree(element: Element): string {
 		if (entry === undefined) break
 		if (!isRendered(entry.node)) continue
 		const role = readRole(entry.node)
-		let depth = entry.depth
 		if (role !== undefined) {
 			const name = readName(entry.node)
 			const states = readStates(entry.node)
 			lines.push(
-				`${'  '.repeat(depth)}${role}${name.length > 0 ? ` "${name}"` : ''}${
+				`${'  '.repeat(entry.depth)}${role}${name.length > 0 ? ` "${name}"` : ''}${
 					states.length > 0 ? ` [${states.join(', ')}]` : ''
 				}`,
 			)
-			depth += 1
 		}
-		for (let index = entry.node.children.length - 1; index >= 0; index -= 1) {
+		const depth = entry.depth + (role === undefined ? 0 : 1)
+		const length = entry.node.children.length
+		for (const index of Array.from({ length }, (_, offset) => length - offset - 1)) {
 			const child = entry.node.children[index]
 			if (child !== undefined) pending.push({ node: child, depth })
 		}
@@ -2200,36 +2220,35 @@ export async function waitForState(
 	const options = keyed ? fourth : third
 	const absent = options?.absent ?? false
 	const description = `"${name}" to ${absent ? 'stop announcing' : 'announce'} "${state}"`
-	let observed: readonly string[] = []
-	let count = 0
-	let refused: { readonly thrown: unknown } | undefined
-	try {
+	const observations: Array<Result<readonly string[], unknown>> = []
+	const waited = await captureProduction(async () => {
 		await waitForCondition(
 			description,
 			() => {
-				count += 1
-				try {
-					observed = readStates(
-						role === undefined ? resolveRendered(name) : resolveRendered(role, name),
-					)
-				} catch (thrown) {
-					// The box records what the reading threw, so the `catch` beneath recognizes the
-					// resolver's own finding by identity instead of by how another module worded it.
-					refused = { thrown }
-					throw thrown
-				}
-				return observed.includes(state) !== absent
+				const observation = attempt(() =>
+					readStates(role === undefined ? resolveRendered(name) : resolveRendered(role, name)),
+				)
+				observations.push(observation)
+				if (!observation.success) throw observation.error
+				return observation.value.includes(state) !== absent
 			},
 			options,
 		)
-	} catch (cause) {
+	})
+	const observed = observations.reduce<readonly string[]>(
+		(states, observation) => (observation.success ? observation.value : states),
+		[],
+	)
+	const refused = observations.find((observation) => !observation.success)
+	if (waited.status === 'rejected') {
+		const cause = waited.reason
 		// Only the poll's own exhaustion has a last observation worth adding, and it is what remains
 		// after the three values that are not it: the reading's own throw, recorded as it was raised;
 		// the abort reason, which is the caller's value on the signal; and a refused bound, which is
 		// raised before any reading. Each of those leaves by identity.
-		if (refused !== undefined && cause === refused.thrown) throw cause
+		if (refused?.success === false && cause === refused.error) throw cause
 		if (cause === options?.signal?.reason) throw cause
-		if (count === 0) throw cause
+		if (observations.length === 0) throw cause
 		if (!isError(cause)) throw cause
 		throw new Error(`${cause.message} (last states: ${JSON.stringify(observed)})`, { cause })
 	}
@@ -2280,22 +2299,20 @@ export async function waitForAnimations(element: Element, options?: WaitOptions)
 	const label = readName(element)
 	const subject = `${readRole(element) ?? element.localName}${label.length > 0 ? ` "${label}"` : ''}`
 	const start = performance.now()
-	let expired = false
-	let aborted: Promise<void> | undefined
-	let timer: ReturnType<typeof setTimeout> | undefined
-	const expiry = new Promise<void>((resolve) => {
-		timer = setTimeout(() => {
-			expired = true
-			resolve()
-		}, budget)
-	})
+	const deadline = new AbortController()
+	const aborts = new Map<AbortSignal, Promise<void>>()
+	const expiry = Promise.withResolvers<void>()
+	const timer = setTimeout(() => {
+		deadline.abort()
+		expiry.resolve()
+	}, budget)
 	try {
 		while (true) {
 			signal?.throwIfAborted()
 			const running = readAnimations(element).finite
 			if (running.length === 0) return
 			const elapsed = performance.now() - start
-			if (expired || elapsed >= budget) {
+			if (deadline.signal.aborted || elapsed >= budget) {
 				const names = running.map((animation) => {
 					if (animation instanceof CSSAnimation) return animation.animationName
 					if (animation instanceof CSSTransition) return animation.transitionProperty
@@ -2308,17 +2325,18 @@ export async function waitForAnimations(element: Element, options?: WaitOptions)
 			const pending: Array<Promise<unknown>> = running.map((animation) =>
 				animation.finished.catch(() => undefined),
 			)
-			pending.push(expiry)
+			pending.push(expiry.promise)
 			if (signal !== undefined) {
 				// Installed on the first park rather than up front, so a wait that finds nothing running
 				// leaves no listener on a signal the caller still owns.
-				aborted ??= waitForAbort(signal)
+				const aborted = aborts.get(signal) ?? waitForAbort(signal)
+				if (!aborts.has(signal)) aborts.set(signal, aborted)
 				pending.push(aborted)
 			}
 			await Promise.race(pending)
 		}
 	} finally {
-		if (timer !== undefined) clearTimeout(timer)
+		clearTimeout(timer)
 	}
 }
 

@@ -266,8 +266,8 @@ export function clipsOverflow(element: Element): boolean {
  * ```
  */
 export function measureContent(): number {
-	let edge = 0
-	for (const element of document.body.querySelectorAll('*')) {
+	const elements = Array.from(document.body.querySelectorAll('*'))
+	const edge = elements.reduce((greatest, element) => {
 		const limits = collectClippingAncestors(element)
 			.filter((frame) => frame !== document.body && frame !== document.documentElement)
 			.flatMap((frame) => {
@@ -280,8 +280,8 @@ export function measureContent(): number {
 				readPixels(element, 'margin-bottom'),
 			...limits,
 		)
-		if (bottom > edge) edge = bottom
-	}
+		return bottom > greatest ? bottom : greatest
+	}, 0)
 	return Math.ceil(
 		edge +
 			readPixels(document.body, 'padding-bottom') +
@@ -816,107 +816,8 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
 	try {
 		if (!prepared) await stagePane(options.width, options.height)
-		let pane = options.height
-		let covered: number | undefined
-		let growth = 0
-		for (let stage = 0; ; stage += 1) {
-			let height = element?.getBoundingClientRect().height
-			if (element !== undefined && height !== undefined && height > options.height) {
-				// Native alignment resolves the document's scroll clearance, including computed
-				// lengths, before the pane reserves room for the whole tall element below it.
-				element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
-				const aligned = element.getBoundingClientRect()
-				height = aligned.height + Math.max(0, aligned.top)
-			} else if (element !== undefined && height !== undefined) {
-				const padding = readStyle(document.documentElement, 'scroll-padding-top')
-				const margin = readStyle(element, 'scroll-margin-top')
-				if ((padding !== 'auto' && padding !== '0px') || margin !== '0px') {
-					element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
-					if (element.getBoundingClientRect().bottom >= options.height) {
-						let placement = { left: window.scrollX, top: window.scrollY }
-						element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
-						const aligned = element.getBoundingClientRect()
-						if (aligned.bottom > options.height) {
-							// A fixed panel that native alignment cannot move retains its declared
-							// viewport. A movable element needs room for its start clearance too.
-							element.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' })
-							const end = element.getBoundingClientRect()
-							// A sticky subject can fit at its own inset while start clearance moves
-							// it past the fold. Keep the fitted placement rather than growing a
-							// viewport constraint. In-flow subjects retain their clearance below.
-							const sticky =
-								readStyle(element, 'position') === 'sticky' &&
-								readStyle(element, 'top') !== 'auto' &&
-								end.top >= 0 &&
-								end.bottom <= pane
-							if (sticky) placement = { left: window.scrollX, top: window.scrollY }
-							if (!sticky && (pane > options.height || end.top !== aligned.top)) {
-								height = aligned.height + Math.max(0, aligned.top)
-								element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
-							}
-						}
-						if (height <= options.height) window.scrollTo({ ...placement, behavior: 'instant' })
-					}
-				}
-			}
-			const extent = Math.max(
-				height === undefined ? measureContent() : Math.ceil(height),
-				options.height,
-			)
-			if (covered !== undefined) growth = Math.max(0, extent - covered)
-			covered = extent
-			if (pane === covered) {
-				if (prepared && stage === 0) {
-					await stagePane(options.width, pane)
-					continue
-				}
-				break
-			}
-			if (stage === CAPTURE_STAGE_LIMIT) {
-				throw new Error(
-					`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGE_LIMIT)} restagings: ${String(covered)} over a ${String(pane)} pane`,
-				)
-			}
-			pane = covered + growth
-			await stagePane(options.width, pane)
-		}
-		let shot: FrameShot
-		if (element === undefined) {
-			shot = await page.screenshot({ path: options.path, base64: true })
-		} else {
-			const box = element.getBoundingClientRect()
-			const down = box.top < 0 ? box.top : Math.max(0, box.bottom - window.innerHeight)
-			const across = box.left < 0 ? box.left : Math.max(0, box.right - window.innerWidth)
-			if (down !== 0 || across !== 0) {
-				window.scrollBy({ top: down, left: across, behavior: 'instant' })
-			}
-			// The offset outranks the fixed placement the `stagePane` function writes, because an
-			// inline declaration wins over a stylesheet one of equal importance, and it moves the frame
-			// only because that placement is fixed at the window's origin.
-			const frame = window.frameElement
-			const view = window.top
-			const placed = element.getBoundingClientRect()
-			const move =
-				view === null
-					? { top: 0, left: 0 }
-					: computeOffset(placed, view.innerWidth, view.innerHeight)
-			const style = frame?.getAttribute('style') ?? null
-			const offset = frame !== null && (move.top !== 0 || move.left !== 0)
-			try {
-				if (offset) {
-					frame.setAttribute(
-						'style',
-						`${style ?? ''};top:${String(move.top)}px !important;left:${String(move.left)}px !important;will-change:transform`,
-					)
-					await waitForFrame()
-					await waitForFrame()
-				}
-				shot = await page.screenshot({ element, path: options.path, base64: true })
-			} finally {
-				if (offset && style === null) frame.removeAttribute('style')
-				else if (offset && style !== null) frame.setAttribute('style', style)
-			}
-		}
+		await settleFrame(options, element, prepared)
+		const shot = await takeFrameShot(options, element)
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
@@ -1083,15 +984,11 @@ export async function readFrame(path: string): Promise<FrameResult> {
 	const red = row[0]
 	const green = row[1]
 	const blue = row[2]
-	const alpha = row[3]
-	let single = red !== undefined && green !== undefined && blue !== undefined
-	for (let pixel = 4; single && pixel < row.length; pixel += 4) {
-		single =
-			row[pixel] === red &&
-			row[pixel + 1] === green &&
-			row[pixel + 2] === blue &&
-			row[pixel + 3] === alpha
-	}
+	const single =
+		red !== undefined &&
+		green !== undefined &&
+		blue !== undefined &&
+		row.subarray(4).every((channel, index) => channel === row[index % 4])
 	return {
 		width,
 		height,
@@ -1171,4 +1068,142 @@ export function expandCaptures(
 		for (const variant of variants) files.push(`${state}--${variant.name}.png`)
 	}
 	return files
+}
+/**
+ * Restages a capture until its content extent equals the pane height.
+ *
+ * @remarks The stage limit bounds the recursion; a prepared pane is staged before accepting it.
+ * @example
+ * ```ts
+ * await settleFrame({ path: 'frame.png', width: 390, height: 844 }, undefined, false)
+ * ```
+ */
+export async function settleFrame(
+	options: FrameOptions,
+	element: Element | undefined,
+	prepared: boolean,
+	pane = options.height,
+	covered?: number,
+	stage = 0,
+): Promise<void> {
+	const height = readFrameHeight(options, element, pane)
+	const measured = height === undefined ? measureContent() : Math.ceil(height)
+	const extent = Math.max(measured, options.height)
+	const growth = covered === undefined ? 0 : Math.max(0, extent - covered)
+	if (pane === extent) {
+		if (prepared && stage === 0) {
+			await stagePane(options.width, pane)
+			return settleFrame(options, element, prepared, pane, extent, stage + 1)
+		}
+		return
+	}
+	if (stage === CAPTURE_STAGE_LIMIT) {
+		throw new Error(
+			`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGE_LIMIT)} restagings: ${String(extent)} over a ${String(pane)} pane`,
+		)
+	}
+	const next = extent + growth
+	await stagePane(options.width, next)
+	return settleFrame(options, element, prepared, next, extent, stage + 1)
+}
+
+/**
+ * Reads a capture subject's height after applying its native scroll clearance.
+ *
+ * @example
+ * ```ts
+ * readFrameHeight({ path: 'frame.png', width: 390, height: 844 }, undefined, 844)
+ * ```
+ */
+export function readFrameHeight(
+	options: FrameOptions,
+	element: Element | undefined,
+	pane: number,
+): number | undefined {
+	const height = element?.getBoundingClientRect().height
+	if (element === undefined || height === undefined) return height
+	if (height > options.height) {
+		element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
+		const aligned = element.getBoundingClientRect()
+		return aligned.height + Math.max(0, aligned.top)
+	}
+	const padding = readStyle(document.documentElement, 'scroll-padding-top')
+	const margin = readStyle(element, 'scroll-margin-top')
+	if ((padding === 'auto' || padding === '0px') && margin === '0px') return height
+	element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+	if (!(element.getBoundingClientRect().bottom >= options.height)) return height
+	const placement = { left: window.scrollX, top: window.scrollY }
+	element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
+	const aligned = element.getBoundingClientRect()
+	if (aligned.bottom > options.height) {
+		element.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'instant' })
+		const end = element.getBoundingClientRect()
+		const sticky =
+			readStyle(element, 'position') === 'sticky' &&
+			readStyle(element, 'top') !== 'auto' &&
+			end.top >= 0 &&
+			end.bottom <= pane
+		if (sticky) {
+			if (height <= options.height) {
+				window.scrollTo({ left: window.scrollX, top: window.scrollY, behavior: 'instant' })
+			}
+			return height
+		}
+		if (pane > options.height || end.top !== aligned.top) {
+			const extended = aligned.height + Math.max(0, aligned.top)
+			element.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' })
+			if (extended <= options.height) window.scrollTo({ ...placement, behavior: 'instant' })
+			return extended
+		}
+	}
+	if (height <= options.height) window.scrollTo({ ...placement, behavior: 'instant' })
+	return height
+}
+
+/**
+ * Takes a screenshot while temporarily positioning the runner frame around its subject.
+ *
+ * @example
+ * ```ts
+ * const shot = await takeFrameShot({ path: 'frame.png', width: 390, height: 844 }, undefined)
+ * ```
+ */
+export async function takeFrameShot(
+	options: FrameOptions,
+	element: Element | undefined,
+): Promise<FrameShot> {
+	if (element === undefined) {
+		return await page.screenshot({ path: options.path, base64: true })
+	} else {
+		const box = element.getBoundingClientRect()
+		const down = box.top < 0 ? box.top : Math.max(0, box.bottom - window.innerHeight)
+		const across = box.left < 0 ? box.left : Math.max(0, box.right - window.innerWidth)
+		if (down !== 0 || across !== 0) {
+			window.scrollBy({ top: down, left: across, behavior: 'instant' })
+		}
+		// The offset outranks the fixed placement the `stagePane` function writes, because an
+		// inline declaration wins over a stylesheet one of equal importance, and it moves the frame
+		// only because that placement is fixed at the window's origin.
+		const frame = window.frameElement
+		const view = window.top
+		const placed = element.getBoundingClientRect()
+		const move =
+			view === null ? { top: 0, left: 0 } : computeOffset(placed, view.innerWidth, view.innerHeight)
+		const style = frame?.getAttribute('style') ?? null
+		const offset = frame !== null && (move.top !== 0 || move.left !== 0)
+		try {
+			if (offset) {
+				frame.setAttribute(
+					'style',
+					`${style ?? ''};top:${String(move.top)}px !important;left:${String(move.left)}px !important;will-change:transform`,
+				)
+				await waitForFrame()
+				await waitForFrame()
+			}
+			return await page.screenshot({ element, path: options.path, base64: true })
+		} finally {
+			if (offset && style === null) frame.removeAttribute('style')
+			else if (offset && style !== null) frame.setAttribute('style', style)
+		}
+	}
 }

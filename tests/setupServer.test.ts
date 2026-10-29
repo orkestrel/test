@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
+import { holds } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
 import {
 	CASE_SENSITIVE_FS,
@@ -56,13 +57,10 @@ describe('FILE_LINKS', () => {
 			const source = join(directory, 'source.txt')
 			const link = join(directory, 'link.txt')
 			writeFileSync(source, 'linked')
-			let readable = false
-			try {
+			const readable = holds(() => {
 				symlinkSync(source, link, 'file')
-				readable = readFileSync(link, 'utf8') === 'linked'
-			} catch {
-				readable = false
-			}
+				return readFileSync(link, 'utf8') === 'linked'
+			})
 			expect(FILE_LINKS).toBe(readable)
 		} finally {
 			rmSync(directory, { force: true, recursive: true })
@@ -76,18 +74,16 @@ describe('DIRECTORY_LINKS', () => {
 		try {
 			const source = join(directory, 'source')
 			const link = join(directory, 'link')
-			let readable = false
-			try {
+			const readable = holds(() => {
 				mkdirSync(source)
 				writeFileSync(join(source, 'marker.txt'), 'marked')
 				symlinkSync(source, link, 'junction')
-				readable =
+				return (
 					lstatSync(link).isSymbolicLink() &&
 					statSync(link).isDirectory() &&
 					readFileSync(join(link, 'marker.txt'), 'utf8') === 'marked'
-			} catch {
-				readable = false
-			}
+				)
+			})
 			expect(DIRECTORY_LINKS).toBe(readable)
 		} finally {
 			rmSync(directory, { force: true, recursive: true })
@@ -131,13 +127,10 @@ describe('RAW_BYTE_NAMES', () => {
 		const directory = mkdtempSync(join(tmpdir(), 'orkestrel-test-setup-bytes-'))
 		try {
 			const name = Buffer.concat([Buffer.from(`${directory}${sep}`), Buffer.from([0x80])])
-			let accepted = false
-			try {
+			const accepted = holds(() => {
 				writeFileSync(name, 'raw')
-				accepted = readFileSync(name, 'utf8') === 'raw'
-			} catch {
-				accepted = false
-			}
+				return readFileSync(name, 'utf8') === 'raw'
+			})
 			expect(RAW_BYTE_NAMES).toBe(accepted)
 		} finally {
 			rmSync(directory, { force: true, recursive: true })

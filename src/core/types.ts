@@ -1,3 +1,11 @@
+/** Holds the latest produced text and producer refusal across a retry history. */
+export interface RetryObservation {
+	/** Holds the latest rendered value, when a producer has returned. */
+	readonly last: string | undefined
+	/** Holds the latest refusal, preserved across successful producer calls. */
+	readonly cause: unknown
+}
+
 /**
  * Records every call made to its handler.
  *

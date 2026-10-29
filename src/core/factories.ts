@@ -5,11 +5,11 @@ import type {
 	ResourceFactoryInterface,
 	SignalInterface,
 	SignalRegistration,
-	TeardownHandler,
 	TeardownInterface,
 } from './types.js'
 import { dropRegistration } from './helpers.js'
 import { isRecorderMapComplete } from './validators.js'
+import { Teardown } from './Teardown.js'
 
 /**
  * Creates values that make common object readers throw or violate their assumptions.
@@ -307,27 +307,12 @@ export function createResourceFactory(): ResourceFactoryInterface {
  * @returns A teardown list that awaits every handler and collects failures.
  */
 export function createTeardown(): TeardownInterface {
-	let handlers: TeardownHandler[] = []
+	const teardown = new Teardown()
 	return {
 		get count() {
-			return handlers.length
+			return teardown.count
 		},
-		add(handler) {
-			handlers.push(handler)
-		},
-		async destroy() {
-			const snapshot = handlers
-			handlers = []
-			const failures: unknown[] = []
-			for (const handler of snapshot.reverse()) {
-				try {
-					await handler()
-				} catch (error) {
-					failures.push(error)
-				}
-			}
-			if (failures.length === 1) throw failures[0]
-			if (failures.length > 1) throw new AggregateError(failures)
-		},
+		add: teardown.add.bind(teardown),
+		destroy: teardown.destroy.bind(teardown),
 	}
 }

@@ -3,6 +3,7 @@ import type {
 	EventSubscriber,
 	HeadersSource,
 	JSONSafe,
+	RetryObservation,
 	RetryOptions,
 	SignalRegistration,
 	StateScenario,
@@ -21,6 +22,7 @@ import {
 	isObject,
 	isSymbol,
 } from '@orkestrel/contract'
+import { Production } from './Production.js'
 
 /**
  * Checks the resolved bounds one bounded wait runs under.
@@ -264,17 +266,19 @@ export async function waitForText(
 		throw new Error('Text departure must not appear in the text expectation')
 	}
 	const exact = options?.exact ?? false
-	let observed = ''
+	const accepted = Promise.withResolvers<string>()
 	await waitForCondition(
 		description,
 		() => {
-			observed = read()
+			const observed = read()
 			const carries = exact ? observed === text : observed.includes(text)
-			return carries && (absent === undefined || !observed.includes(absent))
+			const held = carries && (absent === undefined || !observed.includes(absent))
+			if (held) accepted.resolve(observed)
+			return held
 		},
 		options,
 	)
-	return observed
+	return accepted.promise
 }
 
 /**
@@ -307,49 +311,50 @@ export async function retryUntil<T>(
 	}
 
 	const start = performance.now()
-	let count = 0
-	let cause: unknown
-	let last: string | undefined
+	const outcomes: Array<Result<string, unknown>> = []
 	while (true) {
 		options?.signal?.throwIfAborted()
-		if (count > 0) {
+		const previous = outcomes.reduce<RetryObservation>(
+			(summary, outcome) =>
+				outcome.success
+					? { ...summary, last: outcome.value }
+					: { ...summary, cause: outcome.error },
+			{ last: undefined, cause: undefined },
+		)
+		if (outcomes.length > 0) {
 			const elapsed = performance.now() - start
 			if (elapsed >= budget) {
-				throw buildRetryExhausted(description, budget, elapsed, last, cause)
+				throw buildRetryExhausted(description, budget, elapsed, previous.last, previous.cause)
 			}
 		}
-		let produced: Result<T, unknown>
+		const production = new Production<T>()
 		try {
-			produced = { success: true, value: await produce() }
+			production.accept(await produce())
 		} catch (error) {
-			produced = { success: false, error }
+			production.refuse(error)
 		}
-		count += 1
+		const produced = production.result
 		options?.signal?.throwIfAborted()
 
-		if (produced.success) {
+		if (produced.status === 'fulfilled') {
 			if (satisfied(produced.value)) return produced.value
-			let rendered: string
-			try {
-				const serialized = JSON.stringify(produced.value)
-				rendered = serialized === undefined ? String(produced.value) : serialized
-			} catch {
-				try {
-					rendered = String(produced.value)
-				} catch {
-					rendered = '[unrenderable]'
-				}
-			}
-			last = rendered.length > 200 ? `${rendered.slice(0, 197)}...` : rendered
+			const rendered = renderRetryValue(produced.value)
+			outcomes.push({
+				success: true,
+				value: rendered.length > 200 ? `${rendered.slice(0, 197)}...` : rendered,
+			})
 		} else {
-			cause = produced.error
+			outcomes.push({ success: false, error: produced.reason })
 		}
+		const latest = outcomes.at(-1)
+		const last = latest?.success === true ? latest.value : previous.last
+		const cause = latest?.success === false ? latest.error : previous.cause
 
 		const elapsed = performance.now() - start
 		if (elapsed >= budget) {
 			throw buildRetryExhausted(description, budget, elapsed, last, cause)
 		}
-		if (attempts !== undefined && count >= attempts) {
+		if (attempts !== undefined && outcomes.length >= attempts) {
 			throw new Error(
 				`Retry "${description}" did not succeed within ${attempts} attempts${last === undefined ? '' : ` (last value: ${last})`}`,
 				{ cause },
@@ -434,15 +439,11 @@ export async function waitForEvent<TArgs extends readonly unknown[]>(
 	signal?.throwIfAborted()
 	const delivery = Promise.withResolvers<TArgs>()
 	const controller = new AbortController()
-	let timeout: ReturnType<typeof setTimeout> | undefined
-	const pending: Array<Promise<TArgs>> = [
-		delivery.promise,
-		new Promise((_resolve, reject) => {
-			timeout = setTimeout(() => {
-				reject(new Error(`Event "${description}" was not delivered within ${budget}ms`))
-			}, budget)
-		}),
-	]
+	const expiry = Promise.withResolvers<TArgs>()
+	const timeout = setTimeout(() => {
+		expiry.reject(new Error(`Event "${description}" was not delivered within ${budget}ms`))
+	}, budget)
+	const pending: Array<Promise<TArgs>> = [delivery.promise, expiry.promise]
 	if (signal !== undefined) {
 		pending.push(
 			new Promise((_resolve, reject) => {
@@ -458,18 +459,14 @@ export async function waitForEvent<TArgs extends readonly unknown[]>(
 		)
 	}
 	const result = Promise.race(pending)
-	let cleanup: (() => void) | void = undefined
+	const subscription = attempt(() => subscribe((...args) => delivery.resolve(args)))
 	try {
-		try {
-			cleanup = subscribe((...args) => delivery.resolve(args))
-		} catch (error) {
-			delivery.reject(error)
-		}
+		if (!subscription.success) delivery.reject(subscription.error)
 		return await result
 	} finally {
 		controller.abort()
-		if (timeout !== undefined) clearTimeout(timeout)
-		cleanup?.()
+		clearTimeout(timeout)
+		if (subscription.success) subscription.value?.()
 	}
 }
 
@@ -762,12 +759,44 @@ export async function executeScenarios<TState extends string, TEvent extends str
 	build: (scenario: StateScenario<TState, TEvent, TContext>) => TContext | Promise<TContext>,
 ): Promise<void> {
 	for (const scenario of scenarios) {
-		let context: TContext
-		try {
-			context = await build(scenario)
-		} catch (cause) {
-			throw buildRefusal(scenario.transition.name, cause)
-		}
-		await executeScenario(scenario, context)
+		const context = await captureProduction(() => build(scenario))
+		if (context.status === 'rejected') throw buildRefusal(scenario.transition.name, context.reason)
+		await executeScenario(scenario, context.value)
 	}
+}
+
+/**
+ * Captures a synchronous or asynchronous producer's value or exact refusal.
+ *
+ * @example
+ * ```ts
+ * await captureProduction(() => 7) // { status: 'fulfilled', value: 7 }
+ * ```
+ */
+export async function captureProduction<T>(
+	produce: () => T | Promise<T>,
+): Promise<Readonly<PromiseSettledResult<T>>> {
+	try {
+		return { status: 'fulfilled', value: await produce() }
+	} catch (error) {
+		return { status: 'rejected', reason: error }
+	}
+}
+
+/**
+ * Renders a retry value as JSON, plain text, or an unreadable-value marker.
+ *
+ * @example
+ * ```ts
+ * renderRetryValue({ ready: false }) // '{"ready":false}'
+ * ```
+ */
+export function renderRetryValue(value: unknown): string {
+	const serialized = attempt(() => {
+		const text = JSON.stringify(value)
+		return text === undefined ? String(value) : text
+	})
+	if (serialized.success) return serialized.value
+	const text = attempt(() => String(value))
+	return text.success ? text.value : '[unrenderable]'
 }

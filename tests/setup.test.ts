@@ -7,7 +7,23 @@ import {
 	isSerializableRecord,
 	rewriteWindowsAbsolutePath,
 	ROUTED_FENCES,
+	TestCounter,
+	TestValue,
 } from './setup.js'
+
+describe('test fixture state', () => {
+	it('counts deliveries and exposes the latest asynchronous fixture value', () => {
+		const counter = new TestCounter()
+		expect(counter.count).toBe(0)
+		expect(counter.increment()).toBe(1)
+		expect(counter.increment()).toBe(2)
+		expect(counter.count).toBe(2)
+		const value = new TestValue<string | undefined>('before')
+		expect(value.value).toBe('before')
+		value.value = undefined
+		expect(value.value).toBeUndefined()
+	})
+})
 
 describe('createAsyncSource', () => {
 	it('yields each given value in order, then completes', async () => {

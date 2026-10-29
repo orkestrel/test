@@ -218,8 +218,7 @@ export function readRules(): readonly CSSRule[] {
 			continue
 		}
 	}
-	for (let index = 0; index < rules.length; index += 1) {
-		const rule = rules[index]
+	for (const rule of rules) {
 		if (rule instanceof CSSGroupingRule) rules.push(...rule.cssRules)
 	}
 	return rules

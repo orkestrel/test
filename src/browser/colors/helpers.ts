@@ -586,22 +586,19 @@ export function measureContrast(front: Color, back: Color): number {
  * ```
  */
 export function readLayers(element: Element): readonly Color[] {
-	const layers: Color[] = []
-	for (let node: Element | null = element; node !== null; node = node.parentElement) {
-		const computed = getComputedStyle(node).backgroundColor
-		if (computed === '') continue
-		const layer = parseColor(computed)
-		if (layer === undefined) {
-			if (/\/\s*(?:0(?:\.0*)?|none)\s*\)$/u.test(computed)) continue
-			throw new Error(
-				`Computed background color is unreadable on ${node.localName}${node.id === '' ? '' : `#${node.id}`}: ${computed}`,
-			)
-		}
-		if (layer[3] === 0) continue
-		layers.push(layer)
-		if (layer[3] >= 1) break
+	const computed = getComputedStyle(element).backgroundColor
+	const layer = computed === '' ? undefined : parseColor(computed)
+	if (layer === undefined && computed !== '' && !/\/\s*(?:0(?:\.0*)?|none)\s*\)$/u.test(computed)) {
+		throw new Error(
+			`Computed background color is unreadable on ${element.localName}${element.id === '' ? '' : `#${element.id}`}: ${computed}`,
+		)
 	}
-	return Object.freeze(layers)
+	if (layer !== undefined && layer[3] >= 1) return Object.freeze([layer])
+	const parent = element.parentElement
+	return Object.freeze([
+		...(layer === undefined || layer[3] === 0 ? [] : [layer]),
+		...(parent === null ? [] : readLayers(parent)),
+	])
 }
 
 /**
@@ -859,15 +856,18 @@ export function buildContrast(bar: number): ContrastFixture {
 	const tint: Color = [0, 0, 0, 0.06]
 	const backdrop = blendColor(tint, CANVAS_COLOR)
 	const flattened: Color = [tint[0], tint[1], tint[2], 1]
-	let refusedChannel: number | undefined
-	let acceptedChannel: number | undefined
-	for (let channel = 0; channel <= 255; channel += 1) {
+	const channels = Array.from({ length: 256 }, (_, channel) => {
 		const front: Color = [channel, channel, channel, 1]
 		const composited = measureContrast(front, backdrop)
 		const flat = measureContrast(front, flattened)
-		if (refusedChannel === undefined && composited < bar && flat >= bar) refusedChannel = channel
-		if (acceptedChannel === undefined && composited >= bar && flat < bar) acceptedChannel = channel
-	}
+		return { channel, composited, flat }
+	})
+	const refusedChannel = channels.find(
+		({ composited, flat }) => composited < bar && flat >= bar,
+	)?.channel
+	const acceptedChannel = channels.find(
+		({ composited, flat }) => composited >= bar && flat < bar,
+	)?.channel
 	if (refusedChannel === undefined || acceptedChannel === undefined) {
 		throw new Error(`Contrast control cannot straddle the bar ${bar}`)
 	}

@@ -4,7 +4,6 @@
 // with type stripping and no bundler, so it imports the setup module by its `.ts` path.
 
 import type { Duplex } from 'node:stream'
-import type { EventSourceInterface, RecorderInterface, invokeUnchecked } from '@src/core'
 import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
 import { EventEmitter } from 'node:events'
@@ -12,118 +11,26 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { createVitest } from 'vitest/node'
-import { FENCE_LANGUAGES, INTERNAL, MODULES } from './setup.ts'
+import type { GuideScan, LoaderEvents, Schema, JSONCopyFixture } from './setup.ts'
+import {
+	advanceGuideScan,
+	carriesMarker,
+	FENCE_LANGUAGES,
+	INTERNAL,
+	MODULES,
+	normalizeComments,
+	parseSchema,
+	renderKeys,
+	ScriptedLoader,
+	serializeSchema,
+	TestCounter,
+	TestValue,
+} from './setup.ts'
 
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
 /** The one guide this package sources, whose tagline the README pitch equals. */
 const GUIDE_SPEC = 'guides/test.md'
-
-// The emitter fence drives `createRecorders` from a loader that emits `read` for every file it read
-// and `fail` for every file it could not. That loader is the consumer's own code, so what stands here
-// is the smallest real event source in its place: it registers the handlers it is given and delivers
-// real tuples to them. Nothing this package owns is stood in for.
-type LoaderEvents = {
-	readonly read: readonly [path: string]
-	readonly fail: readonly [reason: string, retryable: boolean]
-}
-
-type InvokeFunction = typeof invokeUnchecked
-
-class ScriptedLoader implements EventSourceInterface<LoaderEvents> {
-	readonly #listeners: RecorderInterface<readonly [event: keyof LoaderEvents, handler: unknown]>
-	readonly #invoke: InvokeFunction
-
-	constructor(
-		listeners: RecorderInterface<readonly [event: keyof LoaderEvents, handler: unknown]>,
-		invoke: InvokeFunction,
-	) {
-		this.#listeners = listeners
-		this.#invoke = invoke
-	}
-
-	on<K extends keyof LoaderEvents>(event: K, handler: (...args: LoaderEvents[K]) => void): void {
-		this.#listeners.handler(event, handler)
-	}
-
-	emit(event: keyof LoaderEvents, args: readonly unknown[]): void {
-		for (const [name, handler] of this.#listeners.calls) {
-			if (name === event) this.#invoke<void>(this, handler, args)
-		}
-	}
-}
-
-// A fence opens on a run of three or more backticks indented no more than three spaces, and closes
-// on a run at least as long carrying nothing after it. That pair is CommonMark's, and the indented
-// form is the one a bare `startsWith` on the delimiter walks straight past. An opening run's info
-// string carries no backtick, which is what keeps prose about a delimiter out of the walk.
-const FENCE_OPEN = /^ {0,3}(`{3,})[^`]*$/
-const FENCE_CLOSE = /^ {0,3}(`{3,})[ \t]*$/
-
-const HEADING = /^(#{1,6}) (.+)$/
-
-// A carrier opens with this line, and the totality guard builds it from the guide's own headings.
-// Reading the marker back out of a file is what makes a transcription and a routed carrier the same
-// kind of evidence, so neither can go missing without the guard naming the heading it belonged to.
-function buildMarker(section: string, heading: string): string {
-	return `// guides/test.md → ${section} → "${heading}"`
-}
-
-// A marker opens its own line, so a file carries one only when some line begins with it after its
-// indentation. Reading the whole file for the substring accepts the same text quoted inside a
-// sentence, and prose about a fence is not the comment that carries it.
-function carriesMarker(text: string, marker: string): boolean {
-	return text.split('\n').some((line) => line.trim().startsWith(marker))
-}
-
-// A README example states a long result across several comment lines, and where the wrap falls is
-// the formatter's decision rather than the claim. Dropping the comment markers and every space
-// compares what the example says a call returns against what it returns, and leaves a key that was
-// added, removed, or renamed still moving the compared text.
-function normalizeComments(text: string): string {
-	return text
-		.split('\n')
-		.map((line) => (line.startsWith('//') ? line.slice(2) : line))
-		.join('\n')
-		.replaceAll(/\s+/gu, '')
-}
-
-// The shape a README example prints a key list in.
-function renderKeys(keys: readonly string[]): string {
-	return `[${keys.map((key) => `'${key}'`).join(', ')}]`
-}
-
-// The "Copy a JSON value" fence copies an interface-typed value, so its `Snapshot` stands here.
-interface Snapshot {
-	readonly name: string
-	readonly tags: readonly string[]
-}
-
-// The "Prove a wire fixpoint" fence takes `schema`, `parseSchema`, and `serializeSchema` from the
-// consumer, because the comparison is the consumer's own. This is that consumer's part: a fixture
-// schema, a serializer that puts the wire in canonical order, and a parser that refuses anything
-// else. The serializer sorts, so a fixpoint that held only by echoing bytes back would not hold.
-interface Schema {
-	readonly name: string
-	readonly fields: readonly string[]
-}
-
-function serializeSchema(schema: Schema): Readonly<Record<string, unknown>> {
-	return { name: schema.name, fields: [...schema.fields].sort() }
-}
-
-function parseSchema(
-	value: unknown,
-	guard: (candidate: unknown) => candidate is Readonly<Record<string, unknown>>,
-): Schema | undefined {
-	if (!guard(value)) return undefined
-	const name = value.name
-	const fields: unknown = value.fields
-	if (typeof name !== 'string' || !Array.isArray(fields)) return undefined
-	const members: readonly unknown[] = fields
-	if (!members.every((field): field is string => typeof field === 'string')) return undefined
-	return { name, fields: members }
-}
 
 await new GuideCommand({
 	root: new URL('../', import.meta.url),
@@ -306,40 +213,14 @@ await new GuideCommand({
 		// its marker line fails on that file.
 		it('carries every fence-bearing guide heading in exactly one place', () => {
 			const text = requireValue(files['guides/test.md'], 'Missing guide: guides/test.md')
-			const markers = new Map<string, string>()
-			let section = ''
-			let heading: string | undefined
-			let open: string | undefined
 
-			for (const line of text.split('\n')) {
-				if (open !== undefined) {
-					const close = FENCE_CLOSE.exec(line)
-					if (close !== null && requireValue(close[1]).length >= open.length) open = undefined
-					continue
-				}
-
-				const fence = FENCE_OPEN.exec(line)
-				if (fence !== null) {
-					open = requireValue(fence[1])
-					if (heading !== undefined) markers.set(heading, buildMarker(section, heading))
-					continue
-				}
-
-				const head = HEADING.exec(line)
-				if (head === null) continue
-				const depth = requireValue(head[1])
-				const title = requireValue(head[2])
-				if (depth === '###') {
-					heading = title
-					continue
-				}
-				// A deeper heading is part of what the preceding `###` owns, so it leaves that heading
-				// standing and a fence under it still belongs to the carrier that names it. A `##` opens a
-				// section that owns no `###` yet.
-				if (depth.length > 3) continue
-				if (depth === '##') section = title
-				heading = undefined
-			}
+			const scan = text.split(/\r\n|\n/).reduce<GuideScan>(advanceGuideScan, {
+				section: '',
+				heading: undefined,
+				open: undefined,
+				markers: [],
+			})
+			const markers = new Map(scan.markers)
 
 			const discovered = [...markers.keys()]
 			const routed = Object.keys(ROUTED_FENCES)
@@ -543,13 +424,13 @@ await new GuideCommand({
 		// `origin` is a server the test started, so a real one answers here: its health route reports
 		// `starting` once and `ok` after that, which is the reading the predicate is there to reject.
 		it('returns the first produced value the predicate accepts', async () => {
-			let started = false
+			const requests = new TestCounter()
 			const server = createServer((_request, response) => {
-				if (started) {
+				if (requests.count > 0) {
 					response.end('ok')
 					return
 				}
-				started = true
+				requests.increment()
 				response.statusCode = 503
 				response.end('starting')
 			})
@@ -618,26 +499,28 @@ await new GuideCommand({
 		// variable a pair of real timers moves, which is the smallest reading that passes through the
 		// frame carrying both sentences at once, and that frame is the one `absent` waits past.
 		it('resolves on the reading that carries the arrival without the departure', async () => {
-			let painted = 'Signed out'
+			const painted = new TestValue('Signed out')
 			const arriving = setTimeout(() => {
-				painted = 'Signed out Signed in'
+				painted.value = 'Signed out Signed in'
 			}, 10)
 			const settled = setTimeout(() => {
-				painted = 'Signed in'
+				painted.value = 'Signed in'
 			}, 30)
 			try {
 				expect(
-					await waitForText('the session line replaces the prompt', () => painted, 'Signed in', {
-						absent: 'Signed out',
-						budget: 2000,
-					}),
+					await waitForText(
+						'the session line replaces the prompt',
+						() => painted.value,
+						'Signed in',
+						{ absent: 'Signed out', budget: 2000 },
+					),
 				).toBe('Signed in')
 			} finally {
 				clearTimeout(arriving)
 				clearTimeout(settled)
 			}
 
-			const refused: unknown = await waitForText('anything', () => painted, '').catch(
+			const refused: unknown = await waitForText('anything', () => painted.value, '').catch(
 				(reason: unknown) => reason,
 			)
 			expect(requireValue(refused instanceof Error ? refused : undefined).message).toBe(
@@ -647,8 +530,8 @@ await new GuideCommand({
 
 		// guides/test.md → Patterns → "Copy a JSON value".
 		it('copies an interface-typed value to fresh references and refuses a non-finite member', () => {
-			const original: Snapshot = { name: 'a', tags: ['x'] }
-			const copy: Snapshot = roundTripJSON(original)
+			const original: JSONCopyFixture = { name: 'a', tags: ['x'] }
+			const copy: JSONCopyFixture = roundTripJSON(original)
 			expect(copy).toStrictEqual({ name: 'a', tags: ['x'] })
 			expect(copy.tags === original.tags).toBe(false)
 
@@ -684,11 +567,9 @@ await new GuideCommand({
 			expect(expected.length).toBe(values.length)
 
 			for (const [index, value] of values.entries()) {
-				let accepted: boolean | undefined
 				expect(() => {
-					accepted = guard(value)
+					expect(guard(value), `hostile value ${index}`).toBe(expected[index])
 				}, `hostile value ${index}`).not.toThrow()
-				expect(accepted, `hostile value ${index}`).toBe(expected[index])
 			}
 		})
 
@@ -730,6 +611,8 @@ await new GuideCommand({
 			expect(
 				Object.keys(readInventory(workspace, ['src/core'], { extensions: ['.ts'] })),
 			).toStrictEqual([
+				'src/core/Production.ts',
+				'src/core/Teardown.ts',
 				'src/core/constants.ts',
 				'src/core/factories.ts',
 				'src/core/helpers.ts',
@@ -744,6 +627,8 @@ await new GuideCommand({
 				),
 			).toStrictEqual([
 				'package.json',
+				'src/core/Production.ts',
+				'src/core/Teardown.ts',
 				'src/core/constants.ts',
 				'src/core/factories.ts',
 				'src/core/helpers.ts',
@@ -760,6 +645,8 @@ await new GuideCommand({
 					}),
 				),
 			).toStrictEqual([
+				'src/core/Production.ts',
+				'src/core/Teardown.ts',
 				'src/core/constants.ts',
 				'src/core/factories.ts',
 				'src/core/helpers.ts',
@@ -775,6 +662,8 @@ await new GuideCommand({
 					}),
 				),
 			).toStrictEqual([
+				'src/core/Production.ts',
+				'src/core/Teardown.ts',
 				'src/core/constants.ts',
 				'src/core/factories.ts',
 				'src/core/helpers.ts',

@@ -29,7 +29,7 @@ import { request as requestHTTP } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isObject, isString } from '@orkestrel/contract'
+import { isNumber, isObject, isString } from '@orkestrel/contract'
 import { checkBounds, waitForDelay, waitForEvent } from '@src/core'
 import {
 	REMOVE_TREE_MAX_ATTEMPTS,
@@ -291,7 +291,7 @@ export function createLink(path: string, source: string): void {
  * ```
  */
 export function removeTree(path: string): void {
-	for (let attempt = 1; ; attempt++) {
+	for (const [index] of Array.from({ length: REMOVE_TREE_MAX_ATTEMPTS }).entries()) {
 		try {
 			rmSync(path, { force: true, recursive: true })
 			return
@@ -300,7 +300,7 @@ export function removeTree(path: string): void {
 			if (
 				code === undefined ||
 				!REMOVE_TREE_RETRYABLE_CODES.includes(code) ||
-				attempt >= REMOVE_TREE_MAX_ATTEMPTS
+				index + 1 >= REMOVE_TREE_MAX_ATTEMPTS
 			) {
 				throw error
 			}
@@ -563,22 +563,66 @@ export async function destroyScratch(
 	checkBounds('Scratch', budget, interval)
 
 	const start = performance.now()
-	let refusal: unknown
 	while (true) {
 		options?.signal?.throwIfAborted()
 		try {
 			scratch.destroy()
 			return
 		} catch (error) {
-			refusal = error
-		}
-
-		if (performance.now() - start >= budget) {
-			throw new Error(`Scratch directory was not destroyed within ${budget}ms`, {
-				cause: refusal,
-			})
+			if (performance.now() - start >= budget) {
+				throw new Error(`Scratch directory was not destroyed within ${budget}ms`, {
+					cause: error,
+				})
+			}
 		}
 		await waitForDelay(interval)
+	}
+}
+
+/**
+ * Reads the loop clock Node stamps on an armed timer, in whole milliseconds.
+ *
+ * @returns The reading since the loop's timer base, independent of `performance.now()`.
+ * @throws Thrown when Node's `Timeout` carries no numeric `_idleStart` field.
+ * @remarks Node refreshes libuv's clock when arming a timer and records it in the undocumented
+ * `_idleStart` field. Compare these readings with each other, never with another clock.
+ * @example
+ * ```ts
+ * const before = readLoopClock()
+ * alignLoopClock()
+ * readLoopClock() > before // true
+ * ```
+ */
+export function readLoopClock(): number {
+	const timer = setTimeout(() => undefined, 1)
+	clearTimeout(timer)
+	const stamp: unknown = Reflect.get(timer, '_idleStart')
+	if (!isNumber(stamp)) throw new Error('the armed timer carries no numeric _idleStart stamp')
+	return stamp
+}
+
+/**
+ * Spins synchronously past a loop-clock tick and an optional millisecond offset.
+ *
+ * @param offset - The milliseconds to spin after the tick. Default: `0`.
+ * @remarks The spin holds the calling macrotask so libuv cannot refresh the clock through a yield.
+ * An offset near 1 arms a subsequent timer late in a millisecond, exposing timer truncation.
+ * @example
+ * ```ts
+ * alignLoopClock(0.9)
+ * const started = performance.now()
+ * await waitForDelay(10)
+ * performance.now() - started >= 10 - TIMER_LEAD // true
+ * ```
+ */
+export function alignLoopClock(offset = 0): void {
+	const tick = readLoopClock()
+	while (readLoopClock() === tick) {
+		// A yield would let libuv refresh the clock outside this macrotask.
+	}
+	const crossed = performance.now()
+	while (performance.now() - crossed < offset) {
+		// Keep the offset within the same macrotask.
 	}
 }
 

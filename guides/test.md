@@ -118,6 +118,7 @@ it adds after.
 | `RetryOptions`             | interface | `WaitOptions` plus `{ attempts? }`                         | Configures a bounded retry, adding an optional producer-call limit to a bounded wait's bounds.                                                 |
 | `TextWaitOptions`          | interface | `WaitOptions` plus `{ exact?, absent? }`                   | Configures a bounded wait over a reading of text.                                                                                              |
 | `EventSubscriber`          | type      | `(listener) => cleanup \| void`                            | Subscribes a listener to one event source.                                                                                                     |
+| `RetryObservation`         | interface | `{ last, cause }`                                          | Holds the latest produced text and producer refusal across a retry history.                                                                    |
 | `RecorderInterface`        | interface | `{ calls, count, handler }` plus `clear`                   | Records every call made to its handler.                                                                                                        |
 | `EventSourceInterface`     | interface | `{} plus on`                                               | Subscribes handlers to a typed event source.                                                                                                   |
 | `RecorderMap`              | type      | `{ readonly [K in TName]: RecorderInterface<TMap[K]> }`    | Maps event names to recorders for their delivered argument tuples.                                                                             |
@@ -151,6 +152,7 @@ A `Shape` cell holds the constant's declared type.
 
 | API                     | Kind  | Shape                                                                                                        | Summary                                                                                  |
 | ----------------------- | ----- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `TIMER_LEAD`            | const | `number`                                                                                                     | Bounds how far a real timer can end short of its duration, in whole milliseconds.        |
 | `STATECHART_ATTRIBUTES` | const | `Readonly<Record<'status' \| 'passed' \| 'failed' \| 'total' \| 'scenario' \| 'result' \| 'state', string>>` | Names the attributes a statechart harness publishes, keyed by the fact each one carries. |
 | `STATECHART_STATUSES`   | const | `readonly ['pending', 'idle', 'running', 'passed', 'failed']`                                                | Lists every value a statechart harness reports through its `status` attribute.           |
 
@@ -192,6 +194,8 @@ instead of propagating.
 | `waitForEvent`           | function | `(subscribe, description, options?) => Promise<TArgs>`                                | Waits for the first delivery from an event subscription.                                                                                    |
 | `waitForText`            | function | `(description, read, text, options?) => Promise<string>`                              | Waits until a reading of text carries an expected sentence.                                                                                 |
 | `checkBounds`            | function | `(subject: string, budget: number, interval: number) => void`                         | Checks the resolved bounds one bounded wait runs under.                                                                                     |
+| `captureProduction`      | function | `<T>(produce: () => T \| Promise<T>) => Promise<Readonly<PromiseSettledResult<T>>>`   | Captures a synchronous or asynchronous producer's value or exact refusal.                                                                   |
+| `renderRetryValue`       | function | `(value: unknown) => string`                                                          | Renders a retry value as JSON, plain text, or an unreadable-value marker.                                                                   |
 | `buildRetryExhausted`    | function | `(description, budget, elapsed, last, cause) => Error`                                | Builds the error `retryUntil` raises when its elapsed-time budget runs out.                                                                 |
 | `buildRefusal`           | function | `(name: string, cause: unknown) => Error`                                             | Builds the error a refused fixture build raises, named for the row it was building for.                                                     |
 | `dropRegistration`       | function | `(registrations: SignalRegistration[], installed) => SignalRegistration \| undefined` | Drops the registration an instrumented signal installed for one listener.                                                                   |
@@ -364,11 +368,13 @@ A `Shape` cell holds the constant's declared type.
 | `computeNamePattern`       | function | `(name: string) => RegExp`                                                                                                      | Computes the pattern that matches one accessible name a decorative glyph may sit beside.                                                                                                                                                                                        |
 | `isOutsideViewport`        | function | `(rectangle: DOMRectReadOnly) => boolean`                                                                                       | Determines whether a rectangle lies wholly outside the browser viewport.                                                                                                                                                                                                        |
 | `isRendered`               | function | `(element: Element) => boolean`                                                                                                 | Determines whether the accessibility tree presents one element at all.                                                                                                                                                                                                          |
+| `collectShadowHosts`       | function | `(element: Element, root?: Node) => readonly Element[]`                                                                         | Collects an element and the successive hosts of its containing shadow roots.                                                                                                                                                                                                    |
 | `isReachable`              | function | `(element: Element) => boolean`                                                                                                 | Determines whether a person can click one element where it sits.                                                                                                                                                                                                                |
 | `readHit`                  | function | `(element: Element) => Element \| undefined`                                                                                    | Reads the topmost element at one element's bounding-box centre.                                                                                                                                                                                                                 |
 | `clickAccessible`          | function | `(name: string) => Promise<void>` / `(role: string, name: string) => Promise<void>`                                             | Clicks one visible, focus-reachable control by its accessible name through the browser provider.                                                                                                                                                                                |
 | `clickAccessibleWithin`    | function | `(region: string, role: string, name: string) => Promise<void>`                                                                 | Clicks one human-reachable control by role and accessible-name text inside a named region.                                                                                                                                                                                      |
 | `clickDisclosure`          | function | `(name: string) => Promise<void>`                                                                                               | Opens or closes one native details disclosure by its rendered summary.                                                                                                                                                                                                          |
+| `readProtocolSession`      | function | `() => readonly [unknown, unknown]`                                                                                             | Reads the browser provider's DevTools session and its send member.                                                                                                                                                                                                              |
 | `sendProtocol`             | function | `(method: string, params?: Readonly<Record<string, unknown>>) => Promise<unknown>`                                              | Sends one DevTools protocol command through the browser provider.                                                                                                                                                                                                               |
 | `readProtocolPoint`        | function | `(element: Element, offset?: ProtocolPoint) => ProtocolPoint`                                                                   | Projects a point of one element through every frame that holds it into the browser's top-level viewport.                                                                                                                                                                        |
 | `readProtocolNode`         | function | `(element: Element) => Promise<number>`                                                                                         | Resolves one element to the node the browser's DOM tree holds for it.                                                                                                                                                                                                           |
@@ -450,6 +456,9 @@ A `Shape` cell holds the constant's declared type.
 | `stageMedia`               | function | `(options: MediaOptions) => Promise<void>`                                                                                      | Stages the tester's print medium, motion preference, forced colours, and pointer precision through the browser provider.                                                                                                                                                        |
 | `releaseMedia`             | function | `() => Promise<void>`                                                                                                           | Restores the media readings observed before the first stage as explicit emulation. With nothing staged, clears every override and waits for a stable reading, not a proved engine baseline. Checks the budget between polls, so a frame that never paints is not bounded by it. |
 | `waitForStability`         | function | `(description: string, read: () => string, options?: StabilityOptions) => Promise<void>`                                        | Waits for a reading to hold across its last `frames + 1` reads, each later read taken after a painted frame, with the interval slept between polls. Checks the budget between reads, so a frame that never paints is not bounded by it.                                         |
+| `settleFrame`              | function | `(options, element, prepared, pane?, covered?, stage?) => Promise<void>`                                                        | Restages a capture until its content extent equals the pane height.                                                                                                                                                                                                             |
+| `readFrameHeight`          | function | `(options: FrameOptions, element: Element \| undefined, pane: number) => number \| undefined`                                   | Reads a capture subject's height after applying its native scroll clearance.                                                                                                                                                                                                    |
+| `takeFrameShot`            | function | `(options: FrameOptions, element: Element \| undefined) => Promise<FrameShot>`                                                  | Takes a screenshot while temporarily positioning the runner frame around its subject.                                                                                                                                                                                           |
 | `captureFrame`             | function | `(options: FrameOptions) => Promise<string>`                                                                                    | Shoots one frame at one viewport size and proves the file on disk holds this run's bytes.                                                                                                                                                                                       |
 | `readCaptureReader`        | function | `() => CaptureReader \| undefined`                                                                                              | Reads the optional disk-digest command the tester page registered.                                                                                                                                                                                                              |
 | `verifyFrame`              | function | `(shot: FrameShot, path: string, reader?: CaptureReader) => Promise<void>`                                                      | Verifies a screenshot's destination and compares its returned bytes with the written file.                                                                                                                                                                                      |
@@ -534,16 +543,17 @@ the requested one by punctuation alone satisfies it.
 over the presented elements too, so a region labelled by a heading that carries a glyph is read
 under the heading's words, and a region the tree does not present is refused as not visible.
 
-`clickAccessibleWithin` matches the region's name exactly and the control's name loosely. That
-combination is what a person does with a repeated short verb such as `Add`, or with a line whose
-rendered status completes its accessible name: the region supplies the context, and the name only
-has to be recognisable inside it. The loose match reads a computed name that includes the hidden
-subtrees, so a glyph joins the text rather than displacing it and the control is still recognisable
-under the words beside it. That verb owns one refusal for a control it cannot reach, absent or
-hidden, so it needs no second pass to tell the two apart. `resolveAccessibleWithin` is that
-resolution on its own, and `holdAccessibleWithin` and `traverseAccessibleWithin` drive the control it
-resolves the way `holdAccessible` and `traverseAccessible` drive a document-wide one, so a twin of
-the same name in another region is left alone.
+`resolveAccessibleWithin` matches the region's name exactly, then queries the control in tiers.
+The exact tier uses `computeNamePattern(name)` with `exact: true, includeHidden: true`. It is
+case-sensitive, normalizes whitespace, and accepts a decorative glyph beside the requested words.
+Any exact candidates determine the result: none reachable throws `not reachable inside`, and several
+reachable candidates throw `ambiguous ... inside`. A hidden or disabled exact control therefore
+prevents a longer loose match from taking its place.
+
+Only an empty exact tier falls back to the loose name query with `exact: false, includeHidden: true`.
+That tier keeps the same reachability and ambiguity refusals, so `Monthly income` can still resolve
+`Monthly income, 3 items` when no exact candidate exists. `clickAccessibleWithin`,
+`holdAccessibleWithin`, and `traverseAccessibleWithin` share this resolution.
 
 `traverseAccessible` resolves before pressing Tab to preserve its refusal voices, then checks each
 landing with `matchesTraversalName` before resolving again. A candidate is accepted only when the
@@ -964,6 +974,8 @@ A `Shape` cell holds the constant's declared type.
 
 | API                      | Kind     | Signature                                                                                                           | Summary                                                                                              |
 | ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `readLoopClock`          | function | `() => number`                                                                                                      | Reads the loop clock Node stamps on an armed timer, in whole milliseconds.                           |
+| `alignLoopClock`         | function | `(offset?: number) => void`                                                                                         | Spins synchronously past a loop-clock tick and an optional millisecond offset.                       |
 | `readCapture`            | function | `(path: string) => Promise<string>`                                                                                 | Reads the lowercase hexadecimal SHA-256 digest of a captured file's bytes.                           |
 | `readInventory`          | function | `(root: URL \| string, targets: readonly string[], options?: InventoryOptions) => Readonly<Record<string, string>>` | Reads files from selected targets below a root directory.                                            |
 | `resolveContained`       | function | `(root: string, target: string) => string \| undefined`                                                             | Resolves a target that stays below a root directory.                                                 |
@@ -1198,12 +1210,17 @@ adopted.release()
 
 #### `WebStorageInterface`
 
-| Method   | Returns | Summary                                                                      |
-| -------- | ------- | ---------------------------------------------------------------------------- |
-| `permit` | `void`  | Grants the reads and the writes the host withheld, and replenishes no quota. |
+| Method       | Returns          | Summary                                                                                       |
+| ------------ | ---------------- | --------------------------------------------------------------------------------------------- |
+| `permit`     | `void`           | Grants the reads and the writes the host withheld, and replenishes no quota.                  |
+| `clear`      | `void`           | Removes every stored entry when the host permits writes.                                      |
+| `getItem`    | `string \| null` | Reads a stored value when the host permits reads, or returns `null` for an absent key.        |
+| `key`        | `string \| null` | Reads the key at an insertion-order index when permitted, or returns `null` beyond the store. |
+| `removeItem` | `void`           | Removes a stored entry when the host permits writes, consuming no quota.                      |
+| `setItem`    | `void`           | Stores a value when writes are permitted and consumes an accepted write from the quota.       |
 
-The rest of the surface is the platform's: `length`, `key`, `getItem`, `setItem`, `removeItem`, and
-`clear` are declared by the host `Storage` interface this one extends. A store created here answers
+The interface extends the platform's `Storage` and explicitly declares the operations the fixture
+implements. It inherits `length` and the named-property index signature. A store created here answers
 through those methods and intercepts no named-property access, so drive a consumer under test
 through `getItem` and `setItem`;
 [Bounds a shipped helper carries](#bounds-a-shipped-helper-carries) states what the property form
@@ -2885,13 +2902,13 @@ import { readInventory } from '@orkestrel/test/server'
 const root = resolveRoot(import.meta)
 
 Object.keys(readInventory(root, ['src/core'], { extensions: ['.ts'] }))
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
 //  'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 // A named file is included whatever `extensions` says, so one call takes the root files a suite
 // needs and the source tree it walks.
 Object.keys(readInventory(root, ['package.json', 'src/core'], { extensions: ['.ts'] }))
-// ['package.json', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
+// ['package.json', 'src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
 //  'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 
 Object.keys(
@@ -2900,14 +2917,14 @@ Object.keys(
 		exclude: ['src/core/index.ts'],
 	}),
 )
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts',
 //  'src/core/types.ts', 'src/core/validators.ts']
 
 // A directory key takes every key below it.
 Object.keys(
 	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
 )
-// ['src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
+// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts', 'src/core/validators.ts']
 
 // An exclusion also applies to a target you name, so naming one file below an excluded directory
@@ -3748,6 +3765,7 @@ storage.getItem('theme') // 'dark'
 storage.setItem('theme', 'light')
 // Throws DOMException named QuotaExceededError: No room is left for scale
 storage.setItem('scale', '2')
+storage.removeItem('theme') // a write the quota does not count
 
 buildDenial('length').name // 'SecurityError'
 ```

@@ -1,5 +1,7 @@
 import type { EventSourceInterface } from '@src/core'
+import type { ScriptedEventMap } from '../../setup.js'
 import {
+	captureProduction,
 	createHostileValues,
 	createRecorder,
 	createRecorders,
@@ -10,34 +12,7 @@ import {
 	requireValue,
 } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { isSerializableRecord } from '../../setup.js'
-
-type ScriptedEventMap = {
-	readonly progress: readonly [step: number]
-	readonly ready: readonly [name: string, step: number]
-}
-
-class ScriptedEventSource implements EventSourceInterface<ScriptedEventMap> {
-	readonly #subscriptions =
-		createRecorder<readonly [event: keyof ScriptedEventMap, handler: unknown]>()
-
-	get count(): number {
-		return this.#subscriptions.count
-	}
-
-	on<K extends keyof ScriptedEventMap>(
-		event: K,
-		handler: (...args: ScriptedEventMap[K]) => void,
-	): void {
-		this.#subscriptions.handler(event, handler)
-	}
-
-	emit(event: keyof ScriptedEventMap, args: readonly unknown[]): void {
-		for (const [name, handler] of this.#subscriptions.calls) {
-			if (name === event) invokeUnchecked<void>(this, handler, args)
-		}
-	}
-}
+import { createSignalListener, isSerializableRecord, ScriptedEventSource } from '../../setup.js'
 
 describe('createHostileValues', () => {
 	it('provides a negative control for every hostile member', () => {
@@ -76,11 +51,9 @@ describe('createHostileValues', () => {
 		expect(isSerializableRecord({ a: 1 })).toBe(true)
 
 		for (const [index, value] of createHostileValues().entries()) {
-			let accepted: boolean | undefined
 			expect(() => {
-				accepted = isSerializableRecord(value)
+				expect(isSerializableRecord(value), `hostile value ${index}`).toBe(false)
 			}, `hostile value ${index}`).not.toThrow()
-			expect(accepted, `hostile value ${index}`).toBe(false)
 		}
 	})
 })
@@ -127,7 +100,7 @@ describe('createRecorder', () => {
 
 describe('createRecorders', () => {
 	it('records each event argument tuple in delivery order', () => {
-		const source = new ScriptedEventSource()
+		const source = new ScriptedEventSource(createRecorder(), invokeUnchecked)
 		const recorders = createRecorders<ScriptedEventMap, 'ready' | 'progress'>(source, [
 			'ready',
 			'progress',
@@ -150,7 +123,7 @@ describe('createRecorders', () => {
 	})
 
 	it('installs duplicate event names and retains the last recorder', () => {
-		const source = new ScriptedEventSource()
+		const source = new ScriptedEventSource(createRecorder(), invokeUnchecked)
 		const recorders = createRecorders<ScriptedEventMap, 'ready'>(source, ['ready', 'ready'])
 
 		source.emit('ready', ['value', 1])
@@ -160,7 +133,7 @@ describe('createRecorders', () => {
 	})
 
 	it('infers exact tuples through an event-source interface', () => {
-		const scripted = new ScriptedEventSource()
+		const scripted = new ScriptedEventSource(createRecorder(), invokeUnchecked)
 		const source: EventSourceInterface<ScriptedEventMap> = scripted
 		const recorders = createRecorders(source, ['ready', 'progress'])
 
@@ -186,11 +159,7 @@ describe('createSignal', () => {
 			},
 			{ once: true, signal: lifetime.signal },
 		)
-		const listener: EventListenerObject = {
-			handleEvent() {
-				heard.handler(this, instrument.count, lifetime.count)
-			},
-		}
+		const listener = createSignalListener(heard, instrument, lifetime)
 		instrument.signal.addEventListener('abort', listener, { once: true })
 		instrument.controller.abort()
 		expect(heard.calls[0]).toEqual([instrument.signal, 1, 0])
@@ -348,12 +317,8 @@ describe('createTeardown', () => {
 			order.push('newest')
 		})
 
-		let caught: unknown
-		try {
-			await teardown.destroy()
-		} catch (error) {
-			caught = error
-		}
+		const outcome = await captureProduction(() => teardown.destroy())
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(sentinel)
 		expect(order).toStrictEqual(['newest', 'throw', 'oldest'])
@@ -374,12 +339,8 @@ describe('createTeardown', () => {
 			order.push('newest')
 		})
 
-		let caught: unknown
-		try {
-			await teardown.destroy()
-		} catch (error) {
-			caught = error
-		}
+		const outcome = await captureProduction(() => teardown.destroy())
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBe(sentinel)
 		expect(order).toStrictEqual(['newest', 'reject', 'oldest'])
@@ -405,12 +366,8 @@ describe('createTeardown', () => {
 			order.push('newest')
 		})
 
-		let caught: unknown
-		try {
-			await teardown.destroy()
-		} catch (error) {
-			caught = error
-		}
+		const outcome = await captureProduction(() => teardown.destroy())
+		const caught = outcome.status === 'fulfilled' ? undefined : outcome.reason
 
 		expect(caught).toBeInstanceOf(AggregateError)
 		if (!(caught instanceof AggregateError)) throw new Error('Expected an AggregateError')
@@ -464,14 +421,13 @@ describe('createTeardown', () => {
 		const teardown = createTeardown()
 		await expect(teardown.destroy()).resolves.toBeUndefined()
 
-		let count = 0
-		teardown.add(() => {
-			count += 1
-		})
+		const calls = createRecorder()
+		teardown.add(calls.handler)
 		await teardown.destroy()
 		await expect(teardown.destroy()).resolves.toBeUndefined()
 
-		expect(count).toBe(1)
+		expect(calls.count).toBe(1)
+		expect(calls.calls).toStrictEqual([[]])
 		expect(teardown.count).toBe(0)
 	})
 })

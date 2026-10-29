@@ -1,8 +1,6 @@
-import type { StateScenario } from '@src/core'
 import {
 	buildDenial,
 	clickAccessible,
-	clickDisclosure,
 	createChannel,
 	createDragEvent,
 	createHarness,
@@ -11,11 +9,12 @@ import {
 	createPointerEvent,
 	createStorage,
 	readPerception,
-	readStates,
 } from '@src/browser'
 import {
 	buildRefusal,
 	captureError,
+	captureProduction,
+	TIMER_LEAD,
 	createRecorder,
 	executeScenarios,
 	requireValue,
@@ -23,138 +22,23 @@ import {
 	waitForDelay,
 } from '@src/core'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildFixture, dispatchFromShadow, resetFixtures } from '../../../setupBrowser.js'
+import { TestCounter, TestValue } from '../../../setup.js'
+import {
+	arrangeDisclosure,
+	actOnDisclosure,
+	assertDisclosure,
+	readDisclosure,
+	buildDisclosure,
+	DISCLOSURE_SCENARIOS,
+	MISMATCHED_SCENARIOS,
+	MIXED_SCENARIOS,
+	mounted,
+	buildFixture,
+	dispatchFromShadow,
+	resetFixtures,
+} from '../../../setupBrowser.js'
 
 afterEach(resetFixtures)
-
-// The worked statechart table `guides/test.md` § Patterns → "Drive a statechart table" carries. The
-// entity is a native disclosure with a second door: the summary toggles it, and a Dismiss button
-// closes it and does nothing when it is already closed. That second door is what gives the table a
-// row whose event leaves the state unchanged, which a lone `<details>` cannot have.
-type DisclosureState = 'closed' | 'open'
-
-type DisclosureEvent = 'toggle' | 'dismiss'
-
-interface DisclosureContext {
-	readonly summary: HTMLElement
-}
-
-// The fixture the row before this one left on the page. A journey verb resolves its own target by
-// accessible name, so two mounted disclosures called "Advanced" are an ambiguity rather than a
-// second fixture: each build takes the previous one back out before rendering its own.
-let mounted: HTMLElement | undefined
-
-function buildDisclosure(): DisclosureContext {
-	mounted?.remove()
-	const container = buildFixture(
-		'<details><summary>Advanced</summary><p>Every setting.</p></details><button type="button">Dismiss</button>',
-	)
-	const details = requireValue(container.querySelector('details'))
-	requireValue(container.querySelector('button')).addEventListener('click', () => {
-		details.open = false
-	})
-	mounted = container
-	return { summary: requireValue(container.querySelector('summary')) }
-}
-
-function readDisclosure(context: DisclosureContext): DisclosureState {
-	return readStates(context.summary).includes('expanded') ? 'open' : 'closed'
-}
-
-async function arrangeDisclosure(
-	context: DisclosureContext,
-	state: DisclosureState,
-): Promise<void> {
-	if (readDisclosure(context) !== state) await clickDisclosure('Advanced')
-}
-
-// The context is unused because a journey verb resolves its own target: the summary and the button
-// are found by what a person reads, not by a node this row was handed.
-async function actOnDisclosure(_context: DisclosureContext, event: DisclosureEvent): Promise<void> {
-	if (event === 'toggle') await clickDisclosure('Advanced')
-	else await clickAccessible('Dismiss')
-}
-
-function assertDisclosure(context: DisclosureContext, state: DisclosureState): void {
-	expect(readDisclosure(context)).toBe(state)
-}
-
-const DISCLOSURE_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: {
-			name: 'closed opens through the summary',
-			from: 'closed',
-			event: 'toggle',
-			to: 'open',
-		},
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-	{
-		transition: {
-			name: 'open closes through the summary',
-			from: 'open',
-			event: 'toggle',
-			to: 'closed',
-		},
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-	{
-		transition: {
-			name: 'open closes through the button',
-			from: 'open',
-			event: 'dismiss',
-			to: 'closed',
-		},
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-	{
-		transition: {
-			name: 'closed stays closed through the button',
-			from: 'closed',
-			event: 'dismiss',
-			to: 'closed',
-		},
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
-// One row whose `to` state the event cannot reach. Nothing about the row is malformed: the summary
-// really does open the disclosure, so only `assert` can catch it.
-const MISMATCHED_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	{
-		transition: {
-			name: 'the summary leaves it closed',
-			from: 'closed',
-			event: 'toggle',
-			to: 'closed',
-		},
-		arrange: arrangeDisclosure,
-		act: actOnDisclosure,
-		assert: assertDisclosure,
-	},
-]
-
-// The same table with the mismatched row second, so the rows after a failing row are observable.
-const MIXED_SCENARIOS: ReadonlyArray<
-	StateScenario<DisclosureState, DisclosureEvent, DisclosureContext>
-> = [
-	requireValue(DISCLOSURE_SCENARIOS[0]),
-	requireValue(MISMATCHED_SCENARIOS[0]),
-	requireValue(DISCLOSURE_SCENARIOS[2]),
-	requireValue(DISCLOSURE_SCENARIOS[3]),
-]
 
 describe('createChannel', () => {
 	it('records one prefixed line and forwards the same arguments', () => {
@@ -274,7 +158,6 @@ describe('createJournal', () => {
 		const channels = { error: console.error, warn: console.warn }
 		console.error = printed.handler
 		console.warn = printed.handler
-		let recorded: readonly string[] = []
 		try {
 			journal.start()
 			window.dispatchEvent(new ErrorEvent('error', { message: 'Boom' }))
@@ -285,15 +168,15 @@ describe('createJournal', () => {
 				}),
 			)
 			journal.stop()
-			recorded = journal.output
+			const recorded = journal.output
 			window.dispatchEvent(new ErrorEvent('error', { message: 'Ignored' }))
+			expect(recorded).toContain('error: Boom')
+			expect(recorded).toContain('rejection: Refused')
+			// The listeners go with the console, so a failure after the journal stopped reaches neither.
+			expect(journal.output).toStrictEqual(recorded)
 		} finally {
 			Object.assign(console, channels)
 		}
-		expect(recorded).toContain('error: Boom')
-		expect(recorded).toContain('rejection: Refused')
-		// The listeners go with the console, so a failure after the journal stopped reaches neither.
-		expect(journal.output).toStrictEqual(recorded)
 	})
 
 	it('hands every console channel back by identity, and stops again as a no-op', () => {
@@ -318,26 +201,23 @@ describe('createJournal', () => {
 		const printed = createRecorder<[unknown]>()
 		const original = console.log
 		console.log = printed.handler
-		let armed: unknown
-		let rearmed: unknown
-		let restored: unknown
 		try {
 			journal.start()
-			armed = console.log
+			const armed = console.log
 			journal.record('click', 'First', 'alerts=0')
 			console.log('first')
 			journal.start()
-			rearmed = console.log
+			const rearmed = console.log
 			journal.record('click', 'Second', 'alerts=1')
 			journal.stop()
-			restored = console.log
+			const restored = console.log
+			expect(rearmed).toBe(armed)
+			expect(restored).toBe(printed.handler)
 		} finally {
 			console.log = original
 		}
 		// A restart that re-captured the console would stack its second wrapper on the first, and
 		// `stop` would then hand back a wrapper instead of the recorder that was there.
-		expect(rearmed).toBe(armed)
-		expect(restored).toBe(printed.handler)
 		expect(printed.calls).toStrictEqual([['first']])
 		expect(journal.steps).toStrictEqual([
 			{ action: 'click', trigger: 'Second', result: 'alerts=1' },
@@ -383,8 +263,7 @@ describe('createJournal', () => {
 		const idle = readPerception('Run')
 		const journal = createJournal()
 		const original = console.log
-		let refused = ''
-		try {
+		const outcome = await captureProduction(async () => {
 			journal.start()
 			try {
 				await clickAccessible('button', 'Evaluate')
@@ -406,9 +285,13 @@ describe('createJournal', () => {
 			} finally {
 				journal.stop()
 			}
-		} catch (error) {
-			refused = error instanceof Error ? error.message : 'no error'
-		}
+		})
+		const refused =
+			outcome.status === 'fulfilled'
+				? ''
+				: outcome.reason instanceof Error
+					? outcome.reason.message
+					: 'no error'
 		expect(refused).toBe('Draft refused')
 		expect(console.log).toBe(original)
 	})
@@ -578,7 +461,7 @@ describe('createHarness', () => {
 		for (const root of [...document.querySelectorAll(`[${STATECHART_ATTRIBUTES.status}]`)]) {
 			root.remove()
 		}
-		mounted = undefined
+		mounted.value = undefined
 	})
 
 	// T2-C1.
@@ -589,7 +472,11 @@ describe('createHarness', () => {
 			captureError(() =>
 				createHarness({
 					scenarios: [],
-					build: buildDisclosure,
+					build: () => {
+						return buildDisclosure((actual, expected) => {
+							expect(actual).toBe(expected)
+						})
+					},
 					state: readDisclosure,
 				}),
 			),
@@ -622,36 +509,40 @@ describe('createHarness', () => {
 
 		const harness = createHarness({
 			scenarios: DISCLOSURE_SCENARIOS,
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state: readDisclosure,
 		})
 		const records = observer.takeRecords()
 		observer.disconnect()
 
-		let mountedRows = 0
-		let lastRow = -1
-		let total = -1
-		let status = -1
-		let narration = -1
-		for (const [index, record] of records.entries()) {
-			if (record.type === 'attributes') {
-				if (record.attributeName === STATECHART_ATTRIBUTES.total) total = index
-				if (
-					record.attributeName === STATECHART_ATTRIBUTES.status &&
-					record.oldValue === 'pending'
-				) {
-					status = index
-				}
-				continue
-			}
-			for (const node of record.addedNodes) {
-				if (node instanceof Element && node.localName === 'li') {
-					mountedRows += 1
-					lastRow = index
-				}
-				if (node instanceof Text) narration = index
-			}
-		}
+		const rows = records.flatMap((record, index) =>
+			record.type === 'attributes'
+				? []
+				: Array.from(record.addedNodes)
+						.filter((node) => node instanceof Element && node.localName === 'li')
+						.map(() => index),
+		)
+		const mountedRows = rows.length
+		const lastRow = rows.at(-1) ?? -1
+		const total = records.findLastIndex(
+			(record) =>
+				record.type === 'attributes' && record.attributeName === STATECHART_ATTRIBUTES.total,
+		)
+		const status = records.findLastIndex(
+			(record) =>
+				record.type === 'attributes' &&
+				record.attributeName === STATECHART_ATTRIBUTES.status &&
+				record.oldValue === 'pending',
+		)
+		const narration = records.findLastIndex(
+			(record) =>
+				record.type !== 'attributes' &&
+				Array.from(record.addedNodes).some((node) => node instanceof Text),
+		)
 
 		// Every declared row mounted, and each write the claim orders was recorded.
 		expect(mountedRows).toBe(DISCLOSURE_SCENARIOS.length)
@@ -691,7 +582,11 @@ describe('createHarness', () => {
 					assert: assertDisclosure,
 				},
 			],
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state: readDisclosure,
 		})
 		expect(harness.status).toBe('idle')
@@ -715,7 +610,11 @@ describe('createHarness', () => {
 	it('drives every row of the worked table and publishes the tally on its own markup', async () => {
 		const harness = createHarness({
 			scenarios: DISCLOSURE_SCENARIOS,
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state: readDisclosure,
 		})
 
@@ -767,7 +666,11 @@ describe('createHarness', () => {
 	it('carries on past a failing row and names it in the failures', async () => {
 		const harness = createHarness({
 			scenarios: MIXED_SCENARIOS,
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state: readDisclosure,
 		})
 
@@ -800,17 +703,21 @@ describe('createHarness', () => {
 	// next row's build, because the run's terminal sentence replaces it before `execute` returns.
 	it('fails the row whose builder refused and runs the rows after it', async () => {
 		const refusal = new Error('no fixture')
-		let refusals = 0
-		let announced: string | undefined
+		const refusals = new TestCounter()
+		const announced = new TestValue<string | undefined>(undefined)
 		const harness = createHarness({
 			scenarios: MIXED_SCENARIOS,
 			build(scenario) {
-				if (refusals === 1 && announced === undefined) {
-					announced = announcer.textContent ?? undefined
+				if (refusals.count === 1 && announced.value === undefined) {
+					announced.value = announcer.textContent ?? undefined
 				}
-				if (scenario.transition.name !== 'the summary leaves it closed') return buildDisclosure()
-				refusals += 1
-				throw refusal
+				if (scenario.transition.name === 'the summary leaves it closed') {
+					refusals.increment()
+					throw refusal
+				}
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
 			},
 			state: readDisclosure,
 		})
@@ -819,8 +726,8 @@ describe('createHarness', () => {
 
 		await harness.execute()
 
-		expect(refusals).toBe(1)
-		expect(announced).toBe(buildRefusal('the summary leaves it closed', refusal).message)
+		expect(refusals.count).toBe(1)
+		expect(announced.value).toBe(buildRefusal('the summary leaves it closed', refusal).message)
 		expect(harness.status).toBe('failed')
 		expect(harness.passed).toBe(3)
 		expect(harness.failures).toStrictEqual(['the summary leaves it closed'])
@@ -886,22 +793,26 @@ describe('createHarness', () => {
 	// run as at construction. The reading is taken inside the second run's own `build`, the one
 	// moment in that run before any row has produced a context.
 	it('clears the rendered state at the start of a re-run', async () => {
-		let runs = 0
-		let observed: { readonly attribute: string | null; readonly text: string } | undefined
+		const runs = new TestCounter()
+		const observed = new TestValue<
+			{ readonly attribute: string | null; readonly text: string } | undefined
+		>(undefined)
 		const harness = createHarness({
 			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
 			build() {
-				runs += 1
+				runs.increment()
 				// The element the first run rendered into, read on the second run before any row of
 				// that run has produced a context. The builder first runs inside `execute`, which is
 				// after the following reading is in hand.
-				if (runs === 2) {
-					observed = {
+				if (runs.count === 2) {
+					observed.value = {
 						attribute: rendered.getAttribute(STATECHART_ATTRIBUTES.state),
 						text: rendered.textContent ?? '',
 					}
 				}
-				return buildDisclosure()
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
 			},
 			state: readDisclosure,
 		})
@@ -914,10 +825,10 @@ describe('createHarness', () => {
 
 		await harness.execute()
 
-		expect(requireValue(observed).attribute).toBeNull()
-		expect(requireValue(observed).text).toBe('')
+		expect(requireValue(observed.value).attribute).toBeNull()
+		expect(requireValue(observed.value).text).toBe('')
 		// The reading was taken, so an absent one cannot pass for a cleared one.
-		expect(runs).toBe(2)
+		expect(runs.count).toBe(2)
 		// The run put it back, so the clearing is the reset the tally gets rather than a removal.
 		expect(rendered.getAttribute(STATECHART_ATTRIBUTES.state)).toBe('open')
 		expect(rendered.textContent).toBe('open')
@@ -929,7 +840,11 @@ describe('createHarness', () => {
 	it('re-runs from a fresh tally and hands the root back on destroy', async () => {
 		const harness = createHarness({
 			scenarios: MIXED_SCENARIOS,
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state: readDisclosure,
 		})
 
@@ -981,7 +896,9 @@ describe('createHarness', () => {
 			scenarios: DISCLOSURE_SCENARIOS,
 			build() {
 				marks.push(performance.now())
-				return buildDisclosure()
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
 			},
 			state(context) {
 				marks.push(performance.now())
@@ -996,10 +913,10 @@ describe('createHarness', () => {
 		expect(harness.status).toBe('passed')
 		// One build mark and one reading mark per row, in that order.
 		expect(marks.length).toBe(DISCLOSURE_SCENARIOS.length * 2)
-		for (let row = 0; row < DISCLOSURE_SCENARIOS.length - 1; row += 1) {
+		for (const [row] of DISCLOSURE_SCENARIOS.slice(0, -1).entries()) {
 			const time = requireValue(marks[row * 2 + 1])
 			const next = requireValue(marks[row * 2 + 2])
-			expect(next - time).toBeGreaterThanOrEqual(pause)
+			expect(next - time).toBeGreaterThanOrEqual(pause - TIMER_LEAD)
 		}
 		// Nothing waits after the last row: the run returns as soon as that row's reading is in.
 		expect(finished - requireValue(marks[marks.length - 1])).toBeLessThan(pause)
@@ -1014,7 +931,11 @@ describe('createHarness', () => {
 		const unreadable = new Error('unreadable entity')
 		const harness = createHarness({
 			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state() {
 				throw unreadable
 			},
@@ -1043,7 +964,11 @@ describe('createHarness', () => {
 	it('writes failed and rethrows a non-Error reader throw by identity', async () => {
 		const harness = createHarness({
 			scenarios: [requireValue(DISCLOSURE_SCENARIOS[0])],
-			build: buildDisclosure,
+			build: () => {
+				return buildDisclosure((actual, expected) => {
+					expect(actual).toBe(expected)
+				})
+			},
 			state() {
 				throw 'the host refused the reading'
 			},
@@ -1097,16 +1022,23 @@ describe('createHarness', () => {
 	// row whose phases the fence elided would refuse with `scenario.arrange is not a function`
 	// instead, which is why the phase readings sit beside the message.
 	it('stops the bare runner at the first failing row and names that row', async () => {
-		await executeScenarios(DISCLOSURE_SCENARIOS, buildDisclosure)
+		await executeScenarios(DISCLOSURE_SCENARIOS, () => {
+			return buildDisclosure((actual, expected) => {
+				expect(actual).toBe(expected)
+			})
+		})
 
 		const mismatched = requireValue(MISMATCHED_SCENARIOS[0])
 		expect(mismatched.arrange).toBeTypeOf('function')
 		expect(mismatched.act).toBeTypeOf('function')
 		expect(mismatched.assert).toBeTypeOf('function')
 
-		const thrown = await executeScenarios(MISMATCHED_SCENARIOS, buildDisclosure).catch(
-			(error: unknown) => error,
-		)
+		const pending = executeScenarios(MISMATCHED_SCENARIOS, () => {
+			return buildDisclosure((actual, expected) => {
+				expect(actual).toBe(expected)
+			})
+		})
+		const thrown = await pending.catch((error: unknown) => error)
 		const failure = requireValue(thrown instanceof Error ? thrown : undefined)
 		expect(
 			failure.message.startsWith("the summary leaves it closed: expected 'open' to be 'closed'"),

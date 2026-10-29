@@ -1,4 +1,19 @@
 /**
+ * Bounds how far a real timer can end short of its duration, in whole milliseconds.
+ *
+ * @remarks Node stamps an armed timer with libuv's whole-millisecond loop clock. Truncation and
+ * a coarse clock tick can each contribute under 1 ms of lead. Subtract this lead from an elapsed
+ * lower bound measured with `performance.now()` before arming the timer.
+ * @example
+ * ```ts
+ * const started = performance.now()
+ * await waitForDelay(10)
+ * performance.now() - started >= 10 - TIMER_LEAD // true
+ * ```
+ */
+export const TIMER_LEAD = 2
+
+/**
  * Names the attributes a statechart harness publishes, keyed by the fact each one carries.
  *
  * @remarks
