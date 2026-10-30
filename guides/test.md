@@ -112,7 +112,7 @@ member and `plus` introducing its call-signature members, and a type alias's own
 a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
 it adds after.
 
-| Type                       | Kind      | Shape                                                      | Summary                                                                                                                                        |
+| Name                       | Kind      | Shape                                                      | Summary                                                                                                                                        |
 | -------------------------- | --------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WaitOptions`              | interface | `{ budget?, interval?, signal? }`                          | Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and an abort signal.                              |
 | `RetryOptions`             | interface | `WaitOptions` plus `{ attempts? }`                         | Configures a bounded retry, adding an optional producer-call limit to a bounded wait's bounds.                                                 |
@@ -140,7 +140,7 @@ re-exported; `retryUntil` reads `Result` internally.
 
 The chooser wire contract is shared by the browser journey and its server command.
 
-| Type             | Kind      | Shape                                      | Summary                                                                               |
+| Name             | Kind      | Shape                                      | Summary                                                                               |
 | ---------------- | --------- | ------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `FixtureFile`    | interface | `{ name, mime, bytes }`                    | Represents one fixture file as a name, media type, and immutable bytes.               |
 | `ChoiceOptions`  | interface | `{ keyboard?, budget? }`                   | Configures native file-picker activation and its bounded provider wait.               |
@@ -150,7 +150,7 @@ The chooser wire contract is shared by the browser journey and its server comman
 
 A `Shape` cell holds the constant's declared type.
 
-| API                     | Kind  | Shape                                                                                                        | Summary                                                                                  |
+| Name                    | Kind  | Shape                                                                                                        | Summary                                                                                  |
 | ----------------------- | ----- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
 | `TIMER_LEAD`            | const | `number`                                                                                                     | Bounds how far a real timer can end short of its duration, in whole milliseconds.        |
 | `STATECHART_ATTRIBUTES` | const | `Readonly<Record<'status' \| 'passed' \| 'failed' \| 'total' \| 'scenario' \| 'result' \| 'state', string>>` | Names the attributes a statechart harness publishes, keyed by the fact each one carries. |
@@ -171,7 +171,7 @@ throw. `StatechartStatus` is the same set of readings as a named union.
 
 In a guard table a `Shape` cell holds the type the guard narrows to.
 
-| API                     | Kind     | Shape                      | Summary                                                            |
+| Name                    | Kind     | Shape                      | Summary                                                            |
 | ----------------------- | -------- | -------------------------- | ------------------------------------------------------------------ |
 | `isRecorderMapComplete` | function | `RecorderMap<TMap, TName>` | Checks whether a value contains a recorder for every listed event. |
 
@@ -187,7 +187,7 @@ instead of propagating.
 
 #### Helpers
 
-| API                      | Kind     | Signature                                                                             | Summary                                                                                                                                     |
+| Name                     | Kind     | Signature                                                                             | Summary                                                                                                                                     |
 | ------------------------ | -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `waitForCondition`       | function | `(description, condition, options?) => Promise<void>`                                 | Waits until a condition holds within an elapsed-time budget.                                                                                |
 | `retryUntil`             | function | `(description, produce, satisfied, options?) => Promise<T>`                           | Repeats a producer until one produced value satisfies a predicate.                                                                          |
@@ -232,7 +232,7 @@ selector alphabet such as a declaration block's braces — throws an `Error` rea
 
 #### Factories
 
-| API                     | Kind     | Signature                                                                                                 | Summary                                                                                  |
+| Name                    | Kind     | Signature                                                                                                 | Summary                                                                                  |
 | ----------------------- | -------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `createHostileValues`   | function | `() => readonly unknown[]`                                                                                | Creates values that make common object readers throw or violate their assumptions.       |
 | `createRecorder`        | function | `<TArgs extends readonly unknown[]>() => RecorderInterface<TArgs>`                                        | Creates a recorder for callback arguments.                                               |
@@ -256,7 +256,7 @@ focus reachability, so a status or region can receive an external file drag.
 Native file inputs carry no ARIA role. Their journey uses the label resolver and the same visibility,
 enabled-state, focus-order, uniqueness, and active-modal checks as the other controls.
 
-| API                | Kind     | Signature                                                                                 | Summary                                                                                     |
+| Name               | Kind     | Signature                                                                                 | Summary                                                                                     |
 | ------------------ | -------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `resolveFileInput` | function | `(name: string) => HTMLInputElement`                                                      | Resolves one visible, enabled, focus-reachable native file input by its exact label.        |
 | `chooseAccessible` | function | `(name: string, files: readonly FixtureFile[], options?: ChoiceOptions) => Promise<void>` | Activates a labeled native file input and fulfills its observed chooser with fixture bytes. |
@@ -305,7 +305,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 member and `plus` introducing its call-signature members, and a type alias's own type literal with
 a union's arms escaped as `\|`.
 
-| Type                  | Kind      | Shape                                                                          | Summary                                                                                                                                         |
+| Name                  | Kind      | Shape                                                                          | Summary                                                                                                                                         |
 | --------------------- | --------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CaptureReader`       | type      | `(path: string) => Promise<string>`                                            | Reads the lowercase hexadecimal SHA-256 digest of a captured file through a browser command.                                                    |
 | `FrameShot`           | interface | `{ path, base64 }`                                                             | Represents the path and base64 bytes returned by Vitest's screenshot operation.                                                                 |
@@ -341,7 +341,7 @@ a union's arms escaped as `\|`.
 
 A `Shape` cell holds the constant's declared type.
 
-| API                     | Kind  | Shape                              | Summary                                                                                                    |
+| Name                    | Kind  | Shape                              | Summary                                                                                                    |
 | ----------------------- | ----- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `ACCESSIBLE_ROLES`      | const | `readonly string[]`                | Names the interactive ARIA roles a bare accessible name is searched across.                                |
 | `CANVAS_COLOR`          | const | `Color`                            | Names the color a browser paints an unstyled document with: opaque white.                                  |
@@ -359,7 +359,7 @@ A `Shape` cell holds the constant's declared type.
 
 #### Helpers
 
-| API                        | Kind     | Signature                                                                                                                       | Summary                                                                                                                                                                                                                                                                         |
+| Name                       | Kind     | Signature                                                                                                                       | Summary                                                                                                                                                                                                                                                                         |
 | -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `supportsSegmentedFocus`   | function | `(element: Element) => boolean`                                                                                                 | Determines whether a native input exposes separately editable segments under one focused element.                                                                                                                                                                               |
 | `resolveAccessible`        | function | `(name: string) => HTMLElement` / `(role: string, name: string) => HTMLElement`                                                 | Resolves one visible, focus-reachable interactive element by its exact accessible name. A wholly-off-viewport target is scrolled into view before reachability is measured.                                                                                                     |
@@ -492,7 +492,7 @@ A `Shape` cell holds the constant's declared type.
 
 #### Factories
 
-| API                   | Kind     | Signature                                                                                                 | Summary                                                                                             |
+| Name                  | Kind     | Signature                                                                                                 | Summary                                                                                             |
 | --------------------- | -------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `createPortfolio`     | function | `(options: PortfolioOptions) => PortfolioInterface`                                                       | Creates the capture portfolio one run places its screenshots through; a disabled run still refuses. |
 | `createChannel`       | function | `(name: string, output: string[], forward: (...data: unknown[]) => void) => (...data: unknown[]) => void` | Creates one console channel that records every call it receives and hands that call on unchanged.   |
@@ -937,7 +937,7 @@ Imported from `@orkestrel/test/server`.
 
 The provider command consumes the browser journey's resolved selector inside Vitest's tester frame.
 
-| API           | Kind     | Signature                                                             | Summary                                                                                                  |
+| Name          | Kind     | Signature                                                             | Summary                                                                                                  |
 | ------------- | -------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `chooseFiles` | function | `(context: ChooserContext, request: ChooserRequest) => Promise<void>` | Observes a native chooser before activating its input and supplies the verified chooser's fixture bytes. |
 
@@ -948,7 +948,7 @@ member and `plus` introducing its call-signature members, and a type alias's own
 a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
 it adds after.
 
-| Type                 | Kind      | Shape                                                                                         | Summary                                                                                         |
+| Name                 | Kind      | Shape                                                                                         | Summary                                                                                         |
 | -------------------- | --------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `ScratchInterface`   | interface | `{ path }` plus `write` / `read` / `has` / `names` / `ensure` / `link` / `remove` / `destroy` | Holds a temporary directory a test owns, writes into, reads back, and removes when it is done.  |
 | `ScratchIdentity`    | interface | `{ device, inode, birth }`                                                                    | Represents the fields that together identify one allocated directory on its host.               |
@@ -964,7 +964,7 @@ it adds after.
 
 A `Shape` cell holds the constant's declared type.
 
-| API                           | Kind  | Shape               | Summary                                                                            |
+| Name                          | Kind  | Shape               | Summary                                                                            |
 | ----------------------------- | ----- | ------------------- | ---------------------------------------------------------------------------------- |
 | `REMOVE_TREE_MAX_ATTEMPTS`    | const | `number`            | Caps the attempts `removeTree` makes before rethrowing a retryable removal error.  |
 | `REMOVE_TREE_RETRY_DELAY_MS`  | const | `number`            | Names the synchronous delay, in milliseconds, `removeTree` waits between attempts. |
@@ -972,7 +972,7 @@ A `Shape` cell holds the constant's declared type.
 
 #### Helpers
 
-| API                      | Kind     | Signature                                                                                                           | Summary                                                                                              |
+| Name                     | Kind     | Signature                                                                                                           | Summary                                                                                              |
 | ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `readLoopClock`          | function | `() => number`                                                                                                      | Reads the loop clock Node stamps on an armed timer, in whole milliseconds.                           |
 | `alignLoopClock`         | function | `(offset?: number) => void`                                                                                         | Spins synchronously past a loop-clock tick and an optional millisecond offset.                       |
@@ -1098,7 +1098,7 @@ that needs a refusal probes that refusal itself.
 
 #### Factories
 
-| API               | Kind     | Signature                                        | Summary                                                                                     |
+| Name              | Kind     | Signature                                        | Summary                                                                                     |
 | ----------------- | -------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `createScratch`   | function | `(options?: ScratchOptions) => ScratchInterface` | Allocates an owned temporary directory with contained file operations.                      |
 | `createLoopback`  | function | `(server: Server) => Promise<LoopbackInterface>` | Starts a server on an ephemeral IPv4 loopback port.                                         |
