@@ -107,11 +107,6 @@ Imported from `@orkestrel/test`.
 
 #### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
-member and `plus` introducing its call-signature members, and a type alias's own type literal with
-a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
-it adds after.
-
 | Name                       | Kind      | Signature                                                                                                                                                                                                                                                                                                                     | Summary                                                                                                                                        |
 | -------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WaitOptions`              | interface | `{ budget?, interval?, signal? }`                                                                                                                                                                                                                                                                                             | Configures a bounded asynchronous wait with an elapsed-time limit, a delay between readings, and an abort signal.                              |
@@ -148,8 +143,6 @@ The chooser wire contract is shared by the browser journey and its server comman
 
 #### Constants
 
-A `Shape` cell holds the constant's declared type.
-
 | Name                    | Kind  | Signature                                                                                                                                                                                                                                                     | Summary                                                                                  |
 | ----------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `TIMER_LEAD`            | const | `2`                                                                                                                                                                                                                                                           | Bounds how far a real timer can end short of its duration, in whole milliseconds.        |
@@ -168,8 +161,6 @@ fixed duration. An exceptional exit is terminal too: a harness whose `state` rea
 throw. `StatechartStatus` is the same set of readings as a named union.
 
 #### Validators
-
-In a guard table a `Shape` cell holds the type the guard narrows to.
 
 | Name                    | Kind     | Signature                                                                                                                                                    | Summary                                                            |
 | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
@@ -301,10 +292,6 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 
 #### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
-member and `plus` introducing its call-signature members, and a type alias's own type literal with
-a union's arms escaped as `\|`.
-
 | Name                  | Kind      | Signature                                                                 | Summary                                                                                                                                         |
 | --------------------- | --------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CaptureReader`       | type      | `(path: string) => Promise<string>`                                       | Reads the lowercase hexadecimal SHA-256 digest of a captured file through a browser command.                                                    |
@@ -338,8 +325,6 @@ a union's arms escaped as `\|`.
 | `HarnessInterface`    | interface | `{ root, status, total, passed, failed, failures, execute(), destroy() }` | Holds a mounted statechart harness, the tally it publishes, and the run it drives.                                                              |
 
 #### Constants
-
-A `Shape` cell holds the constant's declared type.
 
 | Name                    | Kind  | Signature                                                                     | Summary                                                                                                    |
 | ----------------------- | ----- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -944,11 +929,6 @@ The provider command consumes the browser journey's resolved selector inside Vit
 
 #### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional
-member and `plus` introducing its call-signature members, and a type alias's own type literal with
-a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members
-it adds after.
-
 | Name                 | Kind      | Signature                                                                                                                      | Summary                                                                                         |
 | -------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
 | `ScratchInterface`   | interface | `{ path, write(), read(), has(), names(), ensure(), link(), remove(), destroy() }`                                             | Holds a temporary directory a test owns, writes into, reads back, and removes when it is done.  |
@@ -962,8 +942,6 @@ it adds after.
 | `ChooserContext`     | interface | `{ page, iframe }`                                                                                                             | Supplies the real Playwright page and tester frame to a native chooser command.                 |
 
 #### Constants
-
-A `Shape` cell holds the constant's declared type.
 
 | Name                          | Kind  | Signature           | Summary                                                                            |
 | ----------------------------- | ----- | ------------------- | ---------------------------------------------------------------------------------- |
