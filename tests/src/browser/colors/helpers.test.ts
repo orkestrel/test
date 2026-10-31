@@ -1,4 +1,4 @@
-import type { Color } from '@src/browser'
+import type { RGBA } from '@src/browser'
 import {
 	blendColor,
 	build,
@@ -346,8 +346,8 @@ describe('measureContrast', () => {
 	})
 
 	it('returns the same ratio whichever way the pair is handed over', () => {
-		const front: Color = [30, 60, 90, 1]
-		const back: Color = [200, 210, 220, 1]
+		const front: RGBA = [30, 60, 90, 1]
+		const back: RGBA = [200, 210, 220, 1]
 		expect(measureContrast(front, back)).toBe(measureContrast(back, front))
 	})
 })
@@ -400,7 +400,7 @@ describe('readLayers', () => {
 describe('readBackdrop', () => {
 	it('hands the floor back by identity when nothing above the element paints', () => {
 		const container = buildFixture('<p style="color: #000">Ready</p>')
-		const floor: Color = [1, 2, 3, 1]
+		const floor: RGBA = [1, 2, 3, 1]
 		expect(readBackdrop(requireValue(container.querySelector('p')), floor)).toBe(floor)
 	})
 
@@ -764,7 +764,7 @@ describe('buildContrast', () => {
 			const tint = requireValue(
 				parseColor(readStyle(requireValue(control.refused.parentElement), 'background-color')),
 			)
-			const flat: Color = [tint[0], tint[1], tint[2], 1]
+			const flat: RGBA = [tint[0], tint[1], tint[2], 1]
 			const refused = requireValue(parseColor(readStyle(control.refused, 'color')))
 			const accepted = requireValue(parseColor(readStyle(control.accepted, 'color')))
 
@@ -787,7 +787,7 @@ describe('buildContrast', () => {
 			const tint = requireValue(
 				parseColor(readStyle(requireValue(strict.refused.parentElement), 'background-color')),
 			)
-			const flat: Color = [tint[0], tint[1], tint[2], 1]
+			const flat: RGBA = [tint[0], tint[1], tint[2], 1]
 
 			expect(
 				measureContrast(requireValue(parseColor(readStyle(strict.refused, 'color'))), flat),

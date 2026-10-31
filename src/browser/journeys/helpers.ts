@@ -205,6 +205,41 @@ export async function sendFileDrag(
 }
 
 /**
+ * Records every call one console channel receives and hands that call on unchanged.
+ *
+ * @param name - The channel's name, which prefixes each line it records.
+ * @param output - The list each call is recorded into, appended to in place.
+ * @param forward - The channel every call is passed on to after it is recorded.
+ * @returns A channel carrying the console's own call signature.
+ *
+ * @remarks
+ * One call becomes one line. Every argument of that call is put through `String` and joined with a
+ * space, so a call carrying several values reads as the one line the page printed rather than as
+ * several entries.
+ *
+ * Nothing is swallowed. The record happens first and `forward` receives the arguments it would have
+ * received, so a page recorded through this prints exactly what it printed without it. The list
+ * belongs to the caller, so a channel writes into whatever it was handed and holds no state of its
+ * own. {@link createJournal} builds one channel per console method over one list.
+ *
+ * @example
+ * ```ts
+ * const output: string[] = []
+ * console.log = recordConsole('log', output, console.log)
+ * ```
+ */
+export function recordConsole(
+	name: string,
+	output: string[],
+	forward: (...data: unknown[]) => void,
+): (...data: unknown[]) => void {
+	return (...data) => {
+		output.push(`${name}: ${data.map((value) => String(value)).join(' ')}`)
+		forward(...data)
+	}
+}
+
+/**
  * Determines whether a rectangle lies wholly outside the browser viewport.
  *
  * @param rectangle - The measured client rectangle to inspect.
@@ -1795,10 +1830,10 @@ export function readFocus(): string | undefined {
  *
  * @example
  * ```ts
- * readValue('spinbutton', 'Runs') // '3'
+ * readControlValue('spinbutton', 'Runs') // '3'
  * ```
  */
-export function readValue(role: string, name: string): string {
+export function readControlValue(role: string, name: string): string {
 	const control = resolveAccessible(role, name)
 	if (
 		!(control instanceof HTMLInputElement) &&

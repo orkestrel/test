@@ -40,6 +40,7 @@ import {
 	readActiveElement,
 	readAnimations,
 	readContrast,
+	readControlValue,
 	readFocus,
 	readHit,
 	readName,
@@ -54,7 +55,7 @@ import {
 	readStates,
 	readStyle,
 	readText,
-	readValue,
+	recordConsole,
 	releasePointer,
 	removeDatabase,
 	render,
@@ -114,6 +115,50 @@ afterAll(async () => {
 afterEach(resetFixtures)
 
 afterEach(releasePointer)
+
+describe('recordConsole', () => {
+	it('records one prefixed line and forwards the same arguments', () => {
+		const forwarded = createRecorder<[unknown]>()
+		const output: string[] = []
+		const channel = recordConsole('warn', output, forwarded.handler)
+		channel('low disk')
+		expect(output).toStrictEqual(['warn: low disk'])
+		expect(forwarded.calls).toStrictEqual([['low disk']])
+	})
+
+	it('joins every argument of one call into a single line through String', () => {
+		const forwarded = createRecorder<[unknown, unknown, unknown]>()
+		const output: string[] = []
+		const channel = recordConsole('log', output, forwarded.handler)
+		channel('read', 3, { one: 1 })
+		expect(output).toStrictEqual(['log: read 3 [object Object]'])
+		expect(forwarded.count).toBe(1)
+	})
+
+	it('records a call carrying no arguments as its bare prefix', () => {
+		const forwarded = createRecorder<[]>()
+		const output: string[] = []
+		recordConsole('debug', output, forwarded.handler)()
+		expect(output).toStrictEqual(['debug: '])
+	})
+
+	it('appends to the caller list, so two channels share one record in call order', () => {
+		const forwarded = createRecorder<[unknown]>()
+		const output: string[] = ['before']
+		recordConsole('info', output, forwarded.handler)('first')
+		recordConsole('error', output, forwarded.handler)('second')
+		expect(output).toStrictEqual(['before', 'info: first', 'error: second'])
+	})
+
+	it('records before it forwards, so a throwing target leaves the line recorded', () => {
+		const output: string[] = []
+		const channel = recordConsole('error', output, () => {
+			throw new Error('Console is gone')
+		})
+		expect(() => channel('boom')).toThrow('Console is gone')
+		expect(output).toStrictEqual(['error: boom'])
+	})
+})
 
 describe('touch input', () => {
 	it('taps a moving target at its settled centre', async () => {
@@ -1208,7 +1253,7 @@ describe('clickAccessible', () => {
 		requireValue(twins[1]).addEventListener('click', vault.handler)
 
 		await typeAccessible('Runs', '3')
-		expect(readValue('textbox', 'Runs')).toBe('3')
+		expect(readControlValue('textbox', 'Runs')).toBe('3')
 
 		// The tab and its own panel collide by construction, because the panel is labelled by the tab.
 		// The bare name is refused, and the role is what separates them.
@@ -1714,19 +1759,19 @@ describe('typeAccessible', () => {
 	it('replaces an existing value with real keystrokes', async () => {
 		buildFixture('<label for="runs">Runs</label><input id="runs" type="text" value="9">')
 		await typeAccessible('Runs', '3')
-		expect(readValue('textbox', 'Runs')).toBe('3')
+		expect(readControlValue('textbox', 'Runs')).toBe('3')
 	})
 
 	it('types the provider key syntax as literal text', async () => {
 		buildFixture('<label for="runs">Runs</label><input id="runs" type="text">')
 		await typeAccessible('Runs', '{a}[b]')
-		expect(readValue('textbox', 'Runs')).toBe('{a}[b]')
+		expect(readControlValue('textbox', 'Runs')).toBe('{a}[b]')
 	})
 
 	it('clears the field when the text is empty', async () => {
 		buildFixture('<label for="runs">Runs</label><input id="runs" type="text" value="9">')
 		await typeAccessible('Runs', '')
-		expect(readValue('textbox', 'Runs')).toBe('')
+		expect(readControlValue('textbox', 'Runs')).toBe('')
 	})
 })
 
@@ -1738,7 +1783,7 @@ describe('fillAccessible', () => {
 		const recorder = createRecorder<[event: Event]>()
 		requireValue(container.querySelector('textarea')).addEventListener('input', recorder.handler)
 		await fillAccessible('Notes', '{"status":"ready"}')
-		expect(readValue('textbox', 'Notes')).toBe('{"status":"ready"}')
+		expect(readControlValue('textbox', 'Notes')).toBe('{"status":"ready"}')
 		expect(recorder.count).toBeGreaterThan(0)
 	})
 })
@@ -3169,15 +3214,22 @@ describe('readFocus', () => {
 	})
 })
 
-describe('readValue', () => {
+describe('readControlValue', () => {
 	it('reads the value a resolved control renders', () => {
 		buildFixture('<label for="runs">Runs</label><input id="runs" type="text" value="7">')
-		expect(readValue('textbox', 'Runs')).toBe('7')
+		expect(readControlValue('textbox', 'Runs')).toBe('7')
+	})
+
+	it('reads the selected option of a resolved select', () => {
+		buildFixture(
+			'<label for="theme">Theme</label><select id="theme"><option>Light</option><option selected>Dark</option></select>',
+		)
+		expect(readControlValue('combobox', 'Theme')).toBe('Dark')
 	})
 
 	it('refuses a resolved control that carries no value', () => {
 		buildFixture('<button type="button">Save</button>')
-		expect(() => readValue('button', 'Save')).toThrow(
+		expect(() => readControlValue('button', 'Save')).toThrow(
 			'Interactive target "Save" does not carry a value',
 		)
 	})

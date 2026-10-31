@@ -1,4 +1,4 @@
-import type { Color } from '../types.js'
+import type { RGBA } from '../types.js'
 
 /**
  * Names the color a browser paints an unstyled document with: opaque white.
@@ -8,4 +8,4 @@ import type { Color } from '../types.js'
  * assumed. `readBackdrop` takes its floor as an argument rather than reaching for this one, so a
  * measurement over a surface the canvas never shows through names the color it actually sits on.
  */
-export const CANVAS_COLOR: Color = Object.freeze([255, 255, 255, 1])
+export const CANVAS_COLOR: RGBA = Object.freeze([255, 255, 255, 1])

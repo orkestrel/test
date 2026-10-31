@@ -1,4 +1,4 @@
-import type { Color } from '../types.js'
+import type { RGBA } from '../types.js'
 import type { ContrastFixture, ContrastOptions } from './types.js'
 import { build, mount, readStyle } from '../helpers.js'
 import { CANVAS_COLOR } from './constants.js'
@@ -17,7 +17,7 @@ import { CANVAS_COLOR } from './constants.js'
  * convertSRGB(1.2, -0.1, 0.5) // [255, 0, 127.5, 1]
  * ```
  */
-export function convertSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertSRGB(red: number, green: number, blue: number, alpha = 1): RGBA {
 	return Object.freeze([
 		Math.min(255, Math.max(0, red * 255)),
 		Math.min(255, Math.max(0, green * 255)),
@@ -43,7 +43,7 @@ export function convertSRGB(red: number, green: number, blue: number, alpha = 1)
  * convertLinearSRGB(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertLinearSRGB(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertLinearSRGB(red: number, green: number, blue: number, alpha = 1): RGBA {
 	const [encodedRed = 0, encodedGreen = 0, encodedBlue = 0] = [red, green, blue].map((channel) =>
 		Math.abs(channel) <= 0.0031308
 			? 12.92 * channel
@@ -69,7 +69,7 @@ export function convertLinearSRGB(red: number, green: number, blue: number, alph
  * convertXYZD65(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertXYZD65(x: number, y: number, z: number, alpha = 1): Color {
+export function convertXYZD65(x: number, y: number, z: number, alpha = 1): RGBA {
 	return convertLinearSRGB(
 		(12831 / 3959) * x - (329 / 214) * y - (1974 / 3959) * z,
 		(-851781 / 878810) * x + (1648619 / 878810) * y + (36519 / 878810) * z,
@@ -95,7 +95,7 @@ export function convertXYZD65(x: number, y: number, z: number, alpha = 1): Color
  * convertXYZD50(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertXYZD50(x: number, y: number, z: number, alpha = 1): Color {
+export function convertXYZD50(x: number, y: number, z: number, alpha = 1): RGBA {
 	return convertXYZD65(
 		0.955473421488075 * x - 0.02309845494876471 * y + 0.06325924320057072 * z,
 		-0.0283697093338637 * x + 1.0099953980813041 * y + 0.021041441191917323 * z,
@@ -121,7 +121,7 @@ export function convertXYZD50(x: number, y: number, z: number, alpha = 1): Color
  * convertOKLab(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertOKLab(lightness: number, a: number, b: number, alpha = 1): Color {
+export function convertOKLab(lightness: number, a: number, b: number, alpha = 1): RGBA {
 	const long = (lightness + 0.3963377773761749 * a + 0.2158037573099136 * b) ** 3
 	const medium = (lightness - 0.1055613458156586 * a - 0.0638541728258133 * b) ** 3
 	const short = (lightness - 0.0894841775298119 * a - 1.2914855480194092 * b) ** 3
@@ -150,7 +150,7 @@ export function convertOKLab(lightness: number, a: number, b: number, alpha = 1)
  * convertLab(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertLab(lightness: number, a: number, b: number, alpha = 1): Color {
+export function convertLab(lightness: number, a: number, b: number, alpha = 1): RGBA {
 	const luminance = (lightness + 16) / 116
 	const [x = 0, y = 0, z = 0] = [luminance + a / 500, luminance, luminance - b / 200].map(
 		(channel) => (channel ** 3 > 216 / 24389 ? channel ** 3 : (116 * channel - 16) / (24389 / 27)),
@@ -175,7 +175,7 @@ export function convertLab(lightness: number, a: number, b: number, alpha = 1): 
  * convertDisplayP3(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertDisplayP3(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertDisplayP3(red: number, green: number, blue: number, alpha = 1): RGBA {
 	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
 		Math.abs(channel) <= 0.04045
 			? channel / 12.92
@@ -206,7 +206,7 @@ export function convertDisplayP3(red: number, green: number, blue: number, alpha
  * convertA98RGB(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertA98RGB(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertA98RGB(red: number, green: number, blue: number, alpha = 1): RGBA {
 	const [r = 0, g = 0, b = 0] = [red, green, blue].map(
 		(channel) => Math.sign(channel) * Math.abs(channel) ** (563 / 256),
 	)
@@ -235,7 +235,7 @@ export function convertA98RGB(red: number, green: number, blue: number, alpha = 
  * convertProPhotoRGB(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertProPhotoRGB(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertProPhotoRGB(red: number, green: number, blue: number, alpha = 1): RGBA {
 	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
 		Math.abs(channel) <= 16 / 512 ? channel / 16 : Math.sign(channel) * Math.abs(channel) ** 1.8,
 	)
@@ -264,7 +264,7 @@ export function convertProPhotoRGB(red: number, green: number, blue: number, alp
  * convertRec2020(0, 0, 0) // [0, 0, 0, 1]
  * ```
  */
-export function convertRec2020(red: number, green: number, blue: number, alpha = 1): Color {
+export function convertRec2020(red: number, green: number, blue: number, alpha = 1): RGBA {
 	const [r = 0, g = 0, b = 0] = [red, green, blue].map((channel) =>
 		Math.abs(channel) < 0.018053968510807 * 4.5
 			? channel / 4.5
@@ -300,7 +300,7 @@ export function convertRec2020(red: number, green: number, blue: number, alpha =
  * parseColor('rebeccapurple') // undefined
  * ```
  */
-export function parseColor(value: string): Color | undefined {
+export function parseColor(value: string): RGBA | undefined {
 	const match = /^(?<syntax>rgba?|oklab|oklch|lab|lch|color)\((?<body>[^()]*)\)$/u.exec(value)
 	if (match?.groups === undefined) return undefined
 	const { syntax, body = '' } = match.groups
@@ -423,7 +423,7 @@ export function parseColor(value: string): Color | undefined {
  * parseCSSColor('var(--ink)', panel) // the token as the panel declares it
  * ```
  */
-export function parseCSSColor(value: string, scope?: Element): Color | undefined {
+export function parseCSSColor(value: string, scope?: Element): RGBA | undefined {
 	const computed = scope?.isConnected === true ? getComputedStyle(scope) : undefined
 	// A scope with no computed style has no cascade to carry, so it reads nothing.
 	if (scope !== undefined && (computed === undefined || computed.color === '')) return undefined
@@ -475,7 +475,7 @@ export function parseCSSColor(value: string, scope?: Element): Color | undefined
  * matchesColor('red', [0, 0, 255, 1]) // false
  * ```
  */
-export function matchesColor(first: string | Color, second: string | Color): boolean {
+export function matchesColor(first: string | RGBA, second: string | RGBA): boolean {
 	const left = typeof first === 'string' ? parseCSSColor(first) : first
 	const right = typeof second === 'string' ? parseCSSColor(second) : second
 	if (left === undefined || right === undefined) return false
@@ -502,7 +502,7 @@ export function matchesColor(first: string | Color, second: string | Color): boo
  * blendColor([255, 255, 255, 0.5], [0, 0, 0, 1]) // [127.5, 127.5, 127.5, 1]
  * ```
  */
-export function blendColor(front: Color, back: Color): Color {
+export function blendColor(front: RGBA, back: RGBA): RGBA {
 	const [red, green, blue, alpha] = front
 	const [under, over, beneath] = back
 	return Object.freeze([
@@ -524,7 +524,7 @@ export function blendColor(front: Color, back: Color): Color {
  * measureLuminance([255, 255, 255, 1]) // 1
  * ```
  */
-export function measureLuminance(color: Color): number {
+export function measureLuminance(color: RGBA): number {
 	const [red, green, blue] = color
 	const [first = 0, second = 0, third = 0] = [red, green, blue].map((channel) => {
 		const part = channel / 255
@@ -549,7 +549,7 @@ export function measureLuminance(color: Color): number {
  * measureContrast([0, 0, 0, 1], [255, 255, 255, 1]) // 21
  * ```
  */
-export function measureContrast(front: Color, back: Color): number {
+export function measureContrast(front: RGBA, back: RGBA): number {
 	const bright = Math.max(measureLuminance(front), measureLuminance(back))
 	const dark = Math.min(measureLuminance(front), measureLuminance(back))
 	return (bright + 0.05) / (dark + 0.05)
@@ -585,7 +585,7 @@ export function measureContrast(front: Color, back: Color): number {
  * readLayers(requireValue(container.querySelector('p')))
  * ```
  */
-export function readLayers(element: Element): readonly Color[] {
+export function readLayers(element: Element): readonly RGBA[] {
 	const computed = getComputedStyle(element).backgroundColor
 	const layer = computed === '' ? undefined : parseColor(computed)
 	if (layer === undefined && computed !== '' && !/\/\s*(?:0(?:\.0*)?|none)\s*\)$/u.test(computed)) {
@@ -628,7 +628,7 @@ export function readLayers(element: Element): readonly Color[] {
  * readBackdrop(requireValue(container.querySelector('p')), CANVAS_COLOR)
  * ```
  */
-export function readBackdrop(element: Element, floor: Color): Color {
+export function readBackdrop(element: Element, floor: RGBA): RGBA {
 	return readLayers(element).reduceRight((back, front) => blendColor(front, back), floor)
 }
 
@@ -743,7 +743,7 @@ export function readColorContrast(
  * readContrast(requireValue(container.firstElementChild), CANVAS_COLOR) // 21
  * ```
  */
-export function readContrast(element: Element, floor?: Color): number {
+export function readContrast(element: Element, floor?: RGBA): number {
 	const foreground = getComputedStyle(element).color
 	if (parseColor(foreground) === undefined) {
 		throw new Error('Computed foreground color is unavailable')
@@ -853,11 +853,11 @@ export function readRing(control: Element, worn?: Element): number | undefined {
  * ```
  */
 export function buildContrast(bar: number): ContrastFixture {
-	const tint: Color = [0, 0, 0, 0.06]
+	const tint: RGBA = [0, 0, 0, 0.06]
 	const backdrop = blendColor(tint, CANVAS_COLOR)
-	const flattened: Color = [tint[0], tint[1], tint[2], 1]
+	const flattened: RGBA = [tint[0], tint[1], tint[2], 1]
 	const channels = Array.from({ length: 256 }, (_, channel) => {
-		const front: Color = [channel, channel, channel, 1]
+		const front: RGBA = [channel, channel, channel, 1]
 		const composited = measureContrast(front, backdrop)
 		const flat = measureContrast(front, flattened)
 		return { channel, composited, flat }

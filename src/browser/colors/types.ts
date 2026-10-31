@@ -1,4 +1,4 @@
-import type { Color } from '../types.js'
+import type { RGBA } from '../types.js'
 
 /**
  * Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the
@@ -11,7 +11,7 @@ import type { Color } from '../types.js'
  */
 export interface ContrastOptions {
 	/** Holds the opaque color the backdrop walk ends on when nothing above it paints. */
-	readonly floor?: Color
+	readonly floor?: RGBA
 	/** Holds the factor, from `0` to `1`, the color's alpha is multiplied by. Default: `1`. */
 	readonly opacity?: number
 }

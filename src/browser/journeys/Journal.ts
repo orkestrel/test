@@ -1,5 +1,5 @@
 import type { JournalInterface, JournalStep } from './types.js'
-import { createChannel } from './factories.js'
+import { recordConsole } from './helpers.js'
 
 /** Owns the state and console subscriptions behind a journal projection. */
 export class Journal implements JournalInterface {
@@ -26,7 +26,7 @@ export class Journal implements JournalInterface {
 		}
 		this.#intercepted = forwarded
 		for (const channel of ['debug', 'error', 'info', 'log', 'warn'] as const) {
-			console[channel] = createChannel(channel, this.#output, forwarded[channel])
+			console[channel] = recordConsole(channel, this.#output, forwarded[channel])
 		}
 		const dropped = new AbortController()
 		this.#listeners = dropped

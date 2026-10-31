@@ -7,7 +7,7 @@ import {
 	extractOrphans,
 	extractStyles,
 	findKeyframes,
-	findRule,
+	findStyleRule,
 	matchesColor,
 	parseCSSColor,
 	readCascade,
@@ -212,26 +212,30 @@ describe('readRules', () => {
 	})
 })
 
-describe('findRule', () => {
+describe('findStyleRule', () => {
 	it('finds a rule declared at the top level of a sheet', () => {
 		buildStylesheet('.journey-card { padding: 8px }')
-		expect(requireValue(findRule('.journey-card')).style.getPropertyValue('padding')).toBe('8px')
+		expect(requireValue(findStyleRule('.journey-card')).style.getPropertyValue('padding')).toBe(
+			'8px',
+		)
 	})
 
 	it('finds a rule nested inside a grouping rule', () => {
 		buildStylesheet('@media (min-width: 1px) { .journey-grouped { padding: 9px } }')
-		expect(requireValue(findRule('.journey-grouped')).style.getPropertyValue('padding')).toBe('9px')
+		expect(requireValue(findStyleRule('.journey-grouped')).style.getPropertyValue('padding')).toBe(
+			'9px',
+		)
 	})
 
 	it('matches the fragment anywhere in the selector text', () => {
 		buildStylesheet('.journey-panel > .journey-slot:hover { padding: 10px }')
-		expect(requireValue(findRule('.journey-slot')).selectorText).toBe(
+		expect(requireValue(findStyleRule('.journey-slot')).selectorText).toBe(
 			'.journey-panel > .journey-slot:hover',
 		)
 	})
 
 	it('reports undefined for a selector no loaded sheet declares', () => {
-		expect(findRule('.journey-never-declared')).toBeUndefined()
+		expect(findStyleRule('.journey-never-declared')).toBeUndefined()
 	})
 
 	// guides/test.md → Patterns → "Find a rule in the cascade". A browser fence carries in this
@@ -241,8 +245,8 @@ describe('findRule', () => {
 			'@media (min-width: 1px) { .card { padding: 8px } }' +
 				'@keyframes slide { from { opacity: 0 } to { opacity: 1 } }',
 		)
-		expect(requireValue(findRule('.card')).style.getPropertyValue('padding')).toBe('8px')
-		expect(findRule('.never-declared')).toBeUndefined()
+		expect(requireValue(findStyleRule('.card')).style.getPropertyValue('padding')).toBe('8px')
+		expect(findStyleRule('.never-declared')).toBeUndefined()
 
 		expect(requireValue(findKeyframes('slide')).cssRules).toHaveLength(2)
 		expect(findKeyframes('slid')).toBeUndefined()

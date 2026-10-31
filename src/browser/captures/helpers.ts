@@ -1,4 +1,4 @@
-import type { Color } from '../types.js'
+import type { RGBA } from '../types.js'
 import type {
 	CaptureReader,
 	CaptureVariant,
@@ -1022,7 +1022,7 @@ export async function readFrame(path: string): Promise<FrameResult> {
  * const [red, green, blue] = await readShotPixel(figure, 0.5, 0.5)
  * ```
  */
-export async function readShotPixel(element: Element, x: number, y: number): Promise<Color> {
+export async function readShotPixel(element: Element, x: number, y: number): Promise<RGBA> {
 	if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) {
 		throw new Error('Shot pixel position must be a fraction from 0 to 1')
 	}
@@ -1038,7 +1038,8 @@ export async function readShotPixel(element: Element, x: number, y: number): Pro
 		1,
 		1,
 	).data
-	return Object.freeze([red, green, blue, alpha / 255])
+	const pixel: RGBA = [red, green, blue, alpha / 255]
+	return Object.freeze(pixel)
 }
 
 /**

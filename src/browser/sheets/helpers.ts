@@ -193,7 +193,7 @@ export function readCensus(root: ParentNode): CensusResult {
  * The walk is iterative and reads the list it is still appending to, which is what expands a media
  * query, a supports block, a layer, and a nested style rule without recursion. Expanding by level
  * rather than by depth is why a top-level rule is always met before a rule nested inside an earlier
- * one; {@link findRule} returns the first match in exactly this order.
+ * one; {@link findStyleRule} returns the first match in exactly this order.
  *
  * The descent reaches a `CSSGroupingRule` and nothing else, and a `@keyframes` rule is not one. The
  * `@keyframes` rule itself is collected wherever it sits, and the keyframe rules inside it are not;
@@ -238,15 +238,15 @@ export function readRules(): readonly CSSRule[] {
  * another. Assert on this where the subject is the stylesheet, and on `readStyle` where the subject is
  * the rendered result.
  *
- * The match is a substring, so `findRule('.card')` finds `.card`, `.card:hover`, and
+ * The match is a substring, so `findStyleRule('.card')` finds `.card`, `.card:hover`, and
  * `.panel > .card` alike. Pass more of the selector to narrow it.
  *
  * @example
  * ```ts
- * findRule('.card')?.style.getPropertyValue('padding')
+ * findStyleRule('.card')?.style.getPropertyValue('padding')
  * ```
  */
-export function findRule(selector: string): CSSStyleRule | undefined {
+export function findStyleRule(selector: string): CSSStyleRule | undefined {
 	for (const rule of readRules()) {
 		if (rule instanceof CSSStyleRule && rule.selectorText.includes(selector)) return rule
 	}
@@ -261,7 +261,7 @@ export function findRule(selector: string): CSSStyleRule | undefined {
  * declares no animation under that name.
  *
  * @remarks
- * The name is matched exactly, which is where this parts from {@link findRule}: a selector is
+ * The name is matched exactly, which is where this parts from {@link findStyleRule}: a selector is
  * compound and a fragment of one is a useful question, and an animation name is one atom that either
  * is or is not the one an `animation` declaration references.
  *
