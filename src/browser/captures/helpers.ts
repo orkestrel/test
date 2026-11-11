@@ -12,7 +12,13 @@ import type {
 import { readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
 import { readStyle, sendProtocol, waitForFrame } from '../helpers.js'
-import { CAPTURE_PANE, CAPTURE_STAGE_LIMIT, MEDIA_STAGE } from './constants.js'
+import {
+	CAPTURE_CONTROLS,
+	CAPTURE_LABEL_LIMIT,
+	CAPTURE_PANE,
+	CAPTURE_STAGE_LIMIT,
+	MEDIA_STAGE,
+} from './constants.js'
 
 /**
  * Reads one resolved CSS length as a number of pixels.
@@ -225,7 +231,8 @@ export function clipsOverflow(element: Element): boolean {
 }
 
 /**
- * Collects the scroll containers in an element's subtree, the element included.
+ * Collects the scroll containers in an element's subtree, the element included unless it is the
+ * body or the root element.
  *
  * @param element - The element whose subtree to walk. Default: the document's body.
  * @returns Every element whose computed `overflow-x` or `overflow-y` value is the `auto` keyword,
@@ -260,20 +267,26 @@ export function collectScrollContainers(element: Element = document.body): reado
 
 /**
  * Collects the vertical scroll regions an unrolled frame releases in an element's subtree, the
- * element included.
+ * element included unless it is the body or the root element.
  *
- * @param element - The element whose subtree to walk. Default: the document's body.
+ * @param element - The element whose subtree to walk and whose box is the frame. Default: the
+ * document's body, whose frame is the page: the window's width, from the document's top down.
  * @returns Every scroll container the {@link collectScrollContainers} helper finds whose computed
- * `overflow-y` value is the `auto` keyword or the `scroll` keyword and whose `scrollHeight` exceeds
- * its `clientHeight`, in document order.
+ * `overflow-y` value is the `auto` keyword or the `scroll` keyword, whose `scrollHeight` exceeds its
+ * `clientHeight`, that the page shows, that is no form control, and whose box overlaps the frame,
+ * in document order.
  *
  * @remarks
  * A region's hidden rows are its `scrollHeight` minus its `clientHeight`. A `hidden` overflow and a
- * `clip` overflow are left out, because a page that hides rows there hides them by design. A region
- * that scrolls only horizontally holds every row it lays out, so it is left out too. The walk reaches
- * open shadow roots; a region inside a closed shadow root is unreachable and is left out. The body
- * and the root element are left out, because their rows are the document's own. The
- * `collectScrollRegions` journey reader answers a different question, which boxes a person can
+ * `clip` overflow are left out, because a page that hides rows there hides them by design. An
+ * `overflow-x: auto` wrapper computes an `overflow-y` value of `auto` too, so it is left out only
+ * where its rows fit. A text area, a list box, and an input, which {@link CAPTURE_CONTROLS} names,
+ * are left out, because their rows are the control's value. A region `checkVisibility` reports
+ * unshown, its `visibility` read included, is left out; the journey reader `isRendered` is not the
+ * test, because a region marked `aria-hidden` still paints. A region whose box lies wholly outside
+ * the frame, such as a navigation drawer a transform moves off the page, is left out. The walk
+ * reaches open shadow roots; a region inside a closed shadow root is unreachable and is left out.
+ * The `collectScrollRegions` journey reader answers a different question, which boxes a person can
  * scroll on either axis, and reads no shadow root.
  *
  * @example
@@ -285,12 +298,100 @@ export function collectScrollContainers(element: Element = document.body): reado
  * ```
  */
 export function collectUnrolledRegions(element?: Element): readonly Element[] {
+	const frame =
+		element === undefined || element === document.body || element === document.documentElement
+			? new DOMRectReadOnly(0, -window.scrollY, window.innerWidth, Number.POSITIVE_INFINITY)
+			: element.getBoundingClientRect()
 	return collectScrollContainers(element).filter((region) => {
 		const overflow = readStyle(region, 'overflow-y')
+		if (overflow !== 'auto' && overflow !== 'scroll') return false
+		if (region.scrollHeight <= region.clientHeight) return false
+		if (CAPTURE_CONTROLS.includes(region.localName)) return false
+		if (!region.checkVisibility({ visibilityProperty: true })) return false
+		const box = region.getBoundingClientRect()
 		return (
-			(overflow === 'auto' || overflow === 'scroll') && region.scrollHeight > region.clientHeight
+			box.right > frame.left &&
+			box.left < frame.right &&
+			box.bottom > frame.top &&
+			box.top < frame.bottom
 		)
 	})
+}
+
+/**
+ * Measures the rows a scroll region's content lays out, whether or not its box shows them all.
+ *
+ * @param region - The scroll container to read.
+ * @returns The height in CSS pixels from the top of the region's scrollable area to the bottom of
+ * its content plus its bottom padding, rounded up to a whole row.
+ *
+ * @remarks
+ * The `scrollHeight` property never reads less than the `clientHeight` property, so a region whose
+ * rows fit reads its box rather than its rows, and the slack under its last row cannot be read
+ * there. This reading can, because it is taken over the elements inside the region rather than
+ * over its box: each element contributes its bottom edge plus its own bottom margin, capped at the
+ * clip edge, as the {@link readClipEdge} helper measures it, of every clipping ancestor between it
+ * and the region, and the largest contribution wins. The region's scroll offset is added back, so
+ * a scrolled region reads the same rows as an unscrolled one. The walk reads the region's light
+ * tree, as {@link measureContent} does, so a shadow host counts through its own box.
+ *
+ * @example
+ * ```ts
+ * const slack = region.clientHeight - measureRegion(region)
+ * ```
+ */
+export function measureRegion(region: Element): number {
+	const origin = region.getBoundingClientRect().top + region.clientTop - region.scrollTop
+	const edge = Array.from(region.querySelectorAll('*')).reduce(
+		(greatest, element) => {
+			const frames = collectClippingAncestors(element)
+			const limits = frames.slice(0, Math.max(0, frames.indexOf(region))).flatMap((frame) => {
+				const limit = readClipEdge(frame)
+				return limit === undefined ? [] : [limit - window.scrollY]
+			})
+			const bottom = Math.min(
+				element.getBoundingClientRect().bottom + readPixels(element, 'margin-bottom'),
+				...limits,
+			)
+			return bottom > greatest ? bottom : greatest
+		},
+		origin + readPixels(region, 'padding-top'),
+	)
+	return Math.ceil(edge - origin + readPixels(region, 'padding-bottom'))
+}
+
+/**
+ * Renders a selector path that locates an element from its nearest ancestor carrying an id.
+ *
+ * @param element - The element to locate.
+ * @returns A path of `>`-joined steps, each the tag name with an escaped `#id` where the element
+ * carries one and an `:nth-of-type()` position where a sibling shares its tag.
+ *
+ * @remarks
+ * The path starts at the nearest ancestor carrying an id, else at the body or the root element, so
+ * it stays short where the page names its landmarks. A step out of a shadow tree to its host is
+ * written ` >>> `, which no selector engine reads: the path locates the element for a person or an
+ * agent reading a refusal, and a closed shadow root is crossed the same way. The id is escaped with
+ * `CSS.escape`, so a step names the attribute value the page wrote.
+ *
+ * @example
+ * ```ts
+ * renderSelector(requireValue(document.querySelector('#stage main'))) // 'div#stage > main'
+ * ```
+ */
+export function renderSelector(element: Element): string {
+	if (element.id !== '') return `${element.localName}#${CSS.escape(element.id)}`
+	if (element === document.body || element === document.documentElement) return element.localName
+	const peers = Array.from(element.parentNode?.children ?? []).filter(
+		(peer) => peer.localName === element.localName,
+	)
+	const step =
+		peers.length > 1
+			? `${element.localName}:nth-of-type(${String(peers.indexOf(element) + 1)})`
+			: element.localName
+	if (element.parentElement !== null) return `${renderSelector(element.parentElement)} > ${step}`
+	const root = element.getRootNode()
+	return root instanceof ShadowRoot ? `${renderSelector(root.host)} >>> ${step}` : step
 }
 
 /**
@@ -877,14 +978,18 @@ export async function releaseMedia(): Promise<void> {
  * rejected release included.
  *
  * Set the `unrolled` option to cover the rows each vertical scroll region hides. Every staging then
- * adds the hidden rows of each region {@link collectUnrolledRegions} finds, inside the element for an
- * element frame, to the edge it stages at, and the page's own layout grows a region bound to the
- * viewport with the pane; nothing is written to the page's styles. A region that still hides rows
- * after the settling keeps a fixed height, and the shot is refused with
+ * adds the hidden rows of each region {@link collectUnrolledRegions} finds, overlapping the element
+ * for an element frame, to the edge it stages at, and the page's own layout grows a region bound to
+ * the viewport with the pane; nothing is written to the page's styles. Hidden rows add up, which is
+ * right for nested regions and too much for panes side by side, so after none of the regions that
+ * hid rows at the first reading hides rows, each staging moves down by the smallest slack among
+ * them, which {@link measureRegion} reads: a sidebar beside a taller main pane settles where the
+ * main pane's last row ends. A layout that needs more restagings than {@link CAPTURE_STAGE_LIMIT}
+ * allows is refused with the never-settled refusal. A region that still hides rows after the
+ * settling keeps a fixed height, and the shot is refused with
  * `Capture frame at <path> leaves rows hidden in scroll regions that do not grow with the pane: <region> hides <n> px. ...`,
- * naming every such region. The growth correction lands on the fixed point where a region's rows
- * keep their height or grow at half the pane's rate; rows growing at another rate can carry the
- * staging past it, which a viewport-height shell shows as an empty band under its rows.
+ * naming every such region by the path {@link renderSelector} renders, cut to its last
+ * {@link CAPTURE_LABEL_LIMIT} characters and JSON-encoded.
  *
  * @example
  * ```ts
@@ -906,10 +1011,12 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		const scrolled = options.unrolled === true ? collectUnrolledRegions(element) : []
 		if (scrolled.length > 0) {
 			const regions = scrolled
-				.map(
-					(region) =>
-						`${JSON.stringify(`${region.localName}${region.id === '' ? '' : `#${region.id}`}`.slice(0, 80))} hides ${String(region.scrollHeight - region.clientHeight)} px`,
-				)
+				.map((region) => {
+					const path = renderSelector(region)
+					const label =
+						path.length > CAPTURE_LABEL_LIMIT ? `…${path.slice(1 - CAPTURE_LABEL_LIMIT)}` : path
+					return `${JSON.stringify(label)} hides ${String(region.scrollHeight - region.clientHeight)} px`
+				})
 				.join(', ')
 			throw new Error(
 				`Capture frame at ${options.path} leaves rows hidden in scroll regions that do not grow with the pane: ${regions}. Bound each region's height to the viewport, or shoot the frame without unrolled`,
@@ -1174,7 +1281,10 @@ export function expandCaptures(
 /**
  * Restages a capture until its content extent equals the pane height.
  *
- * @remarks The stage limit bounds the recursion; a prepared pane is staged before accepting it.
+ * @remarks The stage limit bounds the recursion; a prepared pane is staged before accepting it. An
+ * unrolled frame adds the rows its regions hide to the extent and, after none of the regions passed
+ * as `regions` hides rows, takes the smallest slack among them off it. Omit `regions` at the first
+ * call; the regions hiding rows at that reading are carried through the recursion.
  * @example
  * ```ts
  * await settleFrame({ path: 'frame.png', width: 390, height: 844 }, undefined, false)
@@ -1187,22 +1297,26 @@ export async function settleFrame(
 	pane = options.height,
 	covered?: number,
 	stage = 0,
+	regions?: readonly Element[],
 ): Promise<void> {
 	const height = readFrameHeight(options, element, pane)
 	const measured = height === undefined ? measureContent() : Math.ceil(height)
-	const hidden =
-		options.unrolled === true
-			? collectUnrolledRegions(element).reduce(
-					(sum, region) => sum + region.scrollHeight - region.clientHeight,
+	const hiding = options.unrolled === true ? collectUnrolledRegions(element) : []
+	const tracked = regions ?? hiding
+	const hidden = hiding.reduce((sum, region) => sum + region.scrollHeight - region.clientHeight, 0)
+	const slack =
+		hidden === 0 && tracked.length > 0
+			? Math.max(
 					0,
+					Math.min(...tracked.map((region) => region.clientHeight - measureRegion(region))),
 				)
 			: 0
-	const extent = Math.max(measured + hidden, options.height)
+	const extent = Math.max(measured + hidden - slack, options.height)
 	const growth = covered === undefined ? 0 : Math.max(0, extent - covered)
 	if (pane === extent) {
 		if (prepared && stage === 0) {
 			await stagePane(options.width, pane)
-			return settleFrame(options, element, prepared, pane, extent, stage + 1)
+			return settleFrame(options, element, prepared, pane, extent, stage + 1, tracked)
 		}
 		return
 	}
@@ -1213,7 +1327,7 @@ export async function settleFrame(
 	}
 	const next = extent + growth
 	await stagePane(options.width, next)
-	return settleFrame(options, element, prepared, next, extent, stage + 1)
+	return settleFrame(options, element, prepared, next, extent, stage + 1, tracked)
 }
 
 /**

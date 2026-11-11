@@ -38,3 +38,25 @@ export const CAPTURE_STAGE_LIMIT = 4
  * the marker stays four bits and release leaves touch emulation alone.
  */
 export const MEDIA_STAGE = 'data-media-stage'
+
+/**
+ * Bounds the characters of the region locator a capture refusal names.
+ *
+ * @remarks
+ * `captureFrame` names each scroll region it leaves hiding rows by the path `renderSelector`
+ * renders. The path carries ids the page wrote, so it is cut to this many characters from its end,
+ * which keeps the steps nearest the region, and JSON-encoded, so a page-authored id can neither
+ * fake the message nor grow it without bound.
+ */
+export const CAPTURE_LABEL_LIMIT = 120
+
+/**
+ * Lists the form controls an unrolled frame leaves scrolled.
+ *
+ * @remarks
+ * A text area or a list box that overflows computes a scrolling overflow of its own, but its rows
+ * are the control's value rather than the page's layout, and no style the page could change would
+ * show them all. `collectUnrolledRegions` therefore leaves these elements out, so an unrolled frame
+ * neither grows for them nor refuses over them.
+ */
+export const CAPTURE_CONTROLS: readonly string[] = Object.freeze(['input', 'select', 'textarea'])

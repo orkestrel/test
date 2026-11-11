@@ -13,6 +13,7 @@ import {
 	expandCaptures,
 	hoverAccessible,
 	measureContent,
+	measureRegion,
 	MEDIA_STAGE,
 	paintImage,
 	readClipEdge,
@@ -27,6 +28,7 @@ import {
 	releaseMedia,
 	releasePane,
 	releasePointer,
+	renderSelector,
 	resolveAccessible,
 	sendProtocol,
 	settleFrame,
@@ -247,6 +249,109 @@ describe('collectUnrolledRegions', () => {
 		const sealed = requireValue(closed.firstElementChild)
 		expect(sealed.scrollHeight).toBeGreaterThan(sealed.clientHeight)
 		expect(collectUnrolledRegions()).not.toContain(sealed)
+	})
+
+	it('leaves out a textarea and a list box whose own rows overflow', () => {
+		const container = buildFixture(
+			`<textarea rows="2">${'line\n'.repeat(40)}</textarea>` +
+				`<select multiple size="2">${'<option>Choice</option>'.repeat(20)}</select>`,
+		)
+		const [text, list] = Array.from(container.children)
+		// Both scroll rows of their own, so only the form-control exclusion keeps them off the list.
+		for (const control of [requireValue(text), requireValue(list)]) {
+			expect(readStyle(control, 'overflow-y')).not.toBe('visible')
+			expect(control.scrollHeight).toBeGreaterThan(control.clientHeight)
+		}
+		expect(collectUnrolledRegions(container)).toStrictEqual([])
+	})
+
+	it('leaves out a region the page does not show or has moved wholly outside the frame', () => {
+		buildStylesheet(
+			'.region { overflow-y: auto; height: 50px }' +
+				' .nav { position: fixed; top: 0; left: 0; width: 200px; height: 100vh; transform: translateX(-100%) }' +
+				' .unseen { visibility: hidden }',
+		)
+		const container = buildFixture(
+			'<div class="region" id="shown"><div style="height: 200px"></div></div>' +
+				'<nav class="region nav" id="nav"><div style="height: 3000px"></div></nav>' +
+				'<div class="region unseen" id="unseen"><div style="height: 200px"></div></div>',
+		)
+		const nav = requireValue(container.querySelector('#nav'))
+		expect(nav.getBoundingClientRect().right).toBeLessThanOrEqual(0)
+		expect(nav.scrollHeight).toBeGreaterThan(nav.clientHeight)
+		expect(collectUnrolledRegions(container).map(({ id }) => id)).toStrictEqual(['shown'])
+	})
+
+	it('counts for an element frame only the regions inside its box', () => {
+		const container = buildFixture(
+			'<div id="card" style="position: relative; height: 100px">' +
+				'<div id="inside" style="overflow: auto; height: 50px"><div style="height: 200px"></div></div>' +
+				'<div id="outside" style="position: absolute; top: 200px; width: 100px; overflow: auto; height: 50px"><div style="height: 200px"></div></div>' +
+				'</div>',
+		)
+		const card = requireValue(container.firstElementChild)
+		expect(collectUnrolledRegions(card).map(({ id }) => id)).toStrictEqual(['inside'])
+		// A page frame covers every row under the document's top, so it counts both.
+		expect(
+			collectUnrolledRegions()
+				.filter((region) => container.contains(region))
+				.map(({ id }) => id),
+		).toStrictEqual(['inside', 'outside'])
+	})
+})
+
+describe('measureRegion', () => {
+	it('reads the rows an overflowing region lays out, as its scroll height does, scrolled or not', () => {
+		const container = buildFixture(
+			'<div style="overflow: auto; height: 50px; padding: 5px"><div style="height: 200px"></div></div>',
+		)
+		const region = requireValue(container.firstElementChild)
+		expect(measureRegion(region)).toBe(210)
+		expect(region.scrollHeight).toBe(210)
+		region.scrollTo({ left: 0, top: 40, behavior: 'instant' })
+		expect(region.scrollTop).toBe(40)
+		expect(measureRegion(region)).toBe(210)
+	})
+
+	it('reads the rows a fitting region lays out where its scroll height reads its box', () => {
+		const container = buildFixture(
+			'<div style="overflow: auto; height: 100px"><div style="height: 30px; margin-bottom: 20px"></div></div>',
+		)
+		const region = requireValue(container.firstElementChild)
+		expect(region.scrollHeight).toBe(100)
+		expect(measureRegion(region)).toBe(50)
+	})
+
+	it('caps a descendant at the clip edge of a frame inside the region', () => {
+		const container = buildFixture(
+			'<div style="overflow: auto; height: 100px">' +
+				'<div style="height: 60px; overflow: hidden"><div style="height: 500px"></div></div></div>',
+		)
+		expect(measureRegion(requireValue(container.firstElementChild))).toBe(60)
+	})
+})
+
+describe('renderSelector', () => {
+	it('locates an element from its nearest ancestor with an id, by position where a sibling shares its tag', () => {
+		const container = buildFixture(
+			'<section><p></p><p><span></span></p></section><div class="host"></div><i id="a b"></i>',
+		)
+		container.id = 'stage'
+		const span = requireValue(container.querySelector('span'))
+		expect(renderSelector(span)).toBe('div#stage > section > p:nth-of-type(2) > span')
+		expect(renderSelector(requireValue(container.querySelector('i')))).toBe('i#a\\ b')
+		expect(renderSelector(document.body)).toBe('body')
+		expect(renderSelector(document.documentElement)).toBe('html')
+	})
+
+	it('steps out of an open shadow tree to its host', () => {
+		const container = buildFixture('<section></section><div></div>')
+		container.id = 'stage'
+		const shadow = requireValue(container.lastElementChild).attachShadow({ mode: 'open' })
+		shadow.innerHTML = '<main></main><main></main>'
+		expect(renderSelector(requireValue(shadow.lastElementChild))).toBe(
+			'div#stage > div >>> main:nth-of-type(2)',
+		)
 	})
 })
 
@@ -1529,6 +1634,145 @@ describe('captureFrame', () => {
 			`Capture frame at ${FRAMES}/fixed.png leaves rows hidden in scroll regions that do not grow with the pane: "div#log" hides 700 px. Bound each region's height to the viewport, or shoot the frame without unrolled`,
 		)
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+	})
+
+	it('unrolls side-by-side panes to the taller one, with no band under its rows', async () => {
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } body { margin: 0 }' +
+				' .shell { display: flex; flex-direction: column; height: 100vh }' +
+				' .header { flex: none; height: 60px; background: rgb(255, 0, 0) }' +
+				' .panes { display: flex; flex: 1; min-height: 0 }' +
+				' .side { width: 100px; overflow: auto } .main { flex: 1; overflow: auto }' +
+				' .fill { background: rgb(0, 0, 255) }',
+		)
+		buildFixture(
+			'<div class="shell"><header class="header">Header</header><div class="panes">' +
+				'<nav class="side"><div class="fill" style="height: 1200px"></div></nav>' +
+				'<main class="main"><div class="fill" style="height: 1600px"></div></main></div></div>',
+		)
+		const written = await captureFrame({
+			path: `${FRAMES}/panes.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		})
+		// The 60-row header over the main pane's 1600 rows, written out. Summing both panes' hidden
+		// rows would stage past it and leave the main pane a band of the root's green.
+		const result = await readFrame(written)
+		expect([result.width, result.height]).toStrictEqual([390, 1660])
+		const context = requireValue(await paintImage(await commands.readFile(written, 'base64')))
+		expect([...context.getImageData(300, result.height - 1, 1, 1).data]).toStrictEqual([
+			0, 0, 255, 255,
+		])
+	})
+
+	it('leaves an off-screen fixed navigation out of an unrolled shell', async () => {
+		buildStylesheet(
+			`${SHELL_SHEET} .nav { position: fixed; top: 0; left: 0; width: 200px; height: 100vh;` +
+				' overflow-y: auto; transform: translateX(-100%) }',
+		)
+		buildFixture(`${SHELL_MARKUP}<nav class="nav"><div style="height: 3000px"></div></nav>`)
+		const written = await captureFrame({
+			path: `${FRAMES}/offscreen.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		})
+		expect(await readFrame(written)).toStrictEqual({
+			width: 390,
+			height: 2060,
+			floor: 'rgb(0, 0, 255)',
+		})
+	})
+
+	it('leaves a textarea scrolling its own text out of an unrolled frame', async () => {
+		buildStylesheet('body { margin: 0 }')
+		buildFixture(`<textarea rows="2">${'line\n'.repeat(40)}</textarea>`)
+		const plain = await readFrame(
+			await captureFrame({ path: `${FRAMES}/text.png`, width: 390, height: 844 }),
+		)
+		const unrolled = await readFrame(
+			await captureFrame({
+				path: `${FRAMES}/text-unrolled.png`,
+				width: 390,
+				height: 844,
+				unrolled: true,
+			}),
+		)
+		expect(unrolled).toStrictEqual(plain)
+	})
+
+	it('locates a refused region with no id by its path from the nearest id', async () => {
+		buildStylesheet('body { margin: 0 }')
+		const container = buildFixture(
+			'<section><div style="height: 300px; overflow: auto"><div style="height: 1000px"></div></div></section>',
+		)
+		container.id = 'stage'
+		await expect(
+			captureFrame({ path: `${FRAMES}/located.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			`Capture frame at ${FRAMES}/located.png leaves rows hidden in scroll regions that do not grow with the pane: "div#stage > section > div" hides 700 px.`,
+		)
+	})
+
+	it('hands back the scroll of a region the staging clamped when the capture is refused', async () => {
+		buildStylesheet('body { margin: 0 } .grows { height: 50vh; overflow: auto }')
+		const container = buildFixture(
+			'<div class="grows"><div style="height: 600px"></div></div>' +
+				'<div id="log" style="height: 300px; overflow: auto"><div style="height: 1000px"></div></div>',
+		)
+		const grows = requireValue(container.firstElementChild)
+		await page.viewport(390, 844)
+		grows.scrollTo({ left: 0, top: 100, behavior: 'instant' })
+		expect(grows.scrollTop).toBe(100)
+		const offsets = createRecorder<[top: number]>()
+		const listening = new AbortController()
+		grows.addEventListener('scroll', () => offsets.handler(grows.scrollTop), {
+			signal: listening.signal,
+		})
+		try {
+			await expect(
+				captureFrame({ path: `${FRAMES}/clamped.png`, width: 390, height: 844, unrolled: true }),
+			).rejects.toThrow('"div#log" hides 700 px')
+		} finally {
+			listening.abort()
+		}
+		// The staging grew the region to show all its rows, which clamped its scroll to the top.
+		expect(offsets.calls.map(([top]) => top)).toContain(0)
+		expect(grows.scrollTop).toBe(100)
+	})
+
+	it('hands back a container the capture scrolled to bring a plain element frame into view', async () => {
+		// The root's scroll padding sends the element through native alignment, which scrolls the
+		// container it sits in.
+		buildStylesheet('html { scroll-padding-top: 1px }')
+		const container = buildFixture(
+			'<div style="overflow: auto; height: 200px"><div style="height: 1000px"></div>' +
+				'<div style="width: 40px; height: 40px; background: rgb(0, 0, 255)"></div></div>',
+		)
+		const scroller = requireValue(container.firstElementChild)
+		const offsets = createRecorder<[top: number]>()
+		const listening = new AbortController()
+		scroller.addEventListener('scroll', () => offsets.handler(scroller.scrollTop), {
+			signal: listening.signal,
+		})
+		try {
+			const written = await captureFrame({
+				path: `${FRAMES}/scrolled-element.png`,
+				width: 390,
+				height: 844,
+				element: requireValue(scroller.lastElementChild),
+			})
+			expect(await readFrame(written)).toStrictEqual({
+				width: 40,
+				height: 40,
+				floor: 'rgb(0, 0, 255)',
+			})
+		} finally {
+			listening.abort()
+		}
+		expect(offsets.calls.some(([top]) => top > 0)).toBe(true)
+		expect(scroller.scrollTop).toBe(0)
 	})
 
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {
