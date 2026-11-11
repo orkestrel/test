@@ -98,6 +98,9 @@ export function readLayerNames(
  * it, so `.café` defines `café` where 0.0.26 ended the class at the first code point outside ASCII
  * letters, digits, `_`, and `-` and defined `caf`. One rule's own tokens enter in code-unit order.
  *
+ * A class named only in an `@scope` prelude counts as defined, so `@scope (.panel) to (.footer)`
+ * defines `panel` and `footer`, and one prelude's tokens enter together in code-unit order.
+ *
  * `@keyframes` children are outside that walk, so an animation's own rules define no token here.
  * Reach the animation itself through {@link findKeyframes}.
  *
@@ -109,7 +112,11 @@ export function readLayerNames(
 export function readCascade(): ReadonlySet<string> {
 	return new Set(
 		readRules().flatMap((rule) =>
-			rule instanceof CSSStyleRule ? collectSelectorClasses(rule.selectorText) : [],
+			rule instanceof CSSStyleRule
+				? collectSelectorClasses(rule.selectorText)
+				: rule instanceof CSSScopeRule
+					? collectSelectorClasses(`${rule.start ?? ''},${rule.end ?? ''}`)
+					: [],
 		),
 	)
 }

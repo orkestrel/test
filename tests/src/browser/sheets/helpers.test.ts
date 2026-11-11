@@ -147,6 +147,38 @@ describe('readCascade', () => {
 		expect(readCascade().has('journey-conditional')).toBe(true)
 	})
 
+	it('admits a class named only in an @scope prelude', () => {
+		buildStylesheet(
+			'@scope (.journey-scope-start:not(.journey-scope-excluded)) to (.journey-scope-end) {' +
+				' .journey-scope-inner { color: rgb(1, 2, 3) } }',
+		)
+		const known = readCascade()
+		expect(known.has('journey-scope-start')).toBe(true)
+		expect(known.has('journey-scope-excluded')).toBe(true)
+		expect(known.has('journey-scope-end')).toBe(true)
+		expect(known.has('journey-scope-inner')).toBe(true)
+	})
+
+	it('reads an @scope rule with no limit or no prelude', () => {
+		buildStylesheet(
+			'@scope (.journey-scope-open) { .journey-scope-open-inner { color: rgb(1, 2, 3) } }' +
+				'@scope { .journey-scope-bare-inner { color: rgb(4, 5, 6) } }',
+		)
+		const known = readCascade()
+		expect(known.has('journey-scope-open')).toBe(true)
+		expect(known.has('journey-scope-open-inner')).toBe(true)
+		expect(known.has('journey-scope-bare-inner')).toBe(true)
+	})
+
+	it('inserts the tokens of one @scope prelude in code-unit order', () => {
+		buildStylesheet(
+			'@scope (.journey-scope-zeta) to (.journey-scope-alpha) { p { color: rgb(1, 2, 3) } }',
+		)
+		const order = [...readCascade()]
+		expect(order.indexOf('journey-scope-alpha')).toBeGreaterThan(-1)
+		expect(order.indexOf('journey-scope-alpha')).toBeLessThan(order.indexOf('journey-scope-zeta'))
+	})
+
 	it('inserts a top-level class before a class declared inside an earlier grouping rule', () => {
 		buildStylesheet(
 			'@media (min-width: 1px) { .journey-first-inner { color: rgb(1, 2, 3) } }' +
@@ -521,6 +553,17 @@ describe('readCensus', () => {
 		expect(census.elements).toBe(4)
 		expect(census.tokens).toStrictEqual(['census-declared', control.mark, control.token].sort())
 		expect(census.undeclared).toStrictEqual([control.mark, control.token])
+	})
+
+	it('declares a class named only in an @scope prelude', () => {
+		buildStylesheet(
+			'@scope (.census-scope-start) to (.census-scope-end) { p { color: rgb(1, 2, 3) } }',
+		)
+		const container = buildFixture(
+			'<section class="census-scope-start"><div class="census-scope-end"></div></section>',
+		)
+
+		expect(readCensus(container).undeclared).toStrictEqual([])
 	})
 
 	it('sorts the tokens rather than reporting them in document order', () => {
