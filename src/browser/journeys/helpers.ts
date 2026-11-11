@@ -2079,7 +2079,12 @@ export function readStates(element: Element): readonly string[] {
 	const live = element.getAttribute('aria-live')
 	if (live !== null) states.push(`live=${live}`)
 	if (element.matches(':required')) states.push('required')
-	if (element instanceof HTMLInputElement && element.readOnly) states.push('readonly')
+	if (
+		(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
+		element.readOnly
+	) {
+		states.push('readonly')
+	}
 	if (element.hasAttribute('aria-describedby')) states.push('described')
 	if (element.getAttribute('aria-busy') === 'true') states.push('busy')
 	return Object.freeze(states)

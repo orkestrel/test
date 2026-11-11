@@ -3500,6 +3500,14 @@ describe('readStates', () => {
 		expect(readStates(requireValue(container.querySelector('#fixed')))).toStrictEqual(['readonly'])
 	})
 
+	it('reads a read-only textarea as read-only and an editable one as not', () => {
+		const container = buildFixture(
+			'<textarea id="notes" readonly></textarea><textarea id="draft"></textarea>',
+		)
+		expect(readStates(requireValue(container.querySelector('#notes')))).toStrictEqual(['readonly'])
+		expect(readStates(requireValue(container.querySelector('#draft')))).toStrictEqual([])
+	})
+
 	it('reads a control that declares nothing as no states at all', () => {
 		const container = buildFixture('<button type="button">Save</button>')
 		expect(readStates(requireValue(container.querySelector('button')))).toStrictEqual([])
