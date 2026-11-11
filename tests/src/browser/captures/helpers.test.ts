@@ -7,9 +7,11 @@ import {
 	captureFrame,
 	clipsOverflow,
 	collectClippingAncestors,
+	collectRegionRows,
 	collectScrollContainers,
 	collectUnrolledRegions,
 	computeOffset,
+	containsFixed,
 	expandCaptures,
 	hoverAccessible,
 	measureContent,
@@ -49,7 +51,10 @@ import {
 	CLIP_CASES,
 	CLIP_EDGE_CASES,
 	CLIP_MARGIN_CASES,
+	FIXED_CASES,
+	PANES_SHEET,
 	resetFixtures,
+	SHADOW_PANES,
 	SHELL_MARKUP,
 	SHELL_SHEET,
 	VARIANTS,
@@ -300,6 +305,50 @@ describe('collectUnrolledRegions', () => {
 	})
 })
 
+describe('containsFixed', () => {
+	it('reports a transform, a perspective, a filter, a containment, and a will-change, and nothing else', () => {
+		for (const { style, contains } of FIXED_CASES) {
+			const element = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
+			expect({ style, contains: containsFixed(element) }).toStrictEqual({ style, contains })
+		}
+	})
+})
+
+describe('collectRegionRows', () => {
+	it('walks the flat tree and leaves out a box whose containing block lies outside the region', () => {
+		const container = buildFixture(
+			'<div id="region" style="overflow: auto; height: 100px">' +
+				'<p id="flow"></p>' +
+				'<div id="loose" style="position: absolute"><span id="lost"></span></div>' +
+				'<div id="pinned" style="position: fixed"></div>' +
+				'<div id="anchor" style="position: relative"><div id="held" style="position: absolute"></div></div>' +
+				'<div id="frame" style="transform: translateZ(0)"><div id="kept" style="position: fixed"><span id="inner"></span></div></div>' +
+				'<div id="host"><i id="slotted"></i></div>' +
+				'</div>',
+		)
+		requireValue(container.querySelector('#host')).attachShadow({ mode: 'open' }).innerHTML =
+			'<b id="shadowed"><slot></slot></b>'
+		const region = requireValue(container.firstElementChild)
+		expect(collectRegionRows(region).map(({ id }) => id)).toStrictEqual([
+			'flow',
+			'anchor',
+			'held',
+			'frame',
+			'kept',
+			'inner',
+			'host',
+			'shadowed',
+			'',
+			'slotted',
+		])
+		// A positioned region is the containing block of the absolute box, never of the fixed one.
+		buildStylesheet('#region { position: relative }')
+		const ids = collectRegionRows(region).map(({ id }) => id)
+		expect(ids).toContain('lost')
+		expect(ids).not.toContain('pinned')
+	})
+})
+
 describe('measureRegion', () => {
 	it('reads the rows an overflowing region lays out, as its scroll height does, scrolled or not', () => {
 		const container = buildFixture(
@@ -320,6 +369,31 @@ describe('measureRegion', () => {
 		const region = requireValue(container.firstElementChild)
 		expect(region.scrollHeight).toBe(100)
 		expect(measureRegion(region)).toBe(50)
+	})
+
+	it('leaves out a fixed box and an absolute box laid out against a block outside the region', () => {
+		const container = buildFixture(
+			'<div style="overflow: auto; height: 100px"><div style="height: 30px"></div>' +
+				'<div style="position: fixed; bottom: 0; height: 10px"></div>' +
+				'<div style="position: absolute; top: 500px; height: 10px"></div></div>',
+		)
+		const region = requireValue(container.firstElementChild)
+		expect(measureRegion(region)).toBe(30)
+		buildStylesheet('div:has(> [style*="top: 500px"]) { position: relative }')
+		expect(measureRegion(region)).toBe(510)
+	})
+
+	it('reads the rows a host scrolls in its own shadow root and the slotted rows a shadow scroller holds', () => {
+		const container = buildFixture(
+			'<div id="host" style="overflow: auto; height: 100px"></div>' +
+				'<div id="slotter"><div style="height: 400px"></div></div>',
+		)
+		requireValue(container.querySelector('#host')).attachShadow({ mode: 'open' }).innerHTML =
+			'<div style="height: 400px"></div>'
+		const shadow = requireValue(container.querySelector('#slotter')).attachShadow({ mode: 'open' })
+		shadow.innerHTML = '<div style="overflow: auto; height: 100px"><slot></slot></div>'
+		expect(measureRegion(requireValue(container.querySelector('#host')))).toBe(400)
+		expect(measureRegion(requireValue(shadow.firstElementChild))).toBe(400)
 	})
 
 	it('caps a descendant at the clip edge of a frame inside the region', () => {
@@ -1631,7 +1705,7 @@ describe('captureFrame', () => {
 		await expect(
 			captureFrame({ path: `${FRAMES}/fixed.png`, width: 390, height: 844, unrolled: true }),
 		).rejects.toThrow(
-			`Capture frame at ${FRAMES}/fixed.png leaves rows hidden in scroll regions that do not grow with the pane: "div#log" hides 700 px. Bound each region's height to the viewport, or shoot the frame without unrolled`,
+			`Capture frame at ${FRAMES}/fixed.png leaves rows hidden in scroll regions: "div#log" keeps a fixed height and hides 700 px, so bound its height to the viewport. Shoot the frame without unrolled to keep them scrolled`,
 		)
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 	})
@@ -1711,7 +1785,7 @@ describe('captureFrame', () => {
 		await expect(
 			captureFrame({ path: `${FRAMES}/located.png`, width: 390, height: 844, unrolled: true }),
 		).rejects.toThrow(
-			`Capture frame at ${FRAMES}/located.png leaves rows hidden in scroll regions that do not grow with the pane: "div#stage > section > div" hides 700 px.`,
+			`Capture frame at ${FRAMES}/located.png leaves rows hidden in scroll regions: "div#stage > section > div" keeps a fixed height and hides 700 px,`,
 		)
 	})
 
@@ -1733,7 +1807,7 @@ describe('captureFrame', () => {
 		try {
 			await expect(
 				captureFrame({ path: `${FRAMES}/clamped.png`, width: 390, height: 844, unrolled: true }),
-			).rejects.toThrow('"div#log" hides 700 px')
+			).rejects.toThrow('"div#log" keeps a fixed height and hides 700 px')
 		} finally {
 			listening.abort()
 		}
@@ -1773,6 +1847,122 @@ describe('captureFrame', () => {
 		}
 		expect(offsets.calls.some(([top]) => top > 0)).toBe(true)
 		expect(scroller.scrollTop).toBe(0)
+	})
+
+	it.each([
+		'left: 0; bottom: 0; width: 50px; height: 40px; background: rgb(255, 255, 0)',
+		'left: 0; bottom: 16px; width: 50px; height: 40px; background: rgb(255, 255, 0)',
+		'inset: 0',
+	])('unrolls side-by-side panes past a fixed box inside the main pane: %s', async (bar) => {
+		buildStylesheet(PANES_SHEET)
+		buildFixture(
+			'<div class="shell"><header class="header">Header</header><div class="panes">' +
+				'<nav class="side"><div class="fill" style="height: 1200px"></div></nav>' +
+				`<main class="main"><div class="fill" style="height: 1600px"></div><div style="position: fixed; ${bar}"></div></main>` +
+				'</div></div>',
+		)
+		const written = await captureFrame({
+			path: `${FRAMES}/panes-fixed.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		})
+		// The fixed box lays out against the viewport, so it adds no row to the main pane: the frame
+		// is the 60-row header over the main pane's 1600 rows, with its last row on the bottom row.
+		const result = await readFrame(written)
+		expect([result.width, result.height]).toStrictEqual([390, 1660])
+		const context = requireValue(await paintImage(await commands.readFile(written, 'base64')))
+		expect([...context.getImageData(300, result.height - 1, 1, 1).data]).toStrictEqual([
+			0, 0, 255, 255,
+		])
+	})
+
+	it.each(SHADOW_PANES)(
+		'unrolls a shadow-hosted main pane beside a sidebar: $name',
+		async (pane) => {
+			buildStylesheet(PANES_SHEET)
+			const container = buildFixture(
+				'<div class="shell"><header class="header">Header</header><div class="panes">' +
+					`<nav class="side"><div class="fill" style="height: 1200px"></div></nav>${pane.host}</div></div>`,
+			)
+			requireValue(container.querySelector('#host')).attachShadow({ mode: 'open' }).innerHTML =
+				pane.shadow
+			const written = await captureFrame({
+				path: `${FRAMES}/panes-shadow.png`,
+				width: 390,
+				height: 844,
+				unrolled: true,
+			})
+			const result = await readFrame(written)
+			expect([result.width, result.height]).toStrictEqual([390, 1660])
+			const context = requireValue(await paintImage(await commands.readFile(written, 'base64')))
+			expect([...context.getImageData(300, result.height - 1, 1, 1).data]).toStrictEqual([
+				0, 0, 255, 255,
+			])
+		},
+	)
+
+	it('refuses a fixed-height region inside a viewport-height column, naming it and its correction', async () => {
+		buildStylesheet(SHELL_SHEET)
+		buildFixture(
+			SHELL_MARKUP.replace(
+				'<main class="main">',
+				'<main class="main"><div id="log" style="height: 300px; overflow: auto"><div style="height: 1000px"></div></div>',
+			),
+		)
+		await expect(
+			captureFrame({ path: `${FRAMES}/shell-log.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			`Capture frame at ${FRAMES}/shell-log.png leaves rows hidden in scroll regions: "div#log" keeps a fixed height and hides 700 px, so bound its height to the viewport. Shoot the frame without unrolled to keep them scrolled`,
+		)
+	})
+
+	it('refuses a region that grows by less than the pane with the correction its growth calls for', async () => {
+		buildStylesheet('body { margin: 0 }')
+		buildFixture(
+			'<div id="feed" style="height: 50vh; overflow: auto"><div style="height: 1000px"></div></div>',
+		)
+		// The region shows half of every pane, so its hidden rows shrink by half of what the pane adds
+		// and the document never needs more than its 1000 rows: the staging settles at 1000 with 500
+		// hidden.
+		await expect(
+			captureFrame({ path: `${FRAMES}/feed.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			'"div#feed" grows by less than the pane and hides 500 px, so let it take all the height the pane adds.',
+		)
+	})
+
+	it('refuses a region the declared viewport has room for, without calling it fixed', async () => {
+		buildStylesheet('body { margin: 0 }')
+		buildFixture(
+			'<div id="feed" style="height: 50vh; overflow: auto"><div style="height: 600px"></div></div>',
+		)
+		await expect(
+			captureFrame({ path: `${FRAMES}/room.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			'"div#feed" hides 178 px though the declared viewport has room for them, so let it fill the viewport\'s remaining height.',
+		)
+	})
+
+	it('names at most the region limit in one refusal and counts the rest', async () => {
+		buildStylesheet('body { margin: 0 } .log { height: 50px; overflow: auto }')
+		buildFixture(
+			['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+				.map((id) => `<div class="log" id="${id}"><div style="height: 400px"></div></div>`)
+				.join(''),
+		)
+		const refusal = await captureFrame({
+			path: `${FRAMES}/many.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		}).then(
+			() => '',
+			(cause: unknown) => String(cause),
+		)
+		expect(refusal).toContain('"div#r5" keeps a fixed height and hides 350 px')
+		expect(refusal).toContain('; and 1 more.')
+		expect(refusal).not.toContain('div#r6')
 	})
 
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {

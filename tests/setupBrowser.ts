@@ -127,6 +127,58 @@ export const SHELL_SHEET =
 	' .main { flex: 1; min-height: 0; overflow: auto }' +
 	' .row { height: 100px; background: rgb(0, 0, 255) }'
 
+/**
+ * Holds the stylesheet of a viewport-height shell with panes side by side: a 60-row red header over
+ * a 100-column sidebar and a main pane that takes the rest, each scrolling its own rows, with blue
+ * `.fill` rows on a green root.
+ */
+export const PANES_SHEET =
+	'html { background: rgb(0, 128, 0) } body { margin: 0 }' +
+	' .shell { display: flex; flex-direction: column; height: 100vh }' +
+	' .header { flex: none; height: 60px; background: rgb(255, 0, 0) }' +
+	' .panes { display: flex; flex: 1; min-height: 0 }' +
+	' .side { width: 100px; overflow: auto } .main { flex: 1; min-height: 0; overflow: auto }' +
+	' .fill { background: rgb(0, 0, 255) }'
+
+/**
+ * Lists the shadow-hosted main panes a side-by-side shell is built with: a host whose own overflow
+ * scrolls the rows its shadow root holds, and a host whose shadow scroller wraps a slot that the
+ * host's light rows are assigned to. Each pane lays out 1600 blue rows.
+ */
+export const SHADOW_PANES: ReadonlyArray<{
+	readonly name: string
+	readonly host: string
+	readonly shadow: string
+}> = Object.freeze([
+	Object.freeze({
+		name: 'rows in its shadow root',
+		host: '<main class="main" id="host"></main>',
+		shadow: '<div style="height: 1600px; background: rgb(0, 0, 255)"></div>',
+	}),
+	Object.freeze({
+		name: 'slotted rows under a shadow scroller',
+		host: '<div id="host" style="flex: 1; min-height: 0"><div style="height: 1600px; background: rgb(0, 0, 255)"></div></div>',
+		shadow: '<div style="height: 100%; overflow: auto"><slot></slot></div>',
+	}),
+])
+
+/**
+ * Lists the inline styles a fixed-containment reader judges, and whether each makes the element
+ * the containing block of the fixed-position boxes inside it.
+ */
+export const FIXED_CASES: ReadonlyArray<{ readonly style: string; readonly contains: boolean }> =
+	Object.freeze([
+		Object.freeze({ style: 'transform: translateZ(0)', contains: true }),
+		Object.freeze({ style: 'perspective: 100px', contains: true }),
+		Object.freeze({ style: 'filter: blur(1px)', contains: true }),
+		Object.freeze({ style: 'contain: paint', contains: true }),
+		Object.freeze({ style: 'contain: layout', contains: true }),
+		Object.freeze({ style: 'will-change: transform', contains: true }),
+		Object.freeze({ style: 'position: relative', contains: false }),
+		Object.freeze({ style: 'will-change: opacity', contains: false }),
+		Object.freeze({ style: '', contains: false }),
+	])
+
 /** Holds the markup of a viewport-height shell whose main column lays out twenty rows. */
 export const SHELL_MARKUP = `<div class="shell"><header class="header">Header</header><main class="main">${'<div class="row"></div>'.repeat(20)}</main></div>`
 

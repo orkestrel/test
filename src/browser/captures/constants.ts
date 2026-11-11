@@ -60,3 +60,13 @@ export const CAPTURE_LABEL_LIMIT = 120
  * neither grows for them nor refuses over them.
  */
 export const CAPTURE_CONTROLS: readonly string[] = Object.freeze(['input', 'select', 'textarea'])
+
+/**
+ * Bounds the scroll regions one capture refusal names.
+ *
+ * @remarks
+ * `captureFrame` names each region it leaves hiding rows with its own correction. A page can hold
+ * many such regions, so the refusal names this many and counts the rest, which keeps the message
+ * readable without dropping the fact that more remain.
+ */
+export const CAPTURE_REGION_LIMIT = 5
