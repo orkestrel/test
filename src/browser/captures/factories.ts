@@ -19,7 +19,7 @@ import { captureFrame, expandCaptures } from './helpers.js'
  *
  * An enabled `place` writes through `captureFrame`, so a placed state carries that helper's staged
  * pane and its byte readback: a path is recorded only after the file on disk has been proved to hold
- * this run's own frame.
+ * this run's own frame. The portfolio's `unrolled` option reaches every frame `place` writes.
  *
  * @example
  * ```ts
@@ -72,6 +72,7 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 				width: selected.width,
 				height: selected.height,
 				element,
+				unrolled: options.unrolled,
 			})
 			placed.push(state)
 			paths.push(written)

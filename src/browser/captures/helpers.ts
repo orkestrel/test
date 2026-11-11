@@ -225,6 +225,75 @@ export function clipsOverflow(element: Element): boolean {
 }
 
 /**
+ * Collects the scroll containers in an element's subtree, the element included.
+ *
+ * @param element - The element whose subtree to walk. Default: the document's body.
+ * @returns Every element whose computed `overflow-x` or `overflow-y` value is the `auto` keyword,
+ * the `scroll` keyword, or the `hidden` keyword, in document order, and an empty list where the
+ * subtree holds none.
+ *
+ * @remarks
+ * Each of those keywords makes an element a scroll container, so script and `scrollIntoView` can
+ * move its scroll position whether or not it shows a scrollbar; the `clip` keyword and the `visible`
+ * keyword do not. The walk descends into each open shadow root after the host's own children. A
+ * closed shadow root is unreachable, so its containers stay out of the list. The body and the root
+ * element are left out, because their scroll is the window's.
+ *
+ * @example
+ * ```ts
+ * const placements = collectScrollContainers().map((container) => container.scrollTop)
+ * ```
+ */
+export function collectScrollContainers(element: Element = document.body): readonly Element[] {
+	const scrolls =
+		element !== document.body &&
+		element !== document.documentElement &&
+		[readStyle(element, 'overflow-x'), readStyle(element, 'overflow-y')].some(
+			(overflow) => overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden',
+		)
+	const children = [...element.children, ...(element.shadowRoot?.children ?? [])]
+	return [
+		...(scrolls ? [element] : []),
+		...children.flatMap((child) => collectScrollContainers(child)),
+	]
+}
+
+/**
+ * Collects the vertical scroll regions an unrolled frame releases in an element's subtree, the
+ * element included.
+ *
+ * @param element - The element whose subtree to walk. Default: the document's body.
+ * @returns Every scroll container the {@link collectScrollContainers} helper finds whose computed
+ * `overflow-y` value is the `auto` keyword or the `scroll` keyword and whose `scrollHeight` exceeds
+ * its `clientHeight`, in document order.
+ *
+ * @remarks
+ * A region's hidden rows are its `scrollHeight` minus its `clientHeight`. A `hidden` overflow and a
+ * `clip` overflow are left out, because a page that hides rows there hides them by design. A region
+ * that scrolls only horizontally holds every row it lays out, so it is left out too. The walk reaches
+ * open shadow roots; a region inside a closed shadow root is unreachable and is left out. The body
+ * and the root element are left out, because their rows are the document's own. The
+ * `collectScrollRegions` journey reader answers a different question, which boxes a person can
+ * scroll on either axis, and reads no shadow root.
+ *
+ * @example
+ * ```ts
+ * const hidden = collectUnrolledRegions().reduce(
+ * 	(sum, region) => sum + region.scrollHeight - region.clientHeight,
+ * 	0,
+ * )
+ * ```
+ */
+export function collectUnrolledRegions(element?: Element): readonly Element[] {
+	return collectScrollContainers(element).filter((region) => {
+		const overflow = readStyle(region, 'overflow-y')
+		return (
+			(overflow === 'auto' || overflow === 'scroll') && region.scrollHeight > region.clientHeight
+		)
+	})
+}
+
+/**
  * Measures the row the document's own content ends on, in document coordinates.
  *
  * @returns The content edge, rounded up to a whole row.
@@ -719,8 +788,9 @@ export async function releaseMedia(): Promise<void> {
  * @param options - The path to write, the viewport to shoot at, and the element to shoot.
  * @returns The absolute path of the written frame, after it has been read back and matched.
  * @throws Thrown when the pane cannot be staged, when the document's height or an element frame's
- * element height never settles under {@link CAPTURE_STAGE_LIMIT} restagings, when the provider wrote
- * the frame somewhere else, and when the bytes on disk are not the ones this shot produced.
+ * element height never settles under {@link CAPTURE_STAGE_LIMIT} restagings, when an unrolled frame
+ * leaves rows hidden in a scroll region, when the provider wrote the frame somewhere else, and when
+ * the bytes on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
@@ -802,8 +872,19 @@ export async function releaseMedia(): Promise<void> {
  *
  * The pane is staged for the frame and released before this returns, on the failing path as well as
  * the passing one, which hands the tester back the viewport it had before the first staging. The
- * tester's scroll position is restored after that release, on every path, a rejected release
- * included.
+ * tester's scroll position, and that of every scroll container {@link collectScrollContainers}
+ * finds, is recorded before the first staging and restored after that release, on every path, a
+ * rejected release included.
+ *
+ * Set the `unrolled` option to cover the rows each vertical scroll region hides. Every staging then
+ * adds the hidden rows of each region {@link collectUnrolledRegions} finds, inside the element for an
+ * element frame, to the edge it stages at, and the page's own layout grows a region bound to the
+ * viewport with the pane; nothing is written to the page's styles. A region that still hides rows
+ * after the settling keeps a fixed height, and the shot is refused with
+ * `Capture frame at <path> leaves rows hidden in scroll regions that do not grow with the pane: <region> hides <n> px. ...`,
+ * naming every such region. The growth correction lands on the fixed point where a region's rows
+ * keep their height or grow at half the pane's rate; rows growing at another rate can carry the
+ * staging past it, which a viewport-height shell shows as an empty band under its rows.
  *
  * @example
  * ```ts
@@ -813,10 +894,27 @@ export async function releaseMedia(): Promise<void> {
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	const element = options.element
 	const scroll = { left: window.scrollX, top: window.scrollY }
+	const placements = collectScrollContainers().map((container) => ({
+		container,
+		left: container.scrollLeft,
+		top: container.scrollTop,
+	}))
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
 	try {
 		if (!prepared) await stagePane(options.width, options.height)
 		await settleFrame(options, element, prepared)
+		const scrolled = options.unrolled === true ? collectUnrolledRegions(element) : []
+		if (scrolled.length > 0) {
+			const regions = scrolled
+				.map(
+					(region) =>
+						`${JSON.stringify(`${region.localName}${region.id === '' ? '' : `#${region.id}`}`.slice(0, 80))} hides ${String(region.scrollHeight - region.clientHeight)} px`,
+				)
+				.join(', ')
+			throw new Error(
+				`Capture frame at ${options.path} leaves rows hidden in scroll regions that do not grow with the pane: ${regions}. Bound each region's height to the viewport, or shoot the frame without unrolled`,
+			)
+		}
 		const shot = await takeFrameShot(options, element)
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
@@ -825,6 +923,9 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 			await releasePane()
 		} finally {
 			window.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' })
+			for (const { container, left, top } of placements) {
+				container.scrollTo({ left, top, behavior: 'instant' })
+			}
 		}
 	}
 }
@@ -1089,7 +1190,14 @@ export async function settleFrame(
 ): Promise<void> {
 	const height = readFrameHeight(options, element, pane)
 	const measured = height === undefined ? measureContent() : Math.ceil(height)
-	const extent = Math.max(measured, options.height)
+	const hidden =
+		options.unrolled === true
+			? collectUnrolledRegions(element).reduce(
+					(sum, region) => sum + region.scrollHeight - region.clientHeight,
+					0,
+				)
+			: 0
+	const extent = Math.max(measured + hidden, options.height)
 	const growth = covered === undefined ? 0 : Math.max(0, extent - covered)
 	if (pane === extent) {
 		if (prepared && stage === 0) {

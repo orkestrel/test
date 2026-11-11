@@ -1,5 +1,5 @@
 import type { CaptureVariant } from '@src/browser'
-import { CAPTURE_PANE, createPortfolio, expandCaptures } from '@src/browser'
+import { CAPTURE_PANE, createPortfolio, expandCaptures, readFrame } from '@src/browser'
 import { createRecorder, requireValue } from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
@@ -7,7 +7,10 @@ import { rewriteWindowsAbsolutePath } from '../../../setup.js'
 import {
 	applyDarkTheme,
 	buildFixture,
+	buildStylesheet,
 	resetFixtures,
+	SHELL_MARKUP,
+	SHELL_SHEET,
 	STATES,
 	VARIANTS,
 } from '../../../setupBrowser.js'
@@ -154,6 +157,31 @@ describe('createPortfolio', () => {
 		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
+	})
+
+	it('hands its unrolled switch to every frame it places, beside a plain portfolio', async () => {
+		buildStylesheet(SHELL_SHEET)
+		buildFixture(SHELL_MARKUP)
+		const plain = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: `${DIRECTORY}/plain`,
+			enabled: true,
+		})
+		const unrolled = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: `${DIRECTORY}/unrolled`,
+			enabled: true,
+			unrolled: true,
+		})
+		const flat = await readFrame(requireValue(await plain.place('start-empty')))
+		const whole = await readFrame(requireValue(await unrolled.place('start-empty')))
+		expect(flat.height).toBe(844)
+		// The shell's 60-row header over its twenty 100-row rows.
+		expect(whole.height).toBe(2060)
 	})
 
 	it('refuses a second placement of one state', async () => {

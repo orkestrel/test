@@ -116,6 +116,20 @@ export const CLIP_EDGE_CASES: ReadonlyArray<{
 	Object.freeze({ style: '', edge: undefined }),
 ])
 
+/**
+ * Holds the stylesheet of a viewport-height shell: a 60-row red header over a main column that
+ * takes the rest of the viewport and scrolls its 100-row blue rows, on a green root.
+ */
+export const SHELL_SHEET =
+	'html { background: rgb(0, 128, 0) } body { margin: 0 }' +
+	' .shell { display: flex; flex-direction: column; height: 100vh }' +
+	' .header { flex: none; height: 60px; background: rgb(255, 0, 0) }' +
+	' .main { flex: 1; min-height: 0; overflow: auto }' +
+	' .row { height: 100px; background: rgb(0, 0, 255) }'
+
+/** Holds the markup of a viewport-height shell whose main column lays out twenty rows. */
+export const SHELL_MARKUP = `<div class="shell"><header class="header">Header</header><main class="main">${'<div class="row"></div>'.repeat(20)}</main></div>`
+
 /** Lists the window size each capture variant renders at, keyed by its own descriptive name. */
 export const VARIANTS: readonly CaptureVariant[] = Object.freeze([
 	Object.freeze({ name: 'light-1440', width: 1440, height: 1000 }),

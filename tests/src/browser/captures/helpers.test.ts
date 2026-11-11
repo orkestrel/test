@@ -7,6 +7,8 @@ import {
 	captureFrame,
 	clipsOverflow,
 	collectClippingAncestors,
+	collectScrollContainers,
+	collectUnrolledRegions,
 	computeOffset,
 	expandCaptures,
 	hoverAccessible,
@@ -46,6 +48,8 @@ import {
 	CLIP_EDGE_CASES,
 	CLIP_MARGIN_CASES,
 	resetFixtures,
+	SHELL_MARKUP,
+	SHELL_SHEET,
 	VARIANTS,
 } from '../../../setupBrowser.js'
 
@@ -180,6 +184,69 @@ describe('collectClippingAncestors', () => {
 		expect(() => collectClippingAncestors(span)).toThrow(
 			'The element is not connected to a document, so it has no clipping ancestors to read',
 		)
+	})
+})
+
+describe('collectScrollContainers', () => {
+	it('lists every scroll container in the subtree in document order, its open shadow roots included', () => {
+		const container = buildFixture(
+			'<div id="auto" style="overflow: auto; height: 50px"><div style="height: 10px"></div></div>' +
+				'<div id="hidden" style="overflow: hidden"></div>' +
+				'<div id="sideways" style="overflow-x: scroll"></div>' +
+				'<div id="clip" style="overflow: clip"></div>' +
+				'<div id="visible"></div>' +
+				'<div id="open"></div><div id="closed"></div>',
+		)
+		requireValue(container.querySelector('#open')).attachShadow({ mode: 'open' }).innerHTML =
+			'<div id="shadowed" style="overflow: auto"></div>'
+		requireValue(container.querySelector('#closed')).attachShadow({ mode: 'closed' }).innerHTML =
+			'<div id="sealed" style="overflow: auto"></div>'
+		expect(collectScrollContainers(container).map((element) => element.id)).toStrictEqual([
+			'auto',
+			'hidden',
+			'sideways',
+			'shadowed',
+		])
+		const own = requireValue(container.querySelector('#auto'))
+		expect(collectScrollContainers(own)).toStrictEqual([own])
+		expect(collectScrollContainers()).toContain(own)
+	})
+
+	it('leaves out the body and the root element even where each declares a scrolling overflow', () => {
+		buildStylesheet('html, body { overflow-y: scroll }')
+		// Both resolve to a scrolling overflow, so only the exclusion keeps them off the list.
+		expect(readStyle(document.documentElement, 'overflow-y')).toBe('scroll')
+		expect(readStyle(document.body, 'overflow-y')).toBe('scroll')
+		const containers = collectScrollContainers(document.documentElement)
+		expect(containers).not.toContain(document.body)
+		expect(containers).not.toContain(document.documentElement)
+	})
+})
+
+describe('collectUnrolledRegions', () => {
+	it('lists the vertical regions that hide rows, an open shadow root included, and leaves out the rest', () => {
+		const container = buildFixture(
+			'<div id="auto" style="overflow: auto; height: 50px"><div style="height: 200px"></div></div>' +
+				'<div id="scroll" style="overflow-y: scroll; height: 50px"><div style="height: 200px"></div></div>' +
+				'<div id="fits" style="overflow: auto; height: 50px"><div style="height: 50px"></div></div>' +
+				'<div id="hidden" style="overflow: hidden; height: 50px"><div style="height: 200px"></div></div>' +
+				'<div id="clip" style="overflow: clip; height: 50px"><div style="height: 200px"></div></div>' +
+				'<div id="sideways" style="overflow-x: auto; width: 100px"><div style="width: 400px; height: 200px"></div></div>' +
+				'<div id="open"></div><div id="closed"></div>',
+		)
+		const region =
+			'<div style="overflow: auto; height: 50px"><div style="height: 200px"></div></div>'
+		const open = requireValue(container.querySelector('#open')).attachShadow({ mode: 'open' })
+		open.innerHTML = region
+		const closed = requireValue(container.querySelector('#closed')).attachShadow({ mode: 'closed' })
+		closed.innerHTML = region
+		const regions = collectUnrolledRegions(container)
+		expect(regions.map((element) => element.id)).toStrictEqual(['auto', 'scroll', ''])
+		expect(regions[2]).toBe(open.firstElementChild)
+		// The sealed region hides rows like the open one; only the closed root keeps it out.
+		const sealed = requireValue(closed.firstElementChild)
+		expect(sealed.scrollHeight).toBeGreaterThan(sealed.clientHeight)
+		expect(collectUnrolledRegions()).not.toContain(sealed)
 	})
 })
 
@@ -1341,6 +1408,127 @@ describe('captureFrame', () => {
 			element: requireValue(container.lastElementChild),
 		})
 		expect((await readFrame(written)).floor).toBe('rgb(255, 0, 0)')
+	})
+
+	it('unrolls a viewport-height shell to its header and every row, and leaves a plain frame at the declared height', async () => {
+		buildStylesheet(SHELL_SHEET)
+		buildFixture(SHELL_MARKUP)
+		const plain = await readFrame(
+			await captureFrame({ path: `${FRAMES}/shell.png`, width: 390, height: 844 }),
+		)
+		const unrolled = await readFrame(
+			await captureFrame({
+				path: `${FRAMES}/unrolled.png`,
+				width: 390,
+				height: 844,
+				unrolled: true,
+			}),
+		)
+		expect([plain.width, plain.height]).toStrictEqual([390, 844])
+		// The 60-row header over twenty 100-row rows, written out; the last row's blue on the floor is
+		// what separates every row shown from an empty band under them.
+		expect(unrolled).toStrictEqual({ width: 390, height: 2060, floor: 'rgb(0, 0, 255)' })
+	})
+
+	it('unrolls a region nested in another to its fixed point, with no empty band under the rows', async () => {
+		buildStylesheet(
+			`${SHELL_SHEET} .lead { height: 300px } .inner { height: 50vh; overflow: auto }` +
+				' .tail { height: 900px; background: rgb(0, 0, 255) }',
+		)
+		buildFixture(
+			'<div class="shell"><header class="header">Header</header><main class="main" id="main">' +
+				'<div class="lead"></div><div class="inner" id="inner"><div style="height: 600px"></div></div>' +
+				'<div class="tail"></div></main></div>',
+		)
+		// Both regions hide rows at the declared viewport, so the fixture nests rather than stacking.
+		await stagePane(390, 844)
+		const nested = collectUnrolledRegions().map((region) => region.id)
+		await releasePane()
+		expect(nested).toStrictEqual(['main', 'inner'])
+
+		const written = await captureFrame({
+			path: `${FRAMES}/nested.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		})
+		// The shell holds 60 + 300 + P / 2 + 900 rows in a pane P tall, so the main column ends flush
+		// with the pane at P = 2520, written out rather than read back. A pane past that point leaves
+		// the root's green under the tail on the floor.
+		expect(await readFrame(written)).toStrictEqual({
+			width: 390,
+			height: 2520,
+			floor: 'rgb(0, 0, 255)',
+		})
+	})
+
+	it('leaves a horizontal-only scroll region out and the unrolled frame at the plain height', async () => {
+		buildStylesheet('html { background: rgb(0, 128, 0) } body { margin: 0 }')
+		const container = buildFixture(
+			'<div style="overflow-x: auto; width: 200px">' +
+				'<div style="width: 600px; height: 1200px; background: rgb(0, 0, 255)"></div></div>',
+		)
+		expect(collectUnrolledRegions(container)).toStrictEqual([])
+		const plain = await readFrame(
+			await captureFrame({ path: `${FRAMES}/sideways.png`, width: 390, height: 844 }),
+		)
+		const unrolled = await readFrame(
+			await captureFrame({
+				path: `${FRAMES}/sideways-unrolled.png`,
+				width: 390,
+				height: 844,
+				unrolled: true,
+			}),
+		)
+		expect(plain.height).toBeGreaterThanOrEqual(1200)
+		expect(unrolled).toStrictEqual(plain)
+	})
+
+	it('shoots a region the page had scrolled from its first row, and hands the region and the window back', async () => {
+		await page.viewport(390, 844)
+		buildStylesheet(
+			'html { background: rgb(0, 128, 0) } body { margin: 0 }' +
+				' .region { height: 50vh; overflow: auto } .row { height: 100px; background: rgb(0, 0, 255) }' +
+				' .first { background: rgb(255, 0, 0) } .below { height: 1000px; background: rgb(128, 0, 128) }',
+		)
+		const container = buildFixture(
+			`<div class="region"><div class="row first"></div>${'<div class="row"></div>'.repeat(9)}</div><div class="below"></div>`,
+		)
+		const region = requireValue(container.firstElementChild)
+		window.scrollTo({ left: 0, top: 300, behavior: 'instant' })
+		region.scrollTo({ left: 0, top: 250, behavior: 'instant' })
+		expect([window.scrollY, region.scrollTop]).toStrictEqual([300, 250])
+
+		const written = await captureFrame({
+			path: `${FRAMES}/scrolled.png`,
+			width: 390,
+			height: 844,
+			unrolled: true,
+		})
+		// A pane P tall holds a P / 2 region of ten 100-row rows over 1000 rows, so it shows every row
+		// at P = 2000.
+		expect(await readFrame(written)).toStrictEqual({
+			width: 390,
+			height: 2000,
+			floor: 'rgb(128, 0, 128)',
+		})
+		const context = requireValue(await paintImage(await commands.readFile(written, 'base64')))
+		expect([...context.getImageData(10, 50, 1, 1).data]).toStrictEqual([255, 0, 0, 255])
+		expect([window.scrollY, region.scrollTop]).toStrictEqual([300, 250])
+	})
+
+	it('refuses an unrolled frame whose region keeps a fixed height, and hands the pane back anyway', async () => {
+		buildStylesheet('body { margin: 0 }')
+		buildFixture(
+			'<div id="log" style="height: 300px; overflow: auto"><div style="height: 1000px"></div></div>',
+		)
+		const pane = requireValue(window.frameElement?.parentElement)
+		await expect(
+			captureFrame({ path: `${FRAMES}/fixed.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			`Capture frame at ${FRAMES}/fixed.png leaves rows hidden in scroll regions that do not grow with the pane: "div#log" hides 700 px. Bound each region's height to the viewport, or shoot the frame without unrolled`,
+		)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 	})
 
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {

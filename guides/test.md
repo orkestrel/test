@@ -299,11 +299,11 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `RGBA`                | type      | `readonly [red: number, green: number, blue: number, alpha: number]`      | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
 | `ContrastOptions`     | interface | `{ floor?, opacity? }`                                                    | Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the painted color is shown at.                    |
 | `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                        | Configures one built element: its class list, its text, and its attributes.                                                                     |
-| `FrameOptions`        | interface | `{ path, width, height, element? }`                                       | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
+| `FrameOptions`        | interface | `{ path, width, height, element?, unrolled? }`                            | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
 | `FrameOffset`         | interface | `{ top, left }`                                                           | Represents how far an element frame moves the tester frame from the runner window's origin for the shot, in CSS pixels.                         |
 | `FrameResult`         | interface | `{ width, height, floor }`                                                | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
 | `CaptureVariant`      | interface | `{ apply? }`                                                              | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
-| `PortfolioOptions`    | interface | `{ states, variants, variant, directory, enabled? }`                      | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
+| `PortfolioOptions`    | interface | `{ states, variants, variant, directory, enabled?, unrolled? }`           | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
 | `PortfolioInterface`  | interface | `{ variant, placements, paths, files, place() }`                          | Holds the registry of capture states one run places, and the files it wrote placing them.                                                       |
 | `JournalStep`         | interface | `{ action, trigger, result }`                                             | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
 | `JournalInterface`    | interface | `{ steps, output, start(), stop(), record() }`                            | Records one scenario: every step it took and everything the page said while it ran.                                                             |
@@ -433,6 +433,8 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `readClipMargin`           | function | `(element: Element) => number`                                                                                                                                                                | Measures how far past its own box a clipping element lets its content show.                                                                                                                                                                                                     |
 | `readClippedBlock`         | function | `(element: Element) => number`                                                                                                                                                                | Measures the block size an element shows after every clipping ancestor cuts it.                                                                                                                                                                                                 |
 | `collectClippingAncestors` | function | `(element: Element) => readonly Element[]`                                                                                                                                                    | Collects the ancestors of an element that clip their descendants' overflow.                                                                                                                                                                                                     |
+| `collectScrollContainers`  | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the scroll containers in an element's subtree, the element included.                                                                                                                                                                                                   |
+| `collectUnrolledRegions`   | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the vertical scroll regions an unrolled frame releases in an element's subtree, the element included.                                                                                                                                                                  |
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
 | `measureContent`           | function | `() => number`                                                                                                                                                                                | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                                                                                            | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
@@ -847,6 +849,31 @@ written at a height that is already wrong. That bound is 4: a document holding h
 fixed block settles in two restagings, one whose growth is capped part way settles in three, and
 the fourth is headroom.
 
+To cover the rows a vertical scroll region hides, set `unrolled`. A page whose shell scrolls an inner
+pane, a viewport-height layout with an `overflow: auto` column, ends for `measureContent` at the
+column's clip edge, so a plain frame of it stops at the declared height. An unrolled frame adds
+each region's hidden rows, its `scrollHeight` minus its `clientHeight`, to that edge before every
+staging, and the page's own layout grows the column with the pane; the capture writes nothing to
+the page's styles. The `collectUnrolledRegions` helper finds those regions: an `overflow-y` value of
+the `auto` keyword or the `scroll` keyword with rows to hide, found through open shadow roots, with
+the body and the root element left out. A `hidden` or `clip` overflow and a region that scrolls only
+across stay out. An element frame counts the element and the regions inside it. A region inside a
+closed shadow root is unreachable, so its rows stay hidden without a refusal.
+
+A shell of a 60-row header over a column of 2000 rows unrolls to a 2060-row frame, and a `50vh`
+region nested in that column settles on the layout's fixed point with the last row on the floor.
+The growth correction lands on the fixed point where the rows inside a region keep their height or
+grow at half the pane's rate. Rows that grow at another rate can carry the staging past the fixed
+point, which a viewport-height shell shows as an empty band under its rows. A region that keeps a
+fixed height still hides rows after the settling, so the capture is refused with
+`Capture frame at <path> leaves rows hidden in scroll regions that do not grow with the pane: <region> hides <n> px. Bound each region's height to the viewport, or shoot the frame without unrolled`,
+which names every such region by its tag and id.
+
+Growing a region to its full height clamps its scroll position to its first row, and an element
+frame's alignment can scroll a container too. Before the first staging, `captureFrame` records the
+scroll position of the window and of every scroll container the `collectScrollContainers` helper
+finds, and restores each after the pane is released, on every path.
+
 An element that fits with its native scroll clearance is shot in the declared pane, so its viewport
 lengths resolve against the declared viewport: a `50vh` element under a 900-row block reads back 422
 rows in an 844-row pane. A short fixed panel that native alignment cannot move keeps that pane too.
@@ -901,7 +928,8 @@ still refuses an unregistered state and a second placement of one state, so a jo
 state wrongly fails the ordinary run rather than the first capture run; `placements` and `paths`
 stay empty, because they answer for what was captured. An enabled `place` applies the variant and writes `<directory>/<state>--<variant>.png` through
 `captureFrame`, so it stages the pane at the variant's size, covers the whole document, verifies the
-written bytes, and records only a path that read back as this run's own frame. The tester comes back
+written bytes, and records only a path that read back as this run's own frame. A portfolio created
+with `unrolled` passes it to every frame `place` writes. The tester comes back
 at the viewport it had before the placement, so a journey that places a state carries on at its own
 size rather than at the variant's. `placements` and `paths` hand out snapshots, so a list read
 before a placement stays what it was.
@@ -1316,64 +1344,65 @@ what the link reaches, not on what it stores.
 Every message `src/browser` throws. Keep them distinct: a journey asserts the one it means, and
 absent, present-but-gated, and ambiguous are different findings about an interface.
 
-| Voice                                                                                    | Thrown by                                      |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `No interactive element has the accessible name "<name>"`                                | `resolveRendered`                              |
-| `Interactive target "<name>" is not visible and focus-reachable`                         | `resolveRendered`                              |
-| `Interactive target "<name>" is ambiguous across <n> elements`                           | `resolveRendered`                              |
-| `Interactive target "<name>" could not be resolved`                                      | `resolveRendered`                              |
-| `Interactive target "<name>" is unreachable after scrolling`                             | `resolveAccessible`                            |
-| `Interactive target "<name>" is not reachable inside "<region>"`                         | `resolveAccessibleWithin`                      |
-| `Interactive target "<name>" is ambiguous across <n> elements inside "<region>"`         | `resolveAccessibleWithin`                      |
-| `Interactive target "<name>" could not be resolved inside "<region>"`                    | `resolveAccessibleWithin`                      |
-| `Native disclosure "<name>" is not visible and focus-reachable`                          | `clickDisclosure`                              |
-| `Native disclosure "<name>" is ambiguous across <n> elements`                            | `clickDisclosure`                              |
-| `Native disclosure "<name>" could not be resolved`                                       | `clickDisclosure`                              |
-| `The element is not connected to a document, so it has no point to read`                 | `readProtocolPoint`                            |
-| `Interactive target "<name>" is not reachable through forward Tab traversal: <trail>`    | `driveTraversal`                               |
-| `Named region "<name>" is not visible`                                                   | `readPerception`                               |
-| `Named region "<name>" is ambiguous across <n> elements`                                 | `readPerception`                               |
-| `Named region "<name>" could not be resolved`                                            | `readPerception`                               |
-| `Interactive target "<name>" does not carry a value`                                     | `readControlValue`                             |
-| `Computed foreground color is unavailable`                                               | `readContrast`                                 |
-| `Computed background color is unavailable`                                               | `readColorContrast`                            |
-| `Color "<value>" is unreadable`                                                          | `readColorContrast`                            |
-| `Contrast opacity must be between 0 and 1`                                               | `readColorContrast`                            |
-| `The element is not connected to a document, so it has no clipping ancestors to read`    | `collectClippingAncestors`, `readClippedBlock` |
-| `Tester pane is unavailable for a capture`                                               | `stagePane`                                    |
-| `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                    | `stagePane`                                    |
-| `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane`        | `captureFrame`                                 |
-| `Capture frame was written to <path> where <path> was asked for`                         | `captureFrame`, `verifyFrame`                  |
-| `Capture frame at <path> is not the one this run shot`                                   | `captureFrame`, `verifyFrame`                  |
-| `Capture path must be absolute: <path>`                                                  | `readCapture`                                  |
-| `Capture frame at <path> could not be read`                                              | `readFrame`                                    |
-| `Capture frame at <path> is not an image this browser decodes`                           | `readFrame`                                    |
-| `Capture frame at <path> is not an image this browser decodes: <w>x<h> device pixels`    | `readFrame`                                    |
-| `Capture frame at <path> cannot be measured without a 2D canvas`                         | `readFrame`                                    |
-| `Shot is not an image this browser decodes`                                              | `readShotPixel`                                |
-| `Shot cannot be measured without a 2D canvas`                                            | `readShotPixel`                                |
-| `Shot pixel position must be a fraction from 0 to 1`                                     | `readShotPixel`                                |
-| `Capture variant "<name>" is not registered`                                             | `createPortfolio`                              |
-| `Capture state "<state>" is not registered`                                              | `place`                                        |
-| `Capture state "<state>" is already placed`                                              | `place`                                        |
-| `IndexedDB database "<name>" could not be deleted`                                       | `removeDatabase`                               |
-| `IndexedDB database "<name>" is blocked by an open connection`                           | `removeDatabase`                               |
-| `Key sequence "<keys>" was sent with nothing focused`                                    | `pressKeys`                                    |
-| `Focus sits in a frame from another origin, which cannot be read`                        | `readActiveElement`                            |
-| `Focus traversal did not end`                                                            | `walkFocus`                                    |
-| `The start element cannot take focus`                                                    | `collectTabStops`                              |
-| `Stability frames must be a positive integer`                                            | `waitForStability`                             |
-| `Condition "<description>" did not hold within <n>ms (waited <n>ms)`                     | `waitForStability`                             |
-| `Condition "<subject>" did not hold within <n>ms (waited <n>ms) (last states: <states>)` | `waitForState`                                 |
-| `Animation subject is not connected`                                                     | `waitForAnimations`                            |
-| `Animation "<subject>" did not settle within <n>ms (waited <n>ms): <animations>`         | `waitForAnimations`                            |
-| `Class census walked no element`                                                         | `readCensus`                                   |
-| `Contrast control cannot straddle the bar <bar>`                                         | `buildContrast`                                |
-| `Access is denied for <operation> "<key>"`                                               | `buildDenial`                                  |
-| `No room is left for <key>`                                                              | `createStorage`                                |
-| `Storage quota must be a non-negative integer`                                           | `createStorage`                                |
-| `Statechart harness mounted no transition`                                               | `createHarness`                                |
-| `Statechart harness carries no status`                                                   | `status`                                       |
+| Voice                                                                                                                                                                                                 | Thrown by                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `No interactive element has the accessible name "<name>"`                                                                                                                                             | `resolveRendered`                              |
+| `Interactive target "<name>" is not visible and focus-reachable`                                                                                                                                      | `resolveRendered`                              |
+| `Interactive target "<name>" is ambiguous across <n> elements`                                                                                                                                        | `resolveRendered`                              |
+| `Interactive target "<name>" could not be resolved`                                                                                                                                                   | `resolveRendered`                              |
+| `Interactive target "<name>" is unreachable after scrolling`                                                                                                                                          | `resolveAccessible`                            |
+| `Interactive target "<name>" is not reachable inside "<region>"`                                                                                                                                      | `resolveAccessibleWithin`                      |
+| `Interactive target "<name>" is ambiguous across <n> elements inside "<region>"`                                                                                                                      | `resolveAccessibleWithin`                      |
+| `Interactive target "<name>" could not be resolved inside "<region>"`                                                                                                                                 | `resolveAccessibleWithin`                      |
+| `Native disclosure "<name>" is not visible and focus-reachable`                                                                                                                                       | `clickDisclosure`                              |
+| `Native disclosure "<name>" is ambiguous across <n> elements`                                                                                                                                         | `clickDisclosure`                              |
+| `Native disclosure "<name>" could not be resolved`                                                                                                                                                    | `clickDisclosure`                              |
+| `The element is not connected to a document, so it has no point to read`                                                                                                                              | `readProtocolPoint`                            |
+| `Interactive target "<name>" is not reachable through forward Tab traversal: <trail>`                                                                                                                 | `driveTraversal`                               |
+| `Named region "<name>" is not visible`                                                                                                                                                                | `readPerception`                               |
+| `Named region "<name>" is ambiguous across <n> elements`                                                                                                                                              | `readPerception`                               |
+| `Named region "<name>" could not be resolved`                                                                                                                                                         | `readPerception`                               |
+| `Interactive target "<name>" does not carry a value`                                                                                                                                                  | `readControlValue`                             |
+| `Computed foreground color is unavailable`                                                                                                                                                            | `readContrast`                                 |
+| `Computed background color is unavailable`                                                                                                                                                            | `readColorContrast`                            |
+| `Color "<value>" is unreadable`                                                                                                                                                                       | `readColorContrast`                            |
+| `Contrast opacity must be between 0 and 1`                                                                                                                                                            | `readColorContrast`                            |
+| `The element is not connected to a document, so it has no clipping ancestors to read`                                                                                                                 | `collectClippingAncestors`, `readClippedBlock` |
+| `Tester pane is unavailable for a capture`                                                                                                                                                            | `stagePane`                                    |
+| `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                                                                                                                                 | `stagePane`                                    |
+| `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane`                                                                                                                     | `captureFrame`                                 |
+| `Capture frame at <path> leaves rows hidden in scroll regions that do not grow with the pane: <region> hides <n> px. Bound each region's height to the viewport, or shoot the frame without unrolled` | `captureFrame`                                 |
+| `Capture frame was written to <path> where <path> was asked for`                                                                                                                                      | `captureFrame`, `verifyFrame`                  |
+| `Capture frame at <path> is not the one this run shot`                                                                                                                                                | `captureFrame`, `verifyFrame`                  |
+| `Capture path must be absolute: <path>`                                                                                                                                                               | `readCapture`                                  |
+| `Capture frame at <path> could not be read`                                                                                                                                                           | `readFrame`                                    |
+| `Capture frame at <path> is not an image this browser decodes`                                                                                                                                        | `readFrame`                                    |
+| `Capture frame at <path> is not an image this browser decodes: <w>x<h> device pixels`                                                                                                                 | `readFrame`                                    |
+| `Capture frame at <path> cannot be measured without a 2D canvas`                                                                                                                                      | `readFrame`                                    |
+| `Shot is not an image this browser decodes`                                                                                                                                                           | `readShotPixel`                                |
+| `Shot cannot be measured without a 2D canvas`                                                                                                                                                         | `readShotPixel`                                |
+| `Shot pixel position must be a fraction from 0 to 1`                                                                                                                                                  | `readShotPixel`                                |
+| `Capture variant "<name>" is not registered`                                                                                                                                                          | `createPortfolio`                              |
+| `Capture state "<state>" is not registered`                                                                                                                                                           | `place`                                        |
+| `Capture state "<state>" is already placed`                                                                                                                                                           | `place`                                        |
+| `IndexedDB database "<name>" could not be deleted`                                                                                                                                                    | `removeDatabase`                               |
+| `IndexedDB database "<name>" is blocked by an open connection`                                                                                                                                        | `removeDatabase`                               |
+| `Key sequence "<keys>" was sent with nothing focused`                                                                                                                                                 | `pressKeys`                                    |
+| `Focus sits in a frame from another origin, which cannot be read`                                                                                                                                     | `readActiveElement`                            |
+| `Focus traversal did not end`                                                                                                                                                                         | `walkFocus`                                    |
+| `The start element cannot take focus`                                                                                                                                                                 | `collectTabStops`                              |
+| `Stability frames must be a positive integer`                                                                                                                                                         | `waitForStability`                             |
+| `Condition "<description>" did not hold within <n>ms (waited <n>ms)`                                                                                                                                  | `waitForStability`                             |
+| `Condition "<subject>" did not hold within <n>ms (waited <n>ms) (last states: <states>)`                                                                                                              | `waitForState`                                 |
+| `Animation subject is not connected`                                                                                                                                                                  | `waitForAnimations`                            |
+| `Animation "<subject>" did not settle within <n>ms (waited <n>ms): <animations>`                                                                                                                      | `waitForAnimations`                            |
+| `Class census walked no element`                                                                                                                                                                      | `readCensus`                                   |
+| `Contrast control cannot straddle the bar <bar>`                                                                                                                                                      | `buildContrast`                                |
+| `Access is denied for <operation> "<key>"`                                                                                                                                                            | `buildDenial`                                  |
+| `No room is left for <key>`                                                                                                                                                                           | `createStorage`                                |
+| `Storage quota must be a non-negative integer`                                                                                                                                                        | `createStorage`                                |
+| `Statechart harness mounted no transition`                                                                                                                                                            | `createHarness`                                |
+| `Statechart harness carries no status`                                                                                                                                                                | `status`                                       |
 
 `readContrast` measures through `readColorContrast`, so its background refusal is that row's voice,
 and `readRing` never raises it, because it names `CANVAS_COLOR` as the floor on every reading.
@@ -4217,7 +4246,22 @@ Each entry names the contracts its file proves. The test names carry the cases.
   a fixed element beyond a padded viewport that keeps its declared viewport height;
   an element that outgrows every pane, refused with the
   pane and the scroll handed back; a second tester frame the offset leaves in place; and a frame
-  carrying no `style` attribute, handed back without one. After the `releasePointer` function, an
+  carrying no `style` attribute, handed back without one. An unrolled frame takes a viewport-height
+  shell whose frame is its 60-row header over its 2000 rows on the last row's color, beside a plain
+  frame of the same shell at the declared height; a `50vh` region nested in the shell's column,
+  both measured hiding rows at the declared viewport first, whose frame lands on the 2520-row fixed
+  point written out, with the last row on the floor rather than an empty band; a wrapper that
+  scrolls only across, collected by nothing and shot at the plain frame's size; a region and a
+  window the page had scrolled, shot with the region's first row at the frame's top and both handed
+  back; and a region of fixed height, refused with the region and its hidden rows named and the
+  pane handed back. The `createPortfolio` function takes `unrolled` through `place`, beside a plain
+  portfolio over the same shell. The `collectScrollContainers` function takes every scroll
+  container on either axis in document order, an open shadow root's included and a closed one's and
+  a `clip` and a `visible` overflow left out, and the body and the root element left out under a
+  scrolling overflow. The `collectUnrolledRegions` function takes the `auto` and `scroll` regions
+  that hide rows and the open shadow root's, and leaves out a region whose rows fit, a `hidden` and a
+  `clip` overflow, a region that scrolls only across, and a closed shadow root's region measured
+  hiding rows. After the `releasePointer` function, an
   element frame takes no `mouseover` event for an element inside the window, which also takes no `scroll` event;
   for a flush-left element the scroll brings to the top, one the offset brings to the left edge, and
   one too large for the window; for an element past both window edges, whose frame has the

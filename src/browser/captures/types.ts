@@ -21,6 +21,11 @@ export interface FrameOptions {
 	readonly height: number
 	/** Holds the element to shoot. Omit it to shoot the whole page. */
 	readonly element?: Element | undefined
+	/**
+	 * If `true`, the frame also covers the rows every vertical scroll region hides; if `false` or
+	 * omitted, the frame ends where the document's own content ends.
+	 */
+	readonly unrolled?: boolean | undefined
 }
 
 /**
@@ -96,6 +101,11 @@ export interface PortfolioOptions {
 	 * nothing, writes nothing, and records nothing.
 	 */
 	readonly enabled?: boolean
+	/**
+	 * If `true`, every frame `place` writes also covers the rows every vertical scroll region hides;
+	 * if `false` or omitted, each frame ends where the document's own content ends.
+	 */
+	readonly unrolled?: boolean
 }
 
 /** Holds the registry of capture states one run places, and the files it wrote placing them. */
