@@ -99,12 +99,12 @@ export interface ScratchInterface {
 
 /** Represents the fields that together identify one allocated directory on its host. */
 export interface ScratchIdentity {
-	/** Holds the identifier of the device holding the directory. */
-	readonly device: number
-	/** Holds the number of the directory's index node on that device. */
-	readonly inode: number
-	/** Holds the directory's creation time in milliseconds. */
-	readonly birth: number
+	/** Holds the identifier of the device holding the directory, read as a bigint. */
+	readonly device: bigint
+	/** Holds the number of the directory's index node on that device, exact past 2^53. */
+	readonly inode: bigint
+	/** Holds the directory's creation time in nanoseconds. */
+	readonly birth: bigint
 }
 
 /** Configures a scratch directory allocation. */

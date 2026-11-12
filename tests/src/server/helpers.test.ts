@@ -282,15 +282,17 @@ describe('readIdentity', () => {
 	it('reads the three fields off a real allocation, and matches that allocation', () => {
 		const root = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-'))
 		try {
-			const status = statSync(root)
+			const status = statSync(root, { bigint: true })
 			const identity = readIdentity(status)
 
 			expect(identity).toStrictEqual({
-				birth: status.birthtimeMs,
+				birth: status.birthtimeNs,
 				device: status.dev,
 				inode: status.ino,
 			})
-			expect(matchesIdentity(identity, readIdentity(lstatSync(root)))).toBe(true)
+			expect(typeof identity.inode).toBe('bigint')
+			expect(typeof identity.birth).toBe('bigint')
+			expect(matchesIdentity(identity, readIdentity(lstatSync(root, { bigint: true })))).toBe(true)
 		} finally {
 			rmSync(root, { force: true, recursive: true })
 		}
@@ -300,9 +302,12 @@ describe('readIdentity', () => {
 		const first = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-first-'))
 		const second = mkdtempSync(join(tmpdir(), 'orkestrel-test-identity-second-'))
 		try {
-			expect(matchesIdentity(readIdentity(statSync(first)), readIdentity(statSync(second)))).toBe(
-				false,
-			)
+			expect(
+				matchesIdentity(
+					readIdentity(statSync(first, { bigint: true })),
+					readIdentity(statSync(second, { bigint: true })),
+				),
+			).toBe(false)
 		} finally {
 			rmSync(first, { force: true, recursive: true })
 			rmSync(second, { force: true, recursive: true })
@@ -341,25 +346,34 @@ describe('matchesIdentity', () => {
 	// reach on one host keeps the same device, so only a pure call can drive that field.
 	it('accepts a triple matching in every field', () => {
 		expect(
-			matchesIdentity({ birth: 3, device: 1, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+			matchesIdentity({ birth: 3n, device: 1n, inode: 2n }, { birth: 3n, device: 1n, inode: 2n }),
 		).toBe(true)
 	})
 
 	it('refuses a triple whose device differs', () => {
 		expect(
-			matchesIdentity({ birth: 3, device: 9, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+			matchesIdentity({ birth: 3n, device: 9n, inode: 2n }, { birth: 3n, device: 1n, inode: 2n }),
 		).toBe(false)
 	})
 
 	it('refuses a triple whose index node differs', () => {
 		expect(
-			matchesIdentity({ birth: 3, device: 1, inode: 9 }, { birth: 3, device: 1, inode: 2 }),
+			matchesIdentity({ birth: 3n, device: 1n, inode: 9n }, { birth: 3n, device: 1n, inode: 2n }),
+		).toBe(false)
+	})
+
+	it('refuses a triple whose index nodes differ only past 2^53', () => {
+		expect(
+			matchesIdentity(
+				{ birth: 3n, device: 1n, inode: 21110623254352703n },
+				{ birth: 3n, device: 1n, inode: 21110623254352704n },
+			),
 		).toBe(false)
 	})
 
 	it('refuses a triple whose creation time differs', () => {
 		expect(
-			matchesIdentity({ birth: 9, device: 1, inode: 2 }, { birth: 3, device: 1, inode: 2 }),
+			matchesIdentity({ birth: 9n, device: 1n, inode: 2n }, { birth: 3n, device: 1n, inode: 2n }),
 		).toBe(false)
 	})
 })

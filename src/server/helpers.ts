@@ -1,4 +1,4 @@
-import type { Stats } from 'node:fs'
+import type { BigIntStats } from 'node:fs'
 import type { Socket } from 'node:net'
 import type { ChooserRequest, WaitOptions } from '@src/core'
 import type { FileChooser, Page } from 'playwright'
@@ -106,21 +106,21 @@ export function requireContained(root: string, target: string): string {
 /**
  * Reads the identity of one allocated directory off a host status.
  *
- * @param status - The status read from the directory's path.
- * @returns The device, index node, and creation time that together name the allocation.
+ * @param status - The bigint status read from the directory's path with `{ bigint: true }`.
+ * @returns The device, index node, and creation time in nanoseconds that together name the allocation.
  *
  * @example
  * ```ts
  * import { statSync } from 'node:fs'
  * import { readIdentity } from '@orkestrel/test/server'
  *
- * const status = statSync('/scratch')
+ * const status = statSync('/scratch', { bigint: true })
  *
- * readIdentity(status) // { birth: status.birthtimeMs, device: status.dev, inode: status.ino }
+ * readIdentity(status) // { birth: status.birthtimeNs, device: status.dev, inode: status.ino }
  * ```
  */
-export function readIdentity(status: Stats): ScratchIdentity {
-	return { birth: status.birthtimeMs, device: status.dev, inode: status.ino }
+export function readIdentity(status: BigIntStats): ScratchIdentity {
+	return { birth: status.birthtimeNs, device: status.dev, inode: status.ino }
 }
 
 /**
@@ -196,10 +196,10 @@ export function readErrorCode(error: unknown): string | undefined {
  * import { statSync } from 'node:fs'
  * import { matchesIdentity, readIdentity } from '@orkestrel/test/server'
  *
- * const allocation = readIdentity(statSync('/scratch'))
+ * const allocation = readIdentity(statSync('/scratch', { bigint: true }))
  *
- * matchesIdentity(readIdentity(statSync('/scratch')), allocation) // true
- * matchesIdentity({ birth: 3, device: 1, inode: 9 }, { birth: 3, device: 1, inode: 2 }) // false
+ * matchesIdentity(readIdentity(statSync('/scratch', { bigint: true })), allocation) // true
+ * matchesIdentity({ birth: 3n, device: 1n, inode: 9n }, { birth: 3n, device: 1n, inode: 2n }) // false
  * ```
  */
 export function matchesIdentity(current: ScratchIdentity, allocation: ScratchIdentity): boolean {

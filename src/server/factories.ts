@@ -112,7 +112,7 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 	}
 
 	const path = mkdtempSync(`${parent}${sep}${prefix}`)
-	const allocation = readIdentity(statSync(path))
+	const allocation = readIdentity(statSync(path, { bigint: true }))
 	const unremovable = 'Scratch directory is not a removable target'
 	try {
 		for (const [target, text] of Object.entries(options?.files ?? {})) {
@@ -179,14 +179,14 @@ export function createScratch(options?: ScratchOptions): ScratchInterface {
 			if (candidate === path) throw new Error(`${unremovable}: ${target}`)
 			if (!hasScratchPath(path, '.')) throw new Error('Scratch directory does not exist')
 
-			const status = lstatSync(candidate, { throwIfNoEntry: false })
+			const status = lstatSync(candidate, { bigint: true, throwIfNoEntry: false })
 			if (status !== undefined && matchesIdentity(readIdentity(status), allocation)) {
 				throw new Error(`${unremovable}: ${target}`)
 			}
 			removeTree(candidate)
 		},
 		destroy() {
-			const status = lstatSync(path, { throwIfNoEntry: false })
+			const status = lstatSync(path, { bigint: true, throwIfNoEntry: false })
 			if (status === undefined) return
 			if (!matchesIdentity(readIdentity(status), allocation)) return
 			removeTree(path)

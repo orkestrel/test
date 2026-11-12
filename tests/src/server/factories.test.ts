@@ -765,6 +765,19 @@ describe('createScratch', () => {
 			}
 		})
 
+		it('removes a file written immediately after the scratch was created', () => {
+			const scratch = createScratch()
+			try {
+				scratch.write('fresh.txt', 'fresh')
+
+				expect(() => scratch.remove('fresh.txt')).not.toThrow()
+				expect(scratch.has('fresh.txt')).toBe(false)
+				expect(scratch.names()).toStrictEqual([])
+			} finally {
+				scratch.destroy()
+			}
+		})
+
 		it('removes an empty directory', () => {
 			const scratch = createScratch()
 			try {
