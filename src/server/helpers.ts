@@ -1157,13 +1157,144 @@ export function extractProgressEvents(text: string): readonly ProgressEvent[] {
 }
 
 /**
- * Computes where every run a progress file holds stands, one run per writing process.
+ * Computes where the run one process wrote stands, from its last `init` line on.
  *
- * @param events - The file's lines, in file order.
+ * @param events - The lines one process wrote, in file order. Every line must carry the same `pid`;
+ * lines of several processes read as one run and miscompute it, so pass a whole file to
+ * `computeProgress`, which groups them first.
  * @param now - The wall-clock time of the reading, in milliseconds since the Unix epoch, which a
  * live run's elapsed time is measured to.
- * @returns One run per process id in first-seen order, each read from that process's last `init`
- * line on. A process whose lines no `init` line opens contributes no run.
+ * @returns The run, or `undefined` when no `init` line opens it.
+ *
+ * @example
+ * ```ts
+ * import { computeProgressRun } from '@orkestrel/test/server'
+ *
+ * computeProgressRun(
+ * 	[{ event: 'init', version: 1, wall: 1_000, bail: 1, time: 0, pid: 7 }],
+ * 	4_000,
+ * )?.elapsed // 3000
+ * ```
+ */
+export function computeProgressRun(
+	events: readonly ProgressEvent[],
+	now: number,
+): ProgressRun | undefined {
+	const begin = events.findLastIndex((event) => event.event === 'init')
+	const init = events[begin]
+	if (init?.event !== 'init') return undefined
+	const own = events.slice(begin)
+	const specifications = filterProgressEvents(own, 'start').flatMap((start) => start.specifications)
+	const collections = filterProgressEvents(own, 'collected')
+	const cases = filterProgressEvents(own, 'case')
+	const cancel = filterProgressEvents(own, 'cancel').at(0)
+	const end = filterProgressEvents(own, 'end').at(0)
+	const clock = end?.time ?? now - init.wall + init.time
+	const names = [
+		...new Set([
+			...specifications.map((entry) => entry.project),
+			...collections.map((entry) => entry.project),
+			...cases.map((entry) => entry.project),
+		]),
+	]
+	const projects = names.map((name): ProgressProject => {
+		const results = cases.filter((entry) => entry.project === name)
+		const collected = collections.filter((entry) => entry.project === name)
+		return {
+			name,
+			planned: collected.reduce((total, entry) => total + entry.planned, 0),
+			done: results.length,
+			passed: results.filter((entry) => entry.state === 'passed').length,
+			failed:
+				results.filter((entry) => entry.state === 'failed').length +
+				collected.filter((entry) => entry.errors.length > 0).length,
+			skipped: results.filter((entry) => entry.state === 'skipped').length,
+			modules: specifications.filter((entry) => entry.project === name).length,
+			collected: collected.length,
+		}
+	})
+	const planned = projects.reduce((total, project) => total + project.planned, 0)
+	const exact =
+		specifications.length > 0 && projects.every((project) => project.collected >= project.modules)
+	const first = cases.at(0)
+	const span = first === undefined ? 0 : clock - (first.time - (first.duration ?? 0))
+	const rate = cases.length > 0 && span > 0 ? (cases.length / span) * 60_000 : undefined
+	const finished = new Set(cases.map((entry) => entry.id))
+	const position = cancel === undefined ? -1 : own.indexOf(cancel)
+	const trigger = own.find((event) => event.event === 'case' && event.state === 'failed')
+	const failures = own
+		.flatMap((event, index) =>
+			(event.event === 'case' && event.state === 'failed') ||
+			(event.event === 'collected' && event.errors.length > 0)
+				? [{ event, index }]
+				: [],
+		)
+		.map(({ event, index }, order): ProgressFailure => {
+			// A collection failure carries no timing, so only its order against the cancel decides.
+			const ended =
+				event.event === 'case'
+					? (event.start ?? 0) + (event.duration ?? 0)
+					: Number.NEGATIVE_INFINITY
+			return {
+				project: event.project,
+				module: event.module,
+				name: event.event === 'case' ? event.name : undefined,
+				time: event.time,
+				// Vitest can write the cancel before the result of the failure that caused it, so the
+				// failures up to the bail setting are causes whatever their order against the cancel. Only
+				// a failed case can trigger a bail, so under a bail the first failed case is a cause even
+				// when collection failures came before it.
+				relation:
+					order === 0
+						? 'first'
+						: order < init.bail ||
+							  (init.bail > 0 && event === trigger) ||
+							  cancel === undefined ||
+							  (index < position && ended <= cancel.wall)
+							? 'later'
+							: 'bail',
+				error: event.errors?.at(0),
+			}
+		})
+	return {
+		pid: init.pid,
+		wall: init.wall,
+		state: end?.reason ?? 'live',
+		bail: init.bail,
+		elapsed: clock,
+		done: cases.length,
+		planned,
+		exact,
+		rate,
+		remaining:
+			end === undefined && exact && rate !== undefined
+				? Math.max(0, ((planned - cases.length) / rate) * 60_000)
+				: undefined,
+		projects,
+		running:
+			end === undefined
+				? filterProgressEvents(own, 'ready')
+						.filter((ready) => !finished.has(ready.id))
+						.map((ready) => ({
+							project: ready.project,
+							name: ready.name,
+							duration: Math.max(0, clock - ready.time),
+						}))
+				: [],
+		cancel: cancel === undefined ? undefined : { reason: cancel.reason, time: cancel.time },
+		failures,
+		overhead: end?.overhead,
+		unhandled: end?.unhandled ?? [],
+	}
+}
+
+/**
+ * Computes where every run a progress file holds stands, one run per writing process.
+ *
+ * @param events - The file's lines, in file order, from any number of processes.
+ * @param now - The wall-clock time of the reading, in milliseconds since the Unix epoch.
+ * @returns One run per process id in first-seen order, each computed by `computeProgressRun` from
+ * that process's lines alone. A process whose lines no `init` line opens contributes no run.
  *
  * @example
  * ```ts
@@ -1182,112 +1313,12 @@ export function computeProgress(
 	events: readonly ProgressEvent[],
 	now: number,
 ): readonly ProgressRun[] {
-	return [...new Set(events.map((event) => event.pid))].flatMap((pid): readonly ProgressRun[] => {
-		const written = events.filter((event) => event.pid === pid)
-		const begin = written.findLastIndex((event) => event.event === 'init')
-		const init = written[begin]
-		if (init?.event !== 'init') return []
-		const own = written.slice(begin)
-		const specifications = filterProgressEvents(own, 'start').flatMap(
-			(start) => start.specifications,
+	return [...new Set(events.map((event) => event.pid))].flatMap((pid) => {
+		const run = computeProgressRun(
+			events.filter((event) => event.pid === pid),
+			now,
 		)
-		const collections = filterProgressEvents(own, 'collected')
-		const cases = filterProgressEvents(own, 'case')
-		const cancel = filterProgressEvents(own, 'cancel').at(0)
-		const end = filterProgressEvents(own, 'end').at(0)
-		const clock = end?.time ?? now - init.wall + init.time
-		const names = [
-			...new Set([
-				...specifications.map((entry) => entry.project),
-				...collections.map((entry) => entry.project),
-				...cases.map((entry) => entry.project),
-			]),
-		]
-		const projects = names.map((name): ProgressProject => {
-			const results = cases.filter((entry) => entry.project === name)
-			const collected = collections.filter((entry) => entry.project === name)
-			return {
-				name,
-				planned: collected.reduce((total, entry) => total + entry.planned, 0),
-				done: results.length,
-				passed: results.filter((entry) => entry.state === 'passed').length,
-				failed: results.filter((entry) => entry.state === 'failed').length,
-				skipped: results.filter((entry) => entry.state === 'skipped').length,
-				modules: specifications.filter((entry) => entry.project === name).length,
-				collected: collected.length,
-			}
-		})
-		const planned = projects.reduce((total, project) => total + project.planned, 0)
-		const final =
-			specifications.length > 0 && projects.every((project) => project.collected >= project.modules)
-		const first = cases.at(0)
-		const span = first === undefined ? 0 : clock - (first.time - (first.duration ?? 0))
-		const rate = cases.length > 0 && span > 0 ? (cases.length / span) * 60_000 : undefined
-		const finished = new Set(cases.map((entry) => entry.id))
-		const position = cancel === undefined ? -1 : own.indexOf(cancel)
-		const failures = own
-			.flatMap((event, index) =>
-				(event.event === 'case' && event.state === 'failed') ||
-				(event.event === 'collected' && event.errors.length > 0)
-					? [{ event, index }]
-					: [],
-			)
-			.map(({ event, index }, order): ProgressFailure => {
-				// A collection failure carries no timing, so only its order against the cancel decides.
-				const ended =
-					event.event === 'case'
-						? (event.start ?? 0) + (event.duration ?? 0)
-						: Number.NEGATIVE_INFINITY
-				return {
-					project: event.project,
-					module: event.module,
-					name: event.event === 'case' ? event.name : undefined,
-					time: event.time,
-					// Vitest can write the cancel before the result of the failure that caused it, so the
-					// failures up to the bail setting are causes whatever their order against the cancel.
-					relation:
-						order === 0
-							? 'first'
-							: order < init.bail ||
-								  cancel === undefined ||
-								  (index < position && ended <= cancel.wall)
-								? 'later'
-								: 'bail',
-					error: event.errors?.at(0),
-				}
-			})
-		return [
-			{
-				pid: init.pid,
-				wall: init.wall,
-				state: end?.reason ?? 'live',
-				bail: init.bail,
-				elapsed: clock,
-				done: cases.length,
-				planned,
-				final,
-				rate,
-				remaining:
-					end === undefined && final && rate !== undefined
-						? Math.max(0, ((planned - cases.length) / rate) * 60_000)
-						: undefined,
-				projects,
-				running:
-					end === undefined
-						? filterProgressEvents(own, 'ready')
-								.filter((ready) => !finished.has(ready.id))
-								.map((ready) => ({
-									project: ready.project,
-									name: ready.name,
-									duration: Math.max(0, clock - ready.time),
-								}))
-						: [],
-				cancel: cancel === undefined ? undefined : { reason: cancel.reason, time: cancel.time },
-				failures,
-				overhead: end?.overhead,
-				unhandled: end?.unhandled ?? [],
-			},
-		]
+		return run === undefined ? [] : [run]
 	})
 }
 
@@ -1356,7 +1387,7 @@ export function renderProgress(runs: readonly ProgressRun[]): string {
 		.map((run) => {
 			const width = Math.max(0, ...run.projects.map((project) => project.name.length))
 			return [
-				`run ${run.pid} ${run.state} ${run.bail === 0 ? 'full' : `bail=${run.bail}`}: ${run.done}/${run.planned}${run.final ? '' : '+'} cases, elapsed ${renderDuration(run.elapsed)}, rate ${run.rate === undefined ? '-' : `${run.rate.toFixed(1)}/min`}, ETA ${run.remaining === undefined ? '-' : renderDuration(run.remaining)}`,
+				`run ${run.pid} ${run.state} ${run.bail === 0 ? 'full' : `bail=${run.bail}`}: ${run.done}/${run.planned}${run.exact ? '' : '+'} cases, elapsed ${renderDuration(run.elapsed)}, rate ${run.rate === undefined ? '-' : `${run.rate.toFixed(1)}/min`}, ETA ${run.remaining === undefined ? '-' : renderDuration(run.remaining)}`,
 				...run.projects.map(
 					(project) =>
 						`  ${project.name.padEnd(width)}  ${project.done}/${project.planned}  passed ${project.passed} failed ${project.failed} skipped ${project.skipped}${project.collected < project.modules ? `  (${project.collected}/${project.modules} modules collected)` : ''}`,

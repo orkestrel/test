@@ -122,7 +122,30 @@ describe('ProgressReporter', () => {
 			error: { message: 'Error: broken import' },
 		})
 		expect(run?.failures.at(0)?.name).toBeUndefined()
+		expect(run?.failures.at(1)).toMatchObject({
+			module: 'fails.test.js',
+			name: 'fails after the broken import',
+			relation: 'later',
+		})
 	})
+
+	it(
+		'reads the case that bails after a broken import as a cause, never AFTER-BAIL',
+		{ timeout: 60_000 },
+		async () => {
+			const { progress } = await recordProgressRun({
+				reporters: [new ProgressReporter()],
+				modules: PROGRESS_BROKEN_MODULES,
+				bail: 1,
+			})
+			const [run] = computeProgress(extractProgressEvents(progress ?? ''), Date.now())
+			expect(run?.cancel?.reason).toBe('test-failure')
+			expect(run?.failures.map((failure) => [failure.module, failure.relation])).toEqual([
+				['broken.test.js', 'first'],
+				['fails.test.js', 'later'],
+			])
+		},
+	)
 
 	it('refuses to initialize without an outputFile.progress path', { timeout: 60_000 }, async () => {
 		await expect(

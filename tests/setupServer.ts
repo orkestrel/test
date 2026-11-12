@@ -986,10 +986,29 @@ export const PROGRESS_BAIL_MODULES: Readonly<Record<string, string>> = Object.fr
 	].join('\n'),
 })
 
-/** Holds a module that throws while it is imported, beside one that collects and passes. */
+/**
+ * Holds a module that throws while it is imported, beside a case that waits until the progress file
+ * holds that module's collection error and then fails, so the collection failure always comes first.
+ */
 export const PROGRESS_BROKEN_MODULES: Readonly<Record<string, string>> = Object.freeze({
 	'broken.test.js': "throw new Error('broken import')\n",
-	'fine.test.js': "it('adds', () => {})\n",
+	'fails.test.js': [
+		"import { existsSync, readFileSync, watch } from 'node:fs'",
+		'',
+		"it('fails after the broken import', async () => {",
+		"\tconst progress = new URL('./progress.jsonl', import.meta.url)",
+		'\tawait new Promise((done) => {',
+		"\t\tconst watcher = watch(new URL('.', import.meta.url), () => {",
+		"\t\t\tif (existsSync(progress) && readFileSync(progress, 'utf8').includes('broken import'))",
+		'\t\t\t\tdone(watcher.close())',
+		'\t\t})',
+		"\t\tif (existsSync(progress) && readFileSync(progress, 'utf8').includes('broken import'))",
+		'\t\t\tdone(watcher.close())',
+		'\t})',
+		"\tthrow new Error('case failure')",
+		'})',
+		'',
+	].join('\n'),
 })
 
 /** Configures one nested Vitest run a progress proof drives. */

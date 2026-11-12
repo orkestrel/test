@@ -1037,7 +1037,7 @@ The progress reporter is a Vitest reporter a run lists beside its others.
 | `UpgradeResult`          | type      | `{ readonly claimed: true; readonly protocol: string \| undefined; } \| { readonly claimed: false; readonly status: number; }`                                                   | Represents what one server did with a client upgrade request.                                                                                                                                                                |
 | `ChooserContext`         | interface | `{ page, iframe }`                                                                                                                                                               | Supplies the real Playwright page and tester frame to a native chooser command.                                                                                                                                              |
 | `ProgressError`          | interface | `{ message, location? }`                                                                                                                                                         | Represents one error a progress line carries: its first message line and where it was thrown.                                                                                                                                |
-| `ProgressModule`         | interface | `{ project, module }`                                                                                                                                                            | Names one module a run starts, under the project that runs it.                                                                                                                                                               |
+| `ProgressSpecification`  | interface | `{ project, module }`                                                                                                                                                            | Names one module a run starts, under the project that runs it, as one Vitest specification.                                                                                                                                  |
 | `ProgressStamp`          | interface | `{ time, pid }`                                                                                                                                                                  | Represents the stamp every progress line carries.                                                                                                                                                                            |
 | `ProgressInitEvent`      | interface | `{ event, version, wall, bail }`                                                                                                                                                 | Represents the line a reporter writes when Vitest initializes it.                                                                                                                                                            |
 | `ProgressStartEvent`     | interface | `{ event, specifications }`                                                                                                                                                      | Represents the line a reporter writes when a run starts, listing the modules it runs.                                                                                                                                        |
@@ -1057,7 +1057,7 @@ The progress reporter is a Vitest reporter a run lists beside its others.
 | `ProgressCase`           | interface | `{ project, name, duration }`                                                                                                                                                    | Represents a case that started and has not reported a result.                                                                                                                                                                |
 | `ProgressFailure`        | interface | `{ project, module, name, time, relation, error }`                                                                                                                               | Represents one failed case, or one module that failed to collect, in a progress reading.                                                                                                                                     |
 | `ProgressCancel`         | interface | `{ reason, time }`                                                                                                                                                               | Represents the first cancel a run recorded.                                                                                                                                                                                  |
-| `ProgressRun`            | interface | `{ pid, wall, state, bail, elapsed, done, planned, final, rate, remaining, projects, running, cancel, failures, overhead, unhandled }`                                           | Represents where one run stands, read from its progress lines.                                                                                                                                                               |
+| `ProgressRun`            | interface | `{ pid, wall, state, bail, elapsed, done, planned, exact, rate, remaining, projects, running, cancel, failures, overhead, unhandled }`                                           | Represents where one run stands, read from its progress lines.                                                                                                                                                               |
 
 #### Constants
 
@@ -1102,6 +1102,7 @@ The progress reporter is a Vitest reporter a run lists beside its others.
 | `readFileSnapshot`       | function | `(path: string) => Buffer`                                                                                                                                   | Reads the bytes a file holds when it is opened, leaving out every byte appended during the read.     |
 | `filterProgressEvents`   | function | `<TName extends ProgressEvent['event']>(events: readonly ProgressEvent[], name: TName) => ReadonlyArray<Extract<ProgressEvent, { readonly event: TName; }>>` | Filters the progress lines of one event.                                                             |
 | `extractProgressEvents`  | function | `(text: string) => readonly ProgressEvent[]`                                                                                                                 | Extracts the progress lines a text holds, skipping a partial last line.                              |
+| `computeProgressRun`     | function | `(events: readonly ProgressEvent[], now: number) => ProgressRun \| undefined`                                                                                | Computes where the run one process wrote stands, from its last `init` line on.                       |
 | `computeProgress`        | function | `(events: readonly ProgressEvent[], now: number) => readonly ProgressRun[]`                                                                                  | Computes where every run a progress file holds stands, one run per writing process.                  |
 | `readProgress`           | function | `(path: string, now?: number) => readonly ProgressRun[]`                                                                                                     | Reads where every run a progress file holds stands, live or finished.                                |
 | `renderDuration`         | function | `(milliseconds: number) => string`                                                                                                                           | Renders a duration as whole minutes and seconds.                                                     |
@@ -3293,14 +3294,18 @@ and writes nothing. It returns one run per writing process, each read from that 
 against planned per project, with `+` on the total until every module is collected, the elapsed
 time, rate, and estimate, the running cases, the cancel, and each failure under its module and case
 with its first message line and location. A module that fails to collect, such as one that throws
-while it is imported, reads as a failure under its module alone, and as `FIRST` when it fails
-before any case. The earliest failure reads
-`FIRST` even when Vitest wrote the cancel before its result; a later failure past the bail setting
-that arrived or ended after the cancel reads `AFTER-BAIL`, and any other reads `FAILED`.
+while it is imported, reads as a failure under its module alone, and as `FIRST` when its line comes
+before every other failure line. The earliest failure line reads `FIRST` even when Vitest wrote the
+cancel before its result. Only a failed case can trigger a bail, so under a bail the first failed
+case reads as a cause even after a collection failure. A later failure past the bail setting that
+arrived or ended after the cancel reads `AFTER-BAIL`, and any other reads `FAILED`. A project's
+`failed` tally counts its failed cases and its modules that failed to collect.
 
-The reporter appends and never truncates, so delete the file before each run. A file that holds
-several runs reads as one run per process, each from its last `init` line, and `wall` tells them
-apart. A run killed before its `end` line reads `live` until its file is deleted.
+The format reads one `vitest run` per process. The reporter appends and never truncates, so delete
+the file before each run. A file that still holds earlier runs reads as one run per process, each
+from its last `init` line, and `wall` tells them apart. A run killed before its `end` line reads
+`live` until its file is deleted. Watch mode initializes the reporter once, so its reruns pile under
+one `init` line and are outside what the format reads.
 
 This release publishes no module specifier for `--reporter`, so list the reporter as an instance in
 the configuration.

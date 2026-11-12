@@ -47,6 +47,7 @@ import {
 	alignLoopClock,
 	chooseFiles,
 	computeProgress,
+	computeProgressRun,
 	createLink,
 	createLoopback,
 	createScratch,
@@ -1902,9 +1903,9 @@ describe('extractProgressEvents', () => {
 	})
 })
 
-describe('computeProgress', () => {
+describe('computeProgressRun', () => {
 	it('summarizes a finished bail run', () => {
-		const run = computeProgress(PROGRESS_BAIL_EVENTS, 0).at(0)
+		const run = computeProgressRun(PROGRESS_BAIL_EVENTS, 0)
 		expect(run).toMatchObject({
 			pid: 7,
 			state: 'interrupted',
@@ -1912,7 +1913,7 @@ describe('computeProgress', () => {
 			elapsed: 54_000,
 			done: 4,
 			planned: 4,
-			final: true,
+			exact: true,
 			remaining: undefined,
 			running: [],
 			cancel: { reason: 'test-failure', time: 50_000 },
@@ -1936,7 +1937,7 @@ describe('computeProgress', () => {
 	})
 
 	it('marks the causing failure FIRST when its result follows the first cancel', () => {
-		expect(computeProgress(PROGRESS_BAIL_EVENTS, 0).at(0)?.failures).toEqual([
+		expect(computeProgressRun(PROGRESS_BAIL_EVENTS, 0)?.failures).toEqual([
 			{
 				project: 'unit',
 				module: 'fails.test.js',
@@ -1984,7 +1985,7 @@ describe('computeProgress', () => {
 			time: 20,
 			pid: 3,
 		}
-		const [run] = computeProgress(
+		const run = computeProgressRun(
 			[
 				init,
 				failure,
@@ -2025,11 +2026,11 @@ describe('computeProgress', () => {
 			time: 20,
 			pid: 3,
 		}
-		const [late] = computeProgress(
+		const late = computeProgressRun(
 			[init, failure, { ...failure, id: 'f1', name: 'second', duration: 25 }, cancel],
 			0,
 		)
-		const [early] = computeProgress(
+		const early = computeProgressRun(
 			[init, failure, { ...failure, id: 'f1', name: 'second', duration: 15 }, cancel],
 			0,
 		)
@@ -2038,7 +2039,7 @@ describe('computeProgress', () => {
 	})
 
 	it('reads a live run up to the reading time, with its running cases and no estimate while a module is uncollected', () => {
-		const run = computeProgress(PROGRESS_LIVE_EVENTS, PROGRESS_WALL + 1_000).at(0)
+		const run = computeProgressRun(PROGRESS_LIVE_EVENTS, PROGRESS_WALL + 1_000)
 		expect(run).toMatchObject({
 			pid: 9,
 			state: 'live',
@@ -2046,7 +2047,7 @@ describe('computeProgress', () => {
 			elapsed: 1_000,
 			done: 2,
 			planned: 4,
-			final: false,
+			exact: false,
 			remaining: undefined,
 			running: [{ project: 'light', name: 'closes', duration: 690 }],
 			cancel: undefined,
@@ -2065,7 +2066,7 @@ describe('computeProgress', () => {
 	})
 
 	it('estimates the time left once every module is collected', () => {
-		const [run] = computeProgress(
+		const run = computeProgressRun(
 			PROGRESS_LIVE_EVENTS.map((event) =>
 				event.event === 'start'
 					? { ...event, specifications: event.specifications.slice(0, 1) }
@@ -2073,44 +2074,30 @@ describe('computeProgress', () => {
 			),
 			PROGRESS_WALL + 1_000,
 		)
-		expect(run?.final).toBe(true)
+		expect(run?.exact).toBe(true)
 		// Two cases left at 2 results per 900 ms.
 		expect(run?.remaining).toBeCloseTo(900, 6)
 	})
 
 	it('reads a run that has written only its init line', () => {
-		expect(
-			computeProgress(PROGRESS_LIVE_EVENTS.slice(0, 1), PROGRESS_WALL + 5).at(0),
-		).toMatchObject({
+		expect(computeProgressRun(PROGRESS_LIVE_EVENTS.slice(0, 1), PROGRESS_WALL + 5)).toMatchObject({
 			elapsed: 5,
 			done: 0,
 			planned: 0,
-			final: false,
+			exact: false,
 			rate: undefined,
 			remaining: undefined,
 			projects: [],
 		})
 	})
 
-	it('reads no run from lines no init opens', () => {
-		expect(computeProgress(PROGRESS_LIVE_EVENTS.slice(1), 0)).toEqual([])
-	})
-
-	it('reads one run per writing process, each from its last init line', () => {
-		const second = PROGRESS_BAIL_EVENTS.map((event) => ({ ...event, pid: 8 }))
-		const runs = computeProgress(
-			[...PROGRESS_LIVE_EVENTS.slice(0, 4), ...second, ...PROGRESS_LIVE_EVENTS],
-			PROGRESS_WALL + 1_000,
-		)
-		expect(runs.map((run) => [run.pid, run.state, run.done])).toEqual([
-			[9, 'live', 2],
-			[8, 'interrupted', 4],
-		])
-		expect(computeProgress([], 0)).toEqual([])
+	it('returns undefined for lines no init opens', () => {
+		expect(computeProgressRun(PROGRESS_LIVE_EVENTS.slice(1), 0)).toBeUndefined()
+		expect(computeProgressRun([], 0)).toBeUndefined()
 	})
 
 	it('reads a module that failed to collect as a failure, first when it comes first', () => {
-		expect(computeProgress(PROGRESS_BROKEN_EVENTS, 0).at(0)?.failures).toEqual([
+		expect(computeProgressRun(PROGRESS_BROKEN_EVENTS, 0)?.failures).toEqual([
 			{
 				project: 'unit',
 				module: 'broken.test.js',
@@ -2131,7 +2118,69 @@ describe('computeProgress', () => {
 	})
 
 	it('carries the wall time of the init line that opens each run', () => {
-		expect(computeProgress(PROGRESS_BAIL_EVENTS, 0).at(0)?.wall).toBe(PROGRESS_WALL)
+		expect(computeProgressRun(PROGRESS_BAIL_EVENTS, 0)?.wall).toBe(PROGRESS_WALL)
+	})
+	it("counts a module that failed to collect in its project's failed tally", () => {
+		const run = computeProgressRun(PROGRESS_BROKEN_EVENTS, 0)
+		expect(run?.projects.map((project) => [project.name, project.failed])).toEqual([['unit', 2]])
+		expect(run?.failures).toHaveLength(2)
+	})
+
+	it('reads the case that caused a bail after a collection failure as a cause when its result follows the cancel', () => {
+		const cancel: ProgressCancelEvent = {
+			event: 'cancel',
+			reason: 'test-failure',
+			wall: PROGRESS_WALL + 6_250,
+			time: 6_250,
+			pid: 5,
+		}
+		const events = PROGRESS_BROKEN_EVENTS.map((event) =>
+			event.event === 'init' ? { ...event, bail: 1 } : event,
+		)
+		const run = computeProgressRun([...events.slice(0, 5), cancel, ...events.slice(5)], 0)
+		expect(run?.failures.map((failure) => [failure.module, failure.relation])).toEqual([
+			['broken.test.js', 'first'],
+			['fine.test.js', 'later'],
+		])
+	})
+})
+
+describe('computeProgress', () => {
+	it('reads one run per writing process, each from its last init line', () => {
+		const second = PROGRESS_BAIL_EVENTS.map((event) => ({ ...event, pid: 8 }))
+		const runs = computeProgress(
+			[...PROGRESS_LIVE_EVENTS.slice(0, 4), ...second, ...PROGRESS_LIVE_EVENTS],
+			PROGRESS_WALL + 1_000,
+		)
+		expect(runs.map((run) => [run.pid, run.state, run.done])).toEqual([
+			[9, 'live', 2],
+			[8, 'interrupted', 4],
+		])
+		expect(computeProgress([], 0)).toEqual([])
+	})
+
+	it('groups interleaved lines by the process that wrote them', () => {
+		const runs = computeProgress(
+			PROGRESS_BAIL_EVENTS.flatMap((event, index) => [
+				event,
+				...PROGRESS_LIVE_EVENTS.slice(index, index + 1),
+			]),
+			PROGRESS_WALL + 1_000,
+		)
+		expect(
+			runs.map((run) => [
+				run.pid,
+				run.state,
+				run.elapsed,
+				run.done,
+				run.planned,
+				run.failures.length,
+			]),
+		).toEqual([
+			[7, 'interrupted', 54_000, 4, 4, 2],
+			[9, 'live', 1_000, 2, 4, 0],
+		])
+		expect(runs.at(1)?.running).toEqual([{ project: 'light', name: 'closes', duration: 690 }])
 	})
 })
 
@@ -2215,7 +2264,7 @@ describe('renderProgress', () => {
 		expect(renderProgress(computeProgress(PROGRESS_BROKEN_EVENTS, 0))).toBe(
 			[
 				'run 5 failed full: 1/1 cases, elapsed 0m07s, rate 75.0/min, ETA -',
-				'  unit  1/1  passed 0 failed 1 skipped 0',
+				'  unit  1/1  passed 0 failed 2 skipped 0',
 				'  FIRST 0m05s  [unit] broken.test.js',
 				'    Error: broken import',
 				'    at broken.test.js:1:7',

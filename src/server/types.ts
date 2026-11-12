@@ -225,8 +225,8 @@ export interface ProgressError {
 	readonly location?: string
 }
 
-/** Names one module a run starts, under the project that runs it. */
-export interface ProgressModule {
+/** Names one module a run starts, under the project that runs it, as one Vitest specification. */
+export interface ProgressSpecification {
 	/** Names the Vitest project. */
 	readonly project: string
 	/** Holds the module path relative to the run's root. */
@@ -261,7 +261,7 @@ export interface ProgressStartEvent extends ProgressStamp {
 	 * Lists every module the run starts, in Vitest's order, mirroring the specifications Vitest passes
 	 * `onTestRunStart`.
 	 */
-	readonly specifications: readonly ProgressModule[]
+	readonly specifications: readonly ProgressSpecification[]
 }
 
 /** Represents the line a reporter writes when Vitest collects one module's cases. */
@@ -391,7 +391,7 @@ export interface ProgressProject {
 	readonly done: number
 	/** Counts the cases that passed. */
 	readonly passed: number
-	/** Counts the cases that failed. */
+	/** Counts the cases that failed and the modules that failed to collect. */
 	readonly failed: number
 	/** Counts the planned cases that reported a skip at run time, a bail-cut case included. */
 	readonly skipped: number
@@ -455,10 +455,10 @@ export interface ProgressRun {
 	/** Counts the cases the collected modules plan to report, across every project. */
 	readonly planned: number
 	/**
-	 * True if the run started and every module it started has been collected, so `planned` is final;
+	 * True if the run started and every module it started has been collected, so `planned` is exact;
 	 * false otherwise.
 	 */
-	readonly final: boolean
+	readonly exact: boolean
 	/** Holds the results per minute since the first case started, or `undefined` before one. */
 	readonly rate: number | undefined
 	/**
