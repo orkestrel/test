@@ -98,6 +98,25 @@ describe('capture frame stages', () => {
 			await releasePane()
 		}
 	})
+	it('stages at the extent rather than repeating a pane the carried growth lands back on', async () => {
+		buildStylesheet(SHELL_SHEET)
+		const container = buildFixture(SHELL_MARKUP)
+		const main = requireValue(container.querySelector('main'))
+		const options = { path: `${FRAMES}-noop.png`, width: 390, height: 844, unrolled: true }
+		try {
+			// At a 2460-row pane the main column shows its 2000 rows with 400 to spare, so the extent is
+			// 2060. A previous extent of 1660 carries 400 rows of growth, which lands the next staging
+			// back on 2460; the main column's height from the reading before differs, so it counts as
+			// growing. A repeated pane reads every height unchanged and would settle on the band.
+			await stagePane(390, 2460)
+			expect(main.clientHeight).toBe(2400)
+			await settleFrame(options, undefined, false, 2460, 1660, 1, new Map([[main, 784]]))
+			expect(window.innerHeight).toBe(2060)
+			expect(main.clientHeight).toBe(2000)
+		} finally {
+			await releasePane()
+		}
+	})
 })
 
 describe('clipsOverflow', () => {
@@ -1944,7 +1963,7 @@ describe('captureFrame', () => {
 		)
 	})
 
-	it('names at most the region limit in one refusal and counts the rest', async () => {
+	it('names every region in one refusal', async () => {
 		buildStylesheet('body { margin: 0 } .log { height: 50px; overflow: auto }')
 		buildFixture(
 			['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
@@ -1960,9 +1979,23 @@ describe('captureFrame', () => {
 			() => '',
 			(cause: unknown) => String(cause),
 		)
-		expect(refusal).toContain('"div#r5" keeps a fixed height and hides 350 px')
-		expect(refusal).toContain('; and 1 more.')
-		expect(refusal).not.toContain('div#r6')
+		for (const id of ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) {
+			expect(refusal).toContain(`"div#${id}" keeps a fixed height and hides 350 px`)
+		}
+		expect(refusal).not.toContain('more')
+	})
+
+	it('names the regions still hiding rows when an unrolled frame never settles', async () => {
+		buildStylesheet('html { background: rgb(0, 128, 0) } .grow { min-height: 100vh }')
+		buildFixture(
+			'<div class="grow">Grows with the pane</div><div style="height: 200px">Beyond</div>' +
+				'<div id="log" style="height: 300px; overflow: auto"><div style="height: 1000px"></div></div>',
+		)
+		await expect(
+			captureFrame({ path: `${FRAMES}/growing-log.png`, width: 390, height: 844, unrolled: true }),
+		).rejects.toThrow(
+			/never settled after 4 restagings: \d+ over a \d+ pane; scroll regions still hiding rows: "div#log" hides 700 px$/u,
+		)
 	})
 
 	it('refuses a document whose height never settles, and hands the pane back anyway', async () => {

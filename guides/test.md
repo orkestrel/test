@@ -333,7 +333,6 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `CAPTURE_CONTROLS`      | const | `readonly string[]`                                                           | Lists the form controls an unrolled frame leaves scrolled.                                                 |
 | `CAPTURE_LABEL_LIMIT`   | const | `120`                                                                         | Bounds the characters of the region locator a capture refusal names.                                       |
 | `CAPTURE_PANE`          | const | `"data-capture-pane"`                                                         | Names the attribute marking the runner's tester pane, and the rule that sizes it, while a frame is staged. |
-| `CAPTURE_REGION_LIMIT`  | const | `5`                                                                           | Bounds the scroll regions one capture refusal names.                                                       |
 | `CAPTURE_STAGE_LIMIT`   | const | `4`                                                                           | Bounds the restagings one capture takes before it refuses a document whose height never settles.           |
 | `CONTENT_ROLES`         | const | `readonly string[]`                                                           | Names the roles whose accessible name is the text a reader can see inside them.                            |
 | `FIELD_ROLES`           | const | `Readonly<Record<string, string>>`                                            | Names the role each `input` type carries.                                                                  |
@@ -441,9 +440,12 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                                                                                                     | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
 | `measureContent`           | function | `() => number`                                                                                                                                                                                      | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `containsFixed`            | function | `(element: Element) => boolean`                                                                                                                                                                     | Reports whether an element is the containing block of the fixed-position boxes inside it.                                                                                                                                                                                       |
-| `collectRegionRows`        | function | `(region: Element, positioned?: boolean, anchored?: boolean) => readonly Element[]`                                                                                                                 | Collects the elements under a scroll region whose boxes lay out in its scrollable area, walking the flat tree.                                                                                                                                                                  |
+| `collectFlatDescendants`   | function | `(element: Element) => readonly Element[]`                                                                                                                                                          | Collects the elements under an element in the flat tree, in the order a browser paints them.                                                                                                                                                                                    |
+| `collectFlatAncestors`     | function | `(element: Element, region: Element) => readonly Element[]`                                                                                                                                         | Collects an element's ancestors in the flat tree, nearest first, up to and including a region.                                                                                                                                                                                  |
+| `collectRegionRows`        | function | `(region: Element) => readonly Element[]`                                                                                                                                                           | Collects the elements under a scroll region whose boxes lay out in its scrollable area, walking the flat tree.                                                                                                                                                                  |
 | `measureRegion`            | function | `(region: Element) => number`                                                                                                                                                                       | Measures the rows a scroll region's content lays out, whether or not its box shows them all.                                                                                                                                                                                    |
 | `renderSelector`           | function | `(element: Element) => string`                                                                                                                                                                      | Renders a selector path that locates an element from its nearest ancestor carrying an id.                                                                                                                                                                                       |
+| `renderLabel`              | function | `(element: Element) => string`                                                                                                                                                                      | Renders the locator a capture refusal names an element by.                                                                                                                                                                                                                      |
 | `stagePane`                | function | `(width: number, height: number) => Promise<void>`                                                                                                                                                  | Sets the tester's viewport and renders the runner's pane at the size that viewport claims.                                                                                                                                                                                      |
 | `releasePane`              | function | `() => Promise<void>`                                                                                                                                                                               | Hands the tester pane back to the runner's own layout, at the viewport it had before staging.                                                                                                                                                                                   |
 | `computeOffset`            | function | `(box: DOMRectReadOnly, width: number, height: number) => FrameOffset`                                                                                                                              | Computes how far an element frame moves the tester frame so the element is shot inside the runner's window.                                                                                                                                                                     |
@@ -881,8 +883,13 @@ the smallest slack among them: the rows between a region's last row and its bott
 `measureRegion` helper reads, because `scrollHeight` never reads less than the box. It reads the
 elements the `collectRegionRows` helper reaches through the flat tree, so rows in a host's shadow
 root and rows assigned to a slot count. A fixed bar or an absolute overlay laid out against a block
-outside the region does not count, because it adds nothing to the region's scroll height; the
-`containsFixed` helper names the ancestors that would make such a box the region's own. A region
+outside the region does not count, because it adds nothing to the region's scroll height. The
+containment is decided by climbing from each fixed or absolute box to the region through the
+`collectFlatAncestors` helper, looking for a positioned ancestor or one the `containsFixed` helper
+reports: a `transform`, `translate`, `rotate`, `scale`, `perspective`, `filter`, or
+`backdrop-filter` other than `none`, layout or paint containment, a `size` or `inline-size`
+container type, `content-visibility: auto`, `transform-style: preserve-3d`, or a `will-change`
+naming one of those properties. A region
 whose height did not change across a staging keeps a fixed height, so its hidden rows stop
 counting and the staging settles without it.
 
@@ -890,27 +897,37 @@ A shell of a 60-row header over a column of 2000 rows unrolls to a 2060-row fram
 1200 rows beside a main pane of 1600 rows unrolls to 1660 rows, with the main pane's last row on
 the floor, whether the main pane holds a fixed bar or an inset overlay, scrolls rows in its own
 shadow root, or scrolls slotted rows under a shadow scroller. A `50vh` region nested in a column
-settles on the layout's fixed point of 2520 rows. A layout that needs more restagings than
-`CAPTURE_STAGE_LIMIT` allows is refused with the never-settled refusal rather than written with a
-band.
+settles on the layout's fixed point of 2520 rows. A staging that the carried growth would land
+back on the current pane stages at the extent instead, because a repeated pane reads every
+height unchanged and would settle on a band. A layout that needs more restagings than
+`CAPTURE_STAGE_LIMIT` allows is refused rather than written with a band, and the refusal names
+every region still hiding rows with its locator and its hidden pixels.
+
+Three cases stay outside what an unrolled frame reads. A containing block that `containsFixed`
+does not read counts a fixed or absolute box as a row, which ends in that never-settled refusal
+naming the regions. A `:modal` dialog or a `:popover-open` element under a transformed ancestor is
+counted as a row, though the top layer lays it out. A region inside a closed shadow root is
+unreachable, so its rows stay hidden without a refusal.
 
 A region that still hides rows after the settling refuses the capture with
 `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled`.
-The cause and the correction come from what the settling measured:
+The refusal names every such region, and the cause and the correction come from what was
+measured:
 
-- A region that kept its height across a staging `keeps a fixed height`, so bound its height to
-  the viewport.
-- A region that grew while the pane grew `grows by less than the pane`, so let it take all the
-  height the pane adds.
+- A region that kept its height across a staging, or kept the height it had at the declared
+  viewport, `keeps a fixed height`, so bound its height to the viewport.
+- A region whose height changed as the pane grew `grows by less than the pane`, so let it take all
+  the height the pane adds.
+- A region that hid no rows at the declared viewport hides them `at the final reading`, so let its
+  height follow the viewport.
 - A region at a pane that never grew past the declared height hides its rows `though the declared
   viewport has room for them`, so let it fill the viewport's remaining height.
 
 A fixed `#log` in a viewport-height column is refused as `keeps a fixed height` rather than as a
 document that never settles, and a lone `50vh` region of 1000 rows settles at 1000 with 500 hidden
-and is refused as `grows by less than the pane`. The refusal names each region by the path the
-`renderSelector` helper renders from its nearest ancestor carrying an id, such as
-`div#stage > section > div`, cut to its last `CAPTURE_LABEL_LIMIT` characters and JSON-encoded. It
-names `CAPTURE_REGION_LIMIT` regions and counts the rest.
+and is refused as `grows by less than the pane`. The `renderLabel` helper names each region by
+the path the `renderSelector` helper renders from its nearest ancestor carrying an id, such as
+`div#stage > section > div`, cut to its last `CAPTURE_LABEL_LIMIT` characters and JSON-encoded.
 
 Growing a region to its full height clamps its scroll position to its first row, and an element
 frame's alignment can scroll a container too. Before the first staging, `captureFrame` records the
@@ -1413,7 +1430,7 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `The element is not connected to a document, so it has no clipping ancestors to read`                                                                                      | `collectClippingAncestors`, `readClippedBlock` |
 | `Tester pane is unavailable for a capture`                                                                                                                                 | `stagePane`                                    |
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                                                                                                      | `stagePane`                                    |
-| `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane`                                                                                          | `captureFrame`                                 |
+| `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane[; scroll regions still hiding rows: <region> hides <n> px, …]`                            | `captureFrame`                                 |
 | `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled` | `captureFrame`                                 |
 | `Capture frame was written to <path> where <path> was asked for`                                                                                                           | `captureFrame`, `verifyFrame`                  |
 | `Capture frame at <path> is not the one this run shot`                                                                                                                     | `captureFrame`, `verifyFrame`                  |
@@ -4308,8 +4325,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   root and with slotted rows under a shadow scroller, each at 1660 rows with the main pane's last
   row on the bottom row. A fixed `#log` in the shell's column is refused as keeping a fixed height,
   a lone `50vh` region of 1000 rows as growing by less than the pane, a `50vh` region of 600 rows
-  as hiding rows the declared viewport has room for, and six fixed regions with five named and
-  the sixth counted. A plain
+  as hiding rows the declared viewport has room for, and six fixed regions each named. An
+  unrolled frame that never settles names the fixed region still hiding rows. A plain
   element frame under root scroll padding hands back the container that native alignment scrolled.
   The `createPortfolio` function takes `unrolled` through `place`, beside a plain
   portfolio over the same shell. The `collectScrollContainers` function takes every scroll
@@ -4329,9 +4346,12 @@ Each entry names the contracts its file proves. The test names carry the cases.
   takes the flat tree through an open shadow root and its slot, an absolute box under a positioned
   ancestor and a fixed box under a transformed one, and leaves out an absolute box and a fixed box
   with their subtrees where no ancestor at or under the region contains them. The `containsFixed`
-  function takes a transform, a perspective, a filter, a paint and a layout containment, and a
-  transforming `will-change`, and leaves out a positioned element, an `opacity` `will-change`, and
-  an unstyled element. The `renderSelector` function takes a path by position from the nearest
+  function takes a transform, a translate, a rotate, a scale, a perspective, a filter, a backdrop
+  filter, layout, paint, strict, and content containment, a `size` and an `inline-size` container
+  type, `content-visibility: auto`, `transform-style: preserve-3d`, and a `will-change` naming a
+  transform, a perspective, or a filter, and leaves out a positioned element, an `opacity`
+  `will-change`, and an unstyled element. The `settleFrame` function, called at a 2460-row pane
+  whose carried growth lands back on that pane, stages at the 2060-row extent instead. The `renderSelector` function takes a path by position from the nearest
   ancestor with an id, an escaped id, the body and the root element, and a step out of an open
   shadow tree. After the `releasePointer` function, an
   element frame takes no `mouseover` event for an element inside the window, which also takes no `scroll` event;

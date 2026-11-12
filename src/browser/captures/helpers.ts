@@ -16,7 +16,6 @@ import {
 	CAPTURE_CONTROLS,
 	CAPTURE_LABEL_LIMIT,
 	CAPTURE_PANE,
-	CAPTURE_REGION_LIMIT,
 	CAPTURE_STAGE_LIMIT,
 	MEDIA_STAGE,
 } from './constants.js'
@@ -323,15 +322,19 @@ export function collectUnrolledRegions(element?: Element): readonly Element[] {
  * Reports whether an element is the containing block of the fixed-position boxes inside it.
  *
  * @param element - The element to read.
- * @returns True if the element's computed `transform`, `perspective`, `filter`, or
- * `backdrop-filter` value is other than the `none` keyword, its computed `contain` value carries
- * layout or paint containment, or its computed `will-change` value names one of those transforming
- * properties; false otherwise.
+ * @returns True if the element's computed `transform`, `translate`, `rotate`, `scale`,
+ * `perspective`, `filter`, or `backdrop-filter` value is other than the `none` keyword, its
+ * computed `contain` value carries layout or paint containment, its computed `container-type`
+ * value is the `size` keyword or the `inline-size` keyword, its computed `content-visibility`
+ * value is the `auto` keyword, its computed `transform-style` value is the `preserve-3d` keyword,
+ * or its computed `will-change` value names one of those transforming or filtering properties;
+ * false otherwise.
  *
  * @remarks
  * A fixed-position box is laid out against the viewport unless an ancestor takes that role, and
- * each of those properties makes the element take it. Every element this reports true for also
- * contains absolutely positioned boxes.
+ * each of the listed properties makes the element take it. Every element this reports true for
+ * also contains absolutely positioned boxes. A containing block another property establishes is not
+ * read here.
  *
  * @example
  * ```ts
@@ -340,12 +343,70 @@ export function collectUnrolledRegions(element?: Element): readonly Element[] {
  */
 export function containsFixed(element: Element): boolean {
 	return (
-		['transform', 'perspective', 'filter', 'backdrop-filter'].some(
+		['transform', 'translate', 'rotate', 'scale', 'perspective', 'filter', 'backdrop-filter'].some(
 			(property) => readStyle(element, property) !== 'none',
 		) ||
 		/\b(?:layout|paint|strict|content)\b/u.test(readStyle(element, 'contain')) ||
-		/\b(?:transform|perspective|filter)\b/u.test(readStyle(element, 'will-change'))
+		/\bsize\b/u.test(readStyle(element, 'container-type')) ||
+		readStyle(element, 'content-visibility') === 'auto' ||
+		readStyle(element, 'transform-style') === 'preserve-3d' ||
+		/\b(?:transform|translate|rotate|scale|perspective|filter|backdrop-filter)\b/u.test(
+			readStyle(element, 'will-change'),
+		)
 	)
+}
+
+/**
+ * Collects the elements under an element in the flat tree, in the order a browser paints them.
+ *
+ * @param element - The element whose content to walk.
+ * @returns Every element under it, each followed by its own content.
+ *
+ * @remarks
+ * The walk goes into a host's open shadow root in place of its light children, and from a slot to
+ * the elements assigned to it, or to its own children where none is assigned. A closed shadow root
+ * is unreachable, so a host carrying one is walked through its light children.
+ *
+ * @example
+ * ```ts
+ * collectFlatDescendants(host).length
+ * ```
+ */
+export function collectFlatDescendants(element: Element): readonly Element[] {
+	const children =
+		element.shadowRoot !== null
+			? [...element.shadowRoot.children]
+			: element instanceof HTMLSlotElement && element.assignedElements().length > 0
+				? element.assignedElements({ flatten: true })
+				: [...element.children]
+	return children.flatMap((child) => [child, ...collectFlatDescendants(child)])
+}
+
+/**
+ * Collects an element's ancestors in the flat tree, nearest first, up to and including a region.
+ *
+ * @param element - The element to climb from.
+ * @param region - The ancestor the climb stops at.
+ * @returns Every ancestor from the element's flat parent to the region, and every ancestor to the
+ * root element where the region is none of them.
+ *
+ * @remarks
+ * A step goes to the slot an element is assigned to, else to its parent element, else to the host
+ * of the shadow root it stands in, as {@link collectClippingAncestors} climbs.
+ *
+ * @example
+ * ```ts
+ * collectFlatAncestors(row, region).at(-1) === region // true for a row inside the region
+ * ```
+ */
+export function collectFlatAncestors(element: Element, region: Element): readonly Element[] {
+	const scope = element.getRootNode()
+	const parent =
+		element.assignedSlot ??
+		element.parentElement ??
+		(scope instanceof ShadowRoot ? scope.host : null)
+	if (parent === null) return []
+	return parent === region ? [parent] : [parent, ...collectFlatAncestors(parent, region)]
 }
 
 /**
@@ -353,53 +414,37 @@ export function containsFixed(element: Element): boolean {
  * the flat tree.
  *
  * @param region - The scroll region whose content to walk.
- * @param positioned - If `true`, an absolutely positioned box under the region has its containing
- * block at or under the region; if `false`, it has its containing block outside the region.
- * Default: whether the region is positioned or {@link containsFixed} reports true for it.
- * @param anchored - If `true`, a fixed-position box under the region has its containing block at
- * or under the region; if `false`, it is laid out against the viewport. Default: whether
- * {@link containsFixed} reports true for the region.
- * @returns Every element the walk reaches, in flat-tree order.
+ * @returns Every element {@link collectFlatDescendants} reaches under the region, in flat-tree
+ * order, less each fixed or absolute box whose containing block lies outside the region and
+ * everything inside that box.
  *
  * @remarks
- * The walk goes down the tree a browser paints: into a host's open shadow root in place of its
- * light children, and from a slot to the elements assigned to it, or to its own children where
- * none is assigned. A closed shadow root is unreachable, so a host carrying one is walked through
- * its light children. A box whose containing block lies outside the region adds nothing to the
- * region's scroll height, so the walk leaves out an absolutely positioned element with no
- * positioned or containing ancestor at or under the region, and a fixed-position element with no
- * containing ancestor there, each with everything inside it. The two flags carry those facts down
- * the walk, so it never climbs back up.
+ * A box whose containing block lies outside the region adds nothing to the region's scroll height.
+ * For each fixed-position element, the climb from it to the region, which
+ * {@link collectFlatAncestors} takes, looks for an ancestor {@link containsFixed} reports true for;
+ * for each absolutely positioned element, it looks for such an ancestor or a positioned one. An
+ * element whose climb finds none is left out with its content. A `:modal` dialog and a
+ * `:popover-open` element are laid out in the top layer, which a transformed ancestor does not
+ * contain, so one under such an ancestor is counted as a row.
  *
  * @example
  * ```ts
  * const rows = collectRegionRows(region)
  * ```
  */
-export function collectRegionRows(
-	region: Element,
-	positioned = readStyle(region, 'position') !== 'static' || containsFixed(region),
-	anchored = containsFixed(region),
-): readonly Element[] {
-	const children =
-		region.shadowRoot !== null
-			? [...region.shadowRoot.children]
-			: region instanceof HTMLSlotElement && region.assignedElements().length > 0
-				? region.assignedElements({ flatten: true })
-				: [...region.children]
-	return children.flatMap((child) => {
-		const position = readStyle(child, 'position')
-		if ((position === 'fixed' && !anchored) || (position === 'absolute' && !positioned)) return []
-		const contains = containsFixed(child)
-		return [
-			child,
-			...collectRegionRows(
-				child,
-				positioned || position !== 'static' || contains,
-				anchored || contains,
-			),
-		]
+export function collectRegionRows(region: Element): readonly Element[] {
+	const elements = collectFlatDescendants(region)
+	const loose = elements.filter((element) => {
+		const position = readStyle(element, 'position')
+		if (position !== 'fixed' && position !== 'absolute') return false
+		return !collectFlatAncestors(element, region).some(
+			(ancestor) =>
+				containsFixed(ancestor) ||
+				(position === 'absolute' && readStyle(ancestor, 'position') !== 'static'),
+		)
 	})
+	const outside = new Set(loose.flatMap((element) => [element, ...collectFlatDescendants(element)]))
+	return elements.filter((element) => !outside.has(element))
 }
 
 /**
@@ -478,6 +523,29 @@ export function renderSelector(element: Element): string {
 	if (element.parentElement !== null) return `${renderSelector(element.parentElement)} > ${step}`
 	const root = element.getRootNode()
 	return root instanceof ShadowRoot ? `${renderSelector(root.host)} >>> ${step}` : step
+}
+
+/**
+ * Renders the locator a capture refusal names an element by.
+ *
+ * @param element - The element to name.
+ * @returns The path {@link renderSelector} renders, cut to its last {@link CAPTURE_LABEL_LIMIT}
+ * characters behind a leading ellipsis where it is longer, and JSON-encoded.
+ *
+ * @remarks
+ * The path carries ids the page wrote. Keeping its end keeps the steps nearest the element, and the
+ * encoding keeps a page-authored id from faking or growing the message it stands in.
+ *
+ * @example
+ * ```ts
+ * renderLabel(requireValue(document.querySelector('#log'))) // '"div#log"'
+ * ```
+ */
+export function renderLabel(element: Element): string {
+	const path = renderSelector(element)
+	return JSON.stringify(
+		path.length > CAPTURE_LABEL_LIMIT ? `…${path.slice(1 - CAPTURE_LABEL_LIMIT)}` : path,
+	)
 }
 
 /**
@@ -1073,18 +1141,25 @@ export async function releaseMedia(): Promise<void> {
  * main pane's last row ends. A region whose height did not change across a staging keeps a fixed
  * height, so its hidden rows stop counting and the staging settles without it. A layout that needs
  * more restagings than {@link CAPTURE_STAGE_LIMIT} allows is refused with the never-settled
- * refusal.
+ * refusal, which on an unrolled frame appends
+ * `; scroll regions still hiding rows: <region> hides <n> px, …` for every region still hiding rows.
  *
  * A region that still hides rows after the settling refuses the shot with
- * `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled`.
- * The cause and correction come from what the settling measured: a region that kept its height
- * across a staging `keeps a fixed height`, so bound its height to the viewport; a region that grew
- * while the pane grew `grows by less than the pane`, so let it take all the height the pane adds;
- * and a region at a pane that never grew past the declared height hides its rows `though the
- * declared viewport has room for them`, so let it fill the viewport's remaining height. Each region
- * is named by the path {@link renderSelector} renders, cut to its last {@link CAPTURE_LABEL_LIMIT}
- * characters and JSON-encoded; the refusal names {@link CAPTURE_REGION_LIMIT} regions and counts
- * the rest.
+ * `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled`,
+ * naming every such region. The cause and correction come from what was measured: a region that
+ * kept its height across a staging, or kept the height it had at the declared viewport, `keeps a
+ * fixed height`, so bound its height to the viewport; a region whose height changed as the pane
+ * grew `grows by less than the pane`, so let it take all the height the pane adds; a region that
+ * hid no rows at the declared viewport hides them `at the final reading`, so let its height follow
+ * the viewport; and a region at a pane that never grew past the declared height hides its rows
+ * `though the declared viewport has room for them`, so let it fill the viewport's remaining height.
+ * Each region is named by the locator {@link renderLabel} renders.
+ *
+ * Three cases stay outside what an unrolled frame reads. A containing block that
+ * {@link containsFixed} does not read counts a fixed or absolute box as a row, which ends in the
+ * never-settled refusal naming the regions. A `:modal` dialog or a `:popover-open` element under a
+ * transformed ancestor is counted as a row, though the top layer lays it out. A region inside a
+ * closed shadow root is unreachable, so its rows stay hidden without a refusal.
  *
  * @example
  * ```ts
@@ -1102,29 +1177,31 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
 	try {
 		if (!prepared) await stagePane(options.width, options.height)
+		const declared = new Map(
+			(options.unrolled === true ? collectUnrolledRegions(element) : []).map(
+				(region): [Element, number] => [region, region.clientHeight],
+			),
+		)
 		const fixed = await settleFrame(options, element, prepared)
 		const scrolled = options.unrolled === true ? collectUnrolledRegions(element) : []
 		if (scrolled.length > 0) {
 			const grown = window.innerHeight > options.height
-			const regions = scrolled.slice(0, CAPTURE_REGION_LIMIT).map((region) => {
-				const path = renderSelector(region)
-				const label = JSON.stringify(
-					path.length > CAPTURE_LABEL_LIMIT ? `…${path.slice(1 - CAPTURE_LABEL_LIMIT)}` : path,
-				)
+			const regions = scrolled.map((region) => {
+				const label = renderLabel(region)
 				const hides = String(region.scrollHeight - region.clientHeight)
-				if (fixed.includes(region)) {
+				const before = declared.get(region)
+				if (fixed.includes(region) || (grown && before === region.clientHeight)) {
 					return `${label} keeps a fixed height and hides ${hides} px, so bound its height to the viewport`
 				}
-				return grown
-					? `${label} grows by less than the pane and hides ${hides} px, so let it take all the height the pane adds`
-					: `${label} hides ${hides} px though the declared viewport has room for them, so let it fill the viewport's remaining height`
+				if (!grown) {
+					return `${label} hides ${hides} px though the declared viewport has room for them, so let it fill the viewport's remaining height`
+				}
+				return before === undefined
+					? `${label} hides ${hides} px at the final reading, so let its height follow the viewport`
+					: `${label} grows by less than the pane and hides ${hides} px, so let it take all the height the pane adds`
 			})
-			const rest =
-				scrolled.length > CAPTURE_REGION_LIMIT
-					? `; and ${String(scrolled.length - CAPTURE_REGION_LIMIT)} more`
-					: ''
 			throw new Error(
-				`Capture frame at ${options.path} leaves rows hidden in scroll regions: ${regions.join('; ')}${rest}. Shoot the frame without unrolled to keep them scrolled`,
+				`Capture frame at ${options.path} leaves rows hidden in scroll regions: ${regions.join('; ')}. Shoot the frame without unrolled to keep them scrolled`,
 			)
 		}
 		const shot = await takeFrameShot(options, element)
@@ -1396,7 +1473,9 @@ export function expandCaptures(
  * extent and out of the slack. After no other tracked region hides rows, the smallest slack among
  * the tracked regions that grew comes off the extent. A region a re-render disconnected is
  * dropped. The prepared restaging at the declared height reads afresh, because the pane did not
- * change.
+ * change. A staging the carried growth would land back on the current pane stages at the extent
+ * instead, because a repeated pane reads every height unchanged. Thrown when the stage limit is
+ * reached, naming on an unrolled frame every region still hiding rows.
  * @example
  * ```ts
  * await settleFrame({ path: 'frame.png', width: 390, height: 844 }, undefined, false)
@@ -1441,11 +1520,15 @@ export async function settleFrame(
 		return fixed
 	}
 	if (stage === CAPTURE_STAGE_LIMIT) {
+		const still =
+			hiding.length > 0
+				? `; scroll regions still hiding rows: ${hiding.map((region) => `${renderLabel(region)} hides ${String(region.scrollHeight - region.clientHeight)} px`).join(', ')}`
+				: ''
 		throw new Error(
-			`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGE_LIMIT)} restagings: ${String(extent)} over a ${String(pane)} pane`,
+			`Capture frame at ${options.path} never settled after ${String(CAPTURE_STAGE_LIMIT)} restagings: ${String(extent)} over a ${String(pane)} pane${still}`,
 		)
 	}
-	const next = extent + growth
+	const next = extent + growth === pane ? extent : extent + growth
 	await stagePane(options.width, next)
 	return settleFrame(options, element, prepared, next, extent, stage + 1, heights)
 }
