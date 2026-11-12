@@ -212,3 +212,257 @@ export interface UpgradeOptions extends WaitOptions {
 export type UpgradeResult =
 	| { readonly claimed: true; readonly protocol: string | undefined }
 	| { readonly claimed: false; readonly status: number }
+
+/** Represents one error a progress line carries: its first message line and where it was thrown. */
+export interface ProgressError {
+	/** Holds the error's name and the first line of its message, stripped of terminal colour codes. */
+	readonly message: string
+	/**
+	 * Names the first stack frame outside `node_modules` as `file:line:column`, relative to the run's
+	 * root, or the first frame when every frame sits in `node_modules`. Absent when the error carries
+	 * no parsed stack.
+	 */
+	readonly location?: string
+}
+
+/** Names one module a run starts, under the project that runs it. */
+export interface ProgressModule {
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the module path relative to the run's root. */
+	readonly module: string
+}
+
+/** Represents the stamp every progress line carries. */
+export interface ProgressStamp {
+	/** Holds the milliseconds since the reporter was constructed, read from the monotonic clock. */
+	readonly time: number
+	/** Holds the id of the process that wrote the line. */
+	readonly pid: number
+}
+
+/** Represents the line a reporter writes when Vitest initializes it. */
+export interface ProgressInitEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'init'
+	/** Holds the format version the line stream follows. */
+	readonly version: number
+	/** Holds the wall-clock time of the line, in milliseconds since the Unix epoch. */
+	readonly wall: number
+	/** Holds the run's `bail` setting; `0` runs every case. */
+	readonly bail: number
+}
+
+/** Represents the line a reporter writes when a run starts, listing the modules it runs. */
+export interface ProgressStartEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'start'
+	/** Lists every module the run starts, in Vitest's order. */
+	readonly modules: readonly ProgressModule[]
+}
+
+/** Represents the line a reporter writes when Vitest collects one module's cases. */
+export interface ProgressCollectedEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'collected'
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the module path relative to the run's root. */
+	readonly module: string
+	/** Counts the collected cases whose mode is `run` or `only`, the cases the run plans to report. */
+	readonly planned: number
+	/** Lists the errors the module raised while it was collected. */
+	readonly errors: readonly ProgressError[]
+}
+
+/** Represents the line a reporter writes when a planned case starts. */
+export interface ProgressReadyEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'ready'
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds Vitest's id for the case. */
+	readonly id: string
+	/** Holds the case's full name, its suites joined by ` > `. */
+	readonly name: string
+}
+
+/** Names the state a case result reports, mirroring Vitest's `TestState`. */
+export type ProgressCaseState = 'passed' | 'failed' | 'skipped' | 'pending'
+
+/** Represents the line a reporter writes once for each planned case's result. */
+export interface ProgressCaseEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'case'
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the module path relative to the run's root. */
+	readonly module: string
+	/** Holds Vitest's id for the case. */
+	readonly id: string
+	/** Holds the case's full name, its suites joined by ` > `. */
+	readonly name: string
+	/** Holds the case's result state. */
+	readonly state: ProgressCaseState
+	/** Holds how long the case ran, in whole milliseconds. Absent when Vitest reports no diagnostic. */
+	readonly duration?: number
+	/**
+	 * Holds the wall-clock time the case started, in milliseconds since the Unix epoch. Absent when
+	 * Vitest reports no diagnostic.
+	 */
+	readonly start?: number
+	/** Lists each error of a failed case. Absent unless the state is `failed`. */
+	readonly errors?: readonly ProgressError[]
+}
+
+/** Represents the line a reporter writes each time Vitest cancels the run. */
+export interface ProgressCancelEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'cancel'
+	/** Holds the reason Vitest's `onCancel` delivers, such as `test-failure` for a bail. */
+	readonly reason: string
+	/** Holds the wall-clock time of the line, in milliseconds since the Unix epoch. */
+	readonly wall: number
+}
+
+/** Names the state a finished module reports, mirroring Vitest's `TestModuleState`. */
+export type ProgressModuleState = 'passed' | 'failed' | 'skipped' | 'pending' | 'queued'
+
+/** Represents the line a reporter writes when a module finishes. */
+export interface ProgressModuleEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'module'
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the module path relative to the run's root. */
+	readonly module: string
+	/** Holds the module's final state. */
+	readonly state: ProgressModuleState
+	/** Holds how long the module ran, in whole milliseconds. */
+	readonly duration: number
+}
+
+/** Names why a run ended, mirroring Vitest's `TestRunEndReason`. */
+export type ProgressEndReason = 'passed' | 'interrupted' | 'failed'
+
+/** Represents the line a reporter writes when a run ends. */
+export interface ProgressEndEvent extends ProgressStamp {
+	/** Names the line's event. */
+	readonly event: 'end'
+	/** Holds why the run ended. */
+	readonly reason: ProgressEndReason
+	/** Holds the reporter's own time across every hook since it was initialized, in milliseconds. */
+	readonly overhead: number
+	/** Lists the errors Vitest reported outside any case. */
+	readonly unhandled: readonly ProgressError[]
+}
+
+/** Represents one line of a progress file, discriminated by `event`. */
+export type ProgressEvent =
+	| ProgressInitEvent
+	| ProgressStartEvent
+	| ProgressCollectedEvent
+	| ProgressReadyEvent
+	| ProgressCaseEvent
+	| ProgressCancelEvent
+	| ProgressModuleEvent
+	| ProgressEndEvent
+
+/** Names a run's state as a reader sees it: `live` until its `end` line, then the end reason. */
+export type ProgressState = 'live' | ProgressEndReason
+
+/**
+ * Names how a failure relates to the run's bail: `first` is the earliest failure, `bail` is a
+ * failure past the bail setting whose result arrived or whose case ended after the first cancel, and
+ * `later` is any other failure.
+ */
+export type ProgressRelation = 'first' | 'bail' | 'later'
+
+/** Represents one project's tallies in a progress reading. */
+export interface ProgressProject {
+	/** Names the Vitest project. */
+	readonly name: string
+	/** Counts the cases the project's collected modules plan to report. */
+	readonly planned: number
+	/** Counts the cases that reported a result. */
+	readonly done: number
+	/** Counts the cases that passed. */
+	readonly passed: number
+	/** Counts the cases that failed. */
+	readonly failed: number
+	/** Counts the planned cases that reported a skip at run time, a bail-cut case included. */
+	readonly skipped: number
+	/** Counts the modules the run started for the project. */
+	readonly modules: number
+	/** Counts the modules Vitest has collected for the project. */
+	readonly collected: number
+}
+
+/** Represents a case that started and has not reported a result. */
+export interface ProgressCase {
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the case's full name. */
+	readonly name: string
+	/** Holds how long the case has been running, in milliseconds. */
+	readonly duration: number
+}
+
+/** Represents one failed case in a progress reading. */
+export interface ProgressFailure {
+	/** Names the Vitest project. */
+	readonly project: string
+	/** Holds the case's full name. */
+	readonly name: string
+	/** Holds the milliseconds since the reporter started at which the result was written. */
+	readonly time: number
+	/** Names how the failure relates to the run's bail. */
+	readonly relation: ProgressRelation
+	/** Holds the case's first error, or `undefined` when the result carried none. */
+	readonly error: ProgressError | undefined
+}
+
+/** Represents the first cancel a run recorded. */
+export interface ProgressCancel {
+	/** Holds the reason Vitest delivered. */
+	readonly reason: string
+	/** Holds the milliseconds since the reporter started at which the cancel was written. */
+	readonly time: number
+}
+
+/** Represents where one run stands, read from its progress lines. */
+export interface ProgressRun {
+	/** Holds the id of the process that wrote the run. */
+	readonly pid: number
+	/** Names the run's state. */
+	readonly state: ProgressState
+	/** Holds the run's `bail` setting; `0` runs every case. */
+	readonly bail: number
+	/** Holds the milliseconds the run has taken, up to its end or to the reading. */
+	readonly elapsed: number
+	/** Counts the cases that reported a result, across every project. */
+	readonly done: number
+	/** Counts the cases the collected modules plan to report, across every project. */
+	readonly planned: number
+	/** True if the run started and every module it started has been collected; false otherwise. */
+	readonly collected: boolean
+	/** Holds the results per minute since the first case started, or `undefined` before one. */
+	readonly rate: number | undefined
+	/**
+	 * Holds the estimated milliseconds left, or `undefined` once the run ended, before a rate exists,
+	 * or while a module is still uncollected.
+	 */
+	readonly remaining: number | undefined
+	/** Lists each project's tallies, in first-seen order. */
+	readonly projects: readonly ProgressProject[]
+	/** Lists the cases still running while the run is live, and none after it ends. */
+	readonly running: readonly ProgressCase[]
+	/** Holds the first cancel, or `undefined` when the run recorded none. */
+	readonly cancel: ProgressCancel | undefined
+	/** Lists the failed cases in result order. */
+	readonly failures: readonly ProgressFailure[]
+	/** Holds the reporter's own time from the `end` line, or `undefined` while the run is live. */
+	readonly overhead: number | undefined
+	/** Lists the errors Vitest reported outside any case, empty while the run is live. */
+	readonly unhandled: readonly ProgressError[]
+}

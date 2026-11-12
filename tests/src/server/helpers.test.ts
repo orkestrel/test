@@ -1,9 +1,19 @@
 import {
+	buildProgressText,
 	countSocketHandles,
 	overrideTemporaryDirectory,
 	probePermissionHold,
+	PROGRESS_BAIL_EVENTS,
+	PROGRESS_LIVE_EVENTS,
+	PROGRESS_WALL,
 } from '../../setupServer.js'
 import type { Duplex } from 'node:stream'
+import type {
+	ProgressCancelEvent,
+	ProgressCaseEvent,
+	ProgressEndEvent,
+	ProgressInitEvent,
+} from '@src/server'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
@@ -35,20 +45,32 @@ import {
 import {
 	alignLoopClock,
 	chooseFiles,
+	computeProgress,
+	computeProgressRun,
 	createLink,
 	createLoopback,
 	createScratch,
 	destroyScratch,
+	extractProgressError,
+	extractProgressEvents,
+	filterProgressEvents,
 	hasScratchPath,
 	isExcluded,
 	isRunning,
 	matchesIdentity,
+	matchesPlannedCase,
+	normalizeProgressPath,
 	readCapture,
 	readErrorCode,
+	readFileSnapshot,
 	readIdentity,
 	readInventory,
 	readLoopClock,
+	readProgress,
 	removeTree,
+	renderDuration,
+	renderProgress,
+	renderProgressError,
 	requestUpgrade,
 	requireContained,
 	resolveContained,
@@ -1724,5 +1746,473 @@ describe('chooseFiles', () => {
 		} finally {
 			await fixture.browser.close()
 		}
+	})
+})
+
+describe('normalizeProgressPath', () => {
+	const root = resolve(tmpdir(), 'progress-root')
+
+	it('returns a path inside the root relative to it with forward slashes', () => {
+		expect(normalizeProgressPath(join(root, 'tests', 'a.test.ts'), root)).toBe('tests/a.test.ts')
+	})
+
+	it('reads a Vite /@fs/ path as the absolute path it names', () => {
+		const file = join(root, 'tests', 'a.test.ts').replaceAll('\\', '/')
+		const vite = file.startsWith('/') ? `/@fs${file}` : `/@fs/${file}`
+		expect(normalizeProgressPath(vite, root)).toBe('tests/a.test.ts')
+	})
+
+	it('returns a path outside the root unchanged', () => {
+		const outside = join(tmpdir(), 'elsewhere', 'b.ts')
+		expect(normalizeProgressPath(outside, root)).toBe(outside)
+		expect(normalizeProgressPath(root, join(root, 'tests'))).toBe(root)
+	})
+})
+
+describe('extractProgressError', () => {
+	const root = resolve(tmpdir(), 'progress-root')
+
+	it('keeps the name, the first message line, and the first frame outside node_modules', () => {
+		expect(
+			extractProgressError(
+				{
+					name: 'AssertionError',
+					message: 'expected 1 to be 2\r\n- Expected\n+ Received',
+					stacks: [
+						{
+							method: 'run',
+							file: join(root, 'node_modules', 'vitest', 'index.js'),
+							line: 1,
+							column: 1,
+						},
+						{ method: '', file: join(root, 'tests', 'a.test.ts'), line: 4, column: 9 },
+					],
+				},
+				root,
+			),
+		).toEqual({ message: 'AssertionError: expected 1 to be 2', location: 'tests/a.test.ts:4:9' })
+	})
+
+	it('names an unnamed error Error and strips terminal colour codes', () => {
+		expect(extractProgressError({ message: '\u001b[31mred\u001b[39m text' }, root)).toEqual({
+			message: 'Error: red text',
+		})
+	})
+
+	it('caps the message and falls back to the first frame when every frame is in node_modules', () => {
+		const error = extractProgressError(
+			{
+				message: 'x'.repeat(500),
+				stacks: [
+					{ method: '', file: join(root, 'node_modules', 'a.js'), line: 2, column: 3 },
+					{ method: '', file: join(root, 'node_modules', 'b.js'), line: 5, column: 6 },
+				],
+			},
+			root,
+		)
+		expect(error.message).toHaveLength(300)
+		expect(error.location).toBe('node_modules/a.js:2:3')
+	})
+
+	it('omits the location when the error carries no parsed stack', () => {
+		const error = extractProgressError({ name: 'TypeError', message: 'broken', stacks: [] }, root)
+		expect(error).toEqual({ message: 'TypeError: broken' })
+		expect(Object.hasOwn(error, 'location')).toBe(false)
+	})
+})
+
+describe('matchesPlannedCase', () => {
+	it('plans a case whose mode is run or only and no other', () => {
+		expect(matchesPlannedCase({ options: { mode: 'run' } })).toBe(true)
+		expect(matchesPlannedCase({ options: { mode: 'only' } })).toBe(true)
+		expect(matchesPlannedCase({ options: { mode: 'skip' } })).toBe(false)
+		expect(matchesPlannedCase({ options: { mode: 'todo' } })).toBe(false)
+	})
+})
+
+describe('readFileSnapshot', () => {
+	it('reads every byte a file holds and an empty file as no bytes', () => {
+		const scratch = createScratch({ files: { 'full.txt': 'abc', 'empty.txt': '' } })
+		try {
+			expect(readFileSnapshot(join(scratch.path, 'full.txt')).toString('utf8')).toBe('abc')
+			expect(readFileSnapshot(join(scratch.path, 'empty.txt'))).toHaveLength(0)
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('throws the host error for a missing file', () => {
+		const scratch = createScratch()
+		try {
+			expect(readErrorCode(captureError(() => readFileSnapshot(join(scratch.path, 'gone'))))).toBe(
+				'ENOENT',
+			)
+		} finally {
+			scratch.destroy()
+		}
+	})
+})
+
+describe('filterProgressEvents', () => {
+	it('keeps the lines of one event in order', () => {
+		expect(filterProgressEvents(PROGRESS_BAIL_EVENTS, 'cancel').map((event) => event.time)).toEqual(
+			[50_000, 50_600],
+		)
+		expect(filterProgressEvents(PROGRESS_BAIL_EVENTS, 'case').map((event) => event.id)).toEqual([
+			'a0',
+			'b0',
+			'b1',
+			'b2',
+		])
+		expect(filterProgressEvents([], 'end')).toEqual([])
+	})
+})
+
+describe('extractProgressEvents', () => {
+	it('decodes every complete line in file order', () => {
+		expect(extractProgressEvents(buildProgressText(PROGRESS_BAIL_EVENTS))).toEqual(
+			PROGRESS_BAIL_EVENTS,
+		)
+	})
+
+	it('skips a partial last line the writer is still appending', () => {
+		const complete = buildProgressText(PROGRESS_BAIL_EVENTS.slice(0, 2))
+		expect(extractProgressEvents(`${complete}{"event":"ca`)).toEqual(
+			PROGRESS_BAIL_EVENTS.slice(0, 2),
+		)
+		expect(extractProgressEvents('{"event":"init"')).toEqual([])
+		expect(extractProgressEvents('')).toEqual([])
+	})
+
+	it('decodes lines that end in a carriage return the same way', () => {
+		expect(
+			extractProgressEvents(buildProgressText(PROGRESS_LIVE_EVENTS).replaceAll('\n', '\r\n')),
+		).toEqual(PROGRESS_LIVE_EVENTS)
+	})
+
+	it('refuses a complete line that is not a progress event of this format version', () => {
+		expect(() => extractProgressEvents('{"event":"init"}\n')).toThrow(
+			'Progress record 1 is not a progress event: {"event":"init"}',
+		)
+		expect(() => extractProgressEvents('{\n')).toThrow('Invalid JSON on line 1')
+		expect(() =>
+			extractProgressEvents(
+				buildProgressText([{ event: 'init', version: 2, wall: 1, bail: 0, time: 0, pid: 1 }]),
+			),
+		).toThrow('Progress record 1 follows format version 2; this reader reads version 1')
+	})
+})
+
+describe('computeProgressRun', () => {
+	it('summarizes a finished bail run', () => {
+		const run = computeProgressRun(PROGRESS_BAIL_EVENTS, 0)
+		expect(run).toMatchObject({
+			pid: 7,
+			state: 'interrupted',
+			bail: 1,
+			elapsed: 54_000,
+			done: 4,
+			planned: 4,
+			collected: true,
+			remaining: undefined,
+			running: [],
+			cancel: { reason: 'test-failure', time: 50_000 },
+			overhead: 1.25,
+			unhandled: [],
+			projects: [
+				{
+					name: 'unit',
+					planned: 4,
+					done: 4,
+					passed: 0,
+					failed: 2,
+					skipped: 2,
+					modules: 2,
+					collected: 2,
+				},
+			],
+		})
+		// Four results since the first case started at 12.5 s, measured to the end at 54 s.
+		expect(run?.rate).toBeCloseTo((4 / 41_500) * 60_000, 6)
+	})
+
+	it('marks the causing failure FIRST when its result follows the first cancel', () => {
+		expect(computeProgressRun(PROGRESS_BAIL_EVENTS, 0)?.failures).toEqual([
+			{
+				project: 'unit',
+				name: 'fails first',
+				time: 50_500,
+				relation: 'first',
+				error: { message: 'Error: planted failure', location: 'fails.test.js:1:40' },
+			},
+			{
+				project: 'unit',
+				name: 'runs long',
+				time: 53_000,
+				relation: 'bail',
+				error: { message: 'Error: cut off' },
+			},
+		])
+	})
+
+	it('counts the failures up to the bail setting as causes, whatever the cancel order', () => {
+		const init: ProgressInitEvent = {
+			event: 'init',
+			version: 1,
+			wall: PROGRESS_WALL,
+			bail: 2,
+			time: 0,
+			pid: 3,
+		}
+		const failure: ProgressCaseEvent = {
+			event: 'case',
+			project: 'unit',
+			module: 'a.test.ts',
+			id: 'f0',
+			name: 'first',
+			state: 'failed',
+			duration: 10,
+			start: PROGRESS_WALL,
+			time: 10,
+			pid: 3,
+		}
+		const cancel: ProgressCancelEvent = {
+			event: 'cancel',
+			reason: 'test-failure',
+			wall: PROGRESS_WALL + 20,
+			time: 20,
+			pid: 3,
+		}
+		const run = computeProgressRun(
+			[
+				init,
+				failure,
+				cancel,
+				{ ...failure, id: 'f1', name: 'second' },
+				{ ...failure, id: 'f2', name: 'third', time: 30 },
+			],
+			0,
+		)
+		expect(run?.failures.map((entry) => entry.relation)).toEqual(['first', 'later', 'bail'])
+	})
+
+	it('marks a failure that ended after the cancel as AFTER-BAIL even when its line came first', () => {
+		const init: ProgressInitEvent = {
+			event: 'init',
+			version: 1,
+			wall: PROGRESS_WALL,
+			bail: 1,
+			time: 0,
+			pid: 3,
+		}
+		const failure: ProgressCaseEvent = {
+			event: 'case',
+			project: 'unit',
+			module: 'a.test.ts',
+			id: 'f0',
+			name: 'first',
+			state: 'failed',
+			duration: 5,
+			start: PROGRESS_WALL,
+			time: 10,
+			pid: 3,
+		}
+		const cancel: ProgressCancelEvent = {
+			event: 'cancel',
+			reason: 'test-failure',
+			wall: PROGRESS_WALL + 20,
+			time: 20,
+			pid: 3,
+		}
+		const late = computeProgressRun(
+			[init, failure, { ...failure, id: 'f1', name: 'second', duration: 25 }, cancel],
+			0,
+		)
+		const early = computeProgressRun(
+			[init, failure, { ...failure, id: 'f1', name: 'second', duration: 15 }, cancel],
+			0,
+		)
+		expect(late?.failures.map((entry) => entry.relation)).toEqual(['first', 'bail'])
+		expect(early?.failures.map((entry) => entry.relation)).toEqual(['first', 'later'])
+	})
+
+	it('reads a live run up to the reading time, with its running cases and no estimate while a module is uncollected', () => {
+		const run = computeProgressRun(PROGRESS_LIVE_EVENTS, PROGRESS_WALL + 1_000)
+		expect(run).toMatchObject({
+			pid: 9,
+			state: 'live',
+			bail: 0,
+			elapsed: 1_000,
+			done: 2,
+			planned: 4,
+			collected: false,
+			remaining: undefined,
+			running: [{ project: 'light', name: 'closes', duration: 690 }],
+			cancel: undefined,
+			failures: [],
+			overhead: undefined,
+			unhandled: [],
+		})
+		expect(
+			run?.projects.map((project) => [project.name, project.modules, project.collected]),
+		).toEqual([
+			['light', 1, 1],
+			['dark', 1, 0],
+		])
+		// Two results over the 900 ms since the first case started.
+		expect(run?.rate).toBeCloseTo((2 / 900) * 60_000, 6)
+	})
+
+	it('estimates the time left once every module is collected', () => {
+		const run = computeProgressRun(
+			PROGRESS_LIVE_EVENTS.map((event) =>
+				event.event === 'start' ? { ...event, modules: event.modules.slice(0, 1) } : event,
+			),
+			PROGRESS_WALL + 1_000,
+		)
+		expect(run?.collected).toBe(true)
+		// Two cases left at 2 results per 900 ms.
+		expect(run?.remaining).toBeCloseTo(900, 6)
+	})
+
+	it('reads a run that has written only its init line', () => {
+		expect(computeProgressRun(PROGRESS_LIVE_EVENTS.slice(0, 1), PROGRESS_WALL + 5)).toMatchObject({
+			elapsed: 5,
+			done: 0,
+			planned: 0,
+			collected: false,
+			rate: undefined,
+			remaining: undefined,
+			projects: [],
+		})
+	})
+
+	it('returns undefined for lines no init opens', () => {
+		expect(computeProgressRun(PROGRESS_LIVE_EVENTS.slice(1), 0)).toBeUndefined()
+		expect(computeProgressRun([], 0)).toBeUndefined()
+	})
+})
+
+describe('computeProgress', () => {
+	it('reads one run per writing process, each from its last init line', () => {
+		const second = PROGRESS_BAIL_EVENTS.map((event) => ({ ...event, pid: 8 }))
+		const runs = computeProgress(
+			[...PROGRESS_LIVE_EVENTS.slice(0, 4), ...second, ...PROGRESS_LIVE_EVENTS],
+			PROGRESS_WALL + 1_000,
+		)
+		expect(runs.map((run) => [run.pid, run.state, run.done])).toEqual([
+			[9, 'live', 2],
+			[8, 'interrupted', 4],
+		])
+		expect(computeProgress([], 0)).toEqual([])
+	})
+})
+
+describe('readProgress', () => {
+	it('reads a file once, leaving out a partial last line cut inside a character', () => {
+		const scratch = createScratch()
+		try {
+			const path = join(scratch.path, 'progress.jsonl')
+			const partial = Buffer.from('{"event":"ready","name":"é', 'utf8')
+			writeFileSync(
+				path,
+				Buffer.concat([
+					Buffer.from(buildProgressText(PROGRESS_BAIL_EVENTS), 'utf8'),
+					partial.subarray(0, partial.length - 1),
+				]),
+			)
+			expect(readProgress(path, 0)).toEqual([computeProgressRun(PROGRESS_BAIL_EVENTS, 0)])
+		} finally {
+			scratch.destroy()
+		}
+	})
+
+	it('measures a live run to the reading time it is given', () => {
+		const scratch = createScratch({
+			files: { 'live.jsonl': buildProgressText(PROGRESS_LIVE_EVENTS) },
+		})
+		try {
+			const [run] = readProgress(join(scratch.path, 'live.jsonl'), PROGRESS_WALL + 2_000)
+			expect(run?.elapsed).toBe(2_000)
+		} finally {
+			scratch.destroy()
+		}
+	})
+})
+
+describe('renderDuration', () => {
+	it('renders whole minutes and two-digit seconds', () => {
+		expect(renderDuration(0)).toBe('0m00s')
+		expect(renderDuration(59_999)).toBe('0m59s')
+		expect(renderDuration(65_400)).toBe('1m05s')
+		expect(renderDuration(3_600_000)).toBe('60m00s')
+	})
+
+	it('renders a negative or non-finite duration as zero', () => {
+		expect(renderDuration(-5)).toBe('0m00s')
+		expect(renderDuration(-0)).toBe('0m00s')
+		expect(renderDuration(Number.NaN)).toBe('0m00s')
+		expect(renderDuration(Number.POSITIVE_INFINITY)).toBe('0m00s')
+	})
+})
+
+describe('renderProgressError', () => {
+	it('renders the message, then the location when there is one', () => {
+		expect(renderProgressError({ message: 'Error: refused', location: 'a.test.ts:1:2' })).toEqual([
+			'    Error: refused',
+			'    at a.test.ts:1:2',
+		])
+		expect(renderProgressError({ message: 'Error: refused' })).toEqual(['    Error: refused'])
+		expect(renderProgressError(undefined)).toEqual(['    (no error recorded)'])
+	})
+})
+
+describe('renderProgress', () => {
+	it('renders a finished bail run with its cancel and labelled failures', () => {
+		expect(renderProgress(computeProgress(PROGRESS_BAIL_EVENTS, 0))).toBe(
+			[
+				'run 7 interrupted bail=1: 4/4 cases, elapsed 0m54s, rate 5.8/min, ETA -',
+				'  unit  4/4  passed 0 failed 2 skipped 2',
+				'  cancelled (test-failure) at 0m50s',
+				'  FIRST 0m50s  [unit] fails first',
+				'    Error: planted failure',
+				'    at fails.test.js:1:40',
+				'  AFTER-BAIL 0m53s  [unit] runs long',
+				'    Error: cut off',
+				'  reporter overhead 1.25 ms',
+			].join('\n'),
+		)
+	})
+
+	it('renders a live run with its open total, uncollected module, and running case', () => {
+		expect(renderProgress(computeProgress(PROGRESS_LIVE_EVENTS, PROGRESS_WALL + 1_000))).toBe(
+			[
+				'run 9 live full: 2/4+ cases, elapsed 0m01s, rate 133.3/min, ETA -',
+				'  light  2/4  passed 2 failed 0 skipped 0',
+				'  dark   0/0  passed 0 failed 0 skipped 0  (0/1 modules collected)',
+				'  running 0m00s  [light] closes',
+			].join('\n'),
+		)
+	})
+
+	it('renders an unhandled error and nothing for no runs', () => {
+		const end: ProgressEndEvent = {
+			event: 'end',
+			reason: 'failed',
+			overhead: 0.5,
+			unhandled: [{ message: 'Error: leaked' }],
+			time: 70_000,
+			pid: 9,
+		}
+		const ended = [...PROGRESS_LIVE_EVENTS.slice(0, 1), end]
+		expect(renderProgress(computeProgress(ended, 0))).toBe(
+			[
+				'run 9 failed full: 0/0+ cases, elapsed 1m10s, rate -, ETA -',
+				'  reporter overhead 0.5 ms',
+				'  UNHANDLED',
+				'    Error: leaked',
+			].join('\n'),
+		)
+		expect(renderProgress([])).toBe('')
 	})
 })

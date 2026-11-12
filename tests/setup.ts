@@ -98,6 +98,7 @@ export const ROUTED_FENCES: Readonly<Record<string, string>> = Object.freeze({
 	'Take an authored-class census': 'tests/src/browser/sheets/helpers.test.ts',
 	'Control a reading before you trust it': 'tests/src/browser/colors/helpers.test.ts',
 	'Withhold a store the way a host does': 'tests/src/browser/journeys/factories.test.ts',
+	'Read a long run while it runs': 'tests/src/server/reporters/ProgressReporter.test.ts',
 })
 
 /**

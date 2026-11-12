@@ -1,6 +1,8 @@
 import type { PlaywrightProviderOptions } from '@vitest/browser-playwright'
 import type { SpawnSyncReturns } from 'node:child_process'
 import type { TestContext } from 'vitest'
+import type { Reporter } from 'vitest/node'
+import type { ProgressEvent } from '@src/server'
 import type { DistributionResolution, Format } from './setup.js'
 import { attempt, isArray, isObject, isString } from '@orkestrel/contract'
 import { spawnSync } from 'node:child_process'
@@ -34,6 +36,7 @@ import { chromium } from 'playwright'
 import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
 import { invokeUnchecked, readProperty, requireValue } from '@src/core'
 import {
+	createScratch,
 	supportsBytes,
 	supportsCase,
 	supportsDirectoryLinks,
@@ -924,3 +927,277 @@ export function requireStage(
 	}
 	return stage
 }
+
+/**
+ * Holds the test modules a nested progress run executes. The `waits` suite's first case writes a
+ * flag when it starts and then runs on; `fails first` waits for that flag and throws, so a bail
+ * cancels the run while the suite's first case is still running and cuts off the cases after it.
+ */
+export const PROGRESS_MODULES: Readonly<Record<string, string>> = Object.freeze({
+	'fails.test.js': [
+		"import { existsSync, watch } from 'node:fs'",
+		'',
+		"it('fails first', async () => {",
+		"\tconst flag = new URL('./started.flag', import.meta.url)",
+		'\tawait new Promise((done) => {',
+		"\t\tconst watcher = watch(new URL('.', import.meta.url), () => {",
+		'\t\t\tif (existsSync(flag)) done(watcher.close())',
+		'\t\t})',
+		'\t\tif (existsSync(flag)) done(watcher.close())',
+		'\t})',
+		"\tthrow new Error('planted failure')",
+		'})',
+		'',
+	].join('\n'),
+	'waits.test.js': [
+		"import { writeFileSync } from 'node:fs'",
+		'',
+		"describe('waits', () => {",
+		"\tit('runs long', async () => {",
+		"\t\twriteFileSync(new URL('./started.flag', import.meta.url), '')",
+		'\t\tawait new Promise((done) => setTimeout(done, 400))',
+		'\t})',
+		"\tit('follows', () => {})",
+		"\tit('trails', () => {})",
+		'})',
+		"it('kept by the filter', () => {})",
+		'',
+	].join('\n'),
+})
+
+/** Configures one nested Vitest run a progress proof drives. */
+export interface ProgressFixtureOptions {
+	/** Lists the reporters the nested run uses. */
+	readonly reporters: ReadonlyArray<'dot' | 'json' | Reporter>
+	/** Holds the nested run's `bail` setting. */
+	readonly bail?: number
+	/** Holds the nested run's case-name filter. */
+	readonly pattern?: string
+	/** If `true`, the nested run also loads a config file through the module runner. */
+	readonly loader?: boolean
+	/** If `false`, the nested run names no progress file. Default: `true`. */
+	readonly named?: boolean
+}
+
+/** Holds what one nested progress run wrote. */
+export interface ProgressFixtureResult {
+	/** Holds the progress file text, or `undefined` when no file was written. */
+	readonly progress: string | undefined
+	/** Holds the JSON report text, or `undefined` when no report was written. */
+	readonly report: string | undefined
+}
+
+/**
+ * Records the progress file and JSON report one nested Vitest run writes over `PROGRESS_MODULES`.
+ *
+ * @remarks The run sits in its own scratch directory, uses Vitest globals so the modules import
+ * nothing, and restores the process exit code a failing run sets.
+ */
+export async function recordProgressRun(
+	options: ProgressFixtureOptions,
+): Promise<ProgressFixtureResult> {
+	const scratch = createScratch({
+		prefix: 'progress-',
+		files: options.loader
+			? { ...PROGRESS_MODULES, 'vitest.config.mjs': 'export default { test: { globals: true } }\n' }
+			: PROGRESS_MODULES,
+	})
+	const exit = process.exitCode
+	try {
+		const { createVitest } = await import('vitest/node')
+		const vitest = await createVitest('test', {
+			root: scratch.path,
+			config: options.loader ? 'vitest.config.mjs' : false,
+			...(options.loader ? { configLoader: 'runner' } : {}),
+			watch: false,
+			globals: true,
+			include: ['*.test.js'],
+			reporters: [...options.reporters],
+			outputFile:
+				options.named === false
+					? { json: 'report.json' }
+					: { progress: 'progress.jsonl', json: 'report.json' },
+			...(options.bail === undefined ? {} : { bail: options.bail }),
+			...(options.pattern === undefined ? {} : { testNamePattern: options.pattern }),
+		})
+		try {
+			await vitest.start()
+		} finally {
+			await vitest.close()
+		}
+		return { progress: scratch.read('progress.jsonl'), report: scratch.read('report.json') }
+	} finally {
+		process.exitCode = exit
+		scratch.destroy()
+	}
+}
+
+/**
+ * Builds the text a progress file holds for a list of events, one JSON line each.
+ *
+ * @param events - The events to write.
+ * @returns The lines, each ending in a line feed.
+ */
+export function buildProgressText(events: readonly ProgressEvent[]): string {
+	return events.map((event) => `${JSON.stringify(event)}\n`).join('')
+}
+
+/** Holds the wall-clock origin the progress fixtures' `init` lines carry. */
+export const PROGRESS_WALL = 1_000_000
+
+/**
+ * Holds a finished bail run in which the first cancel line precedes the result of the failure that
+ * caused it, a second failure arrives after the cancel, and two cases report a bail-cut skip.
+ */
+export const PROGRESS_BAIL_EVENTS: readonly ProgressEvent[] = Object.freeze([
+	{ event: 'init', version: 1, wall: PROGRESS_WALL, bail: 1, time: 0, pid: 7 },
+	{
+		event: 'start',
+		modules: [
+			{ project: 'unit', module: 'fails.test.js' },
+			{ project: 'unit', module: 'waits.test.js' },
+		],
+		time: 200,
+		pid: 7,
+	},
+	{
+		event: 'collected',
+		project: 'unit',
+		module: 'fails.test.js',
+		planned: 1,
+		errors: [],
+		time: 10_000,
+		pid: 7,
+	},
+	{
+		event: 'collected',
+		project: 'unit',
+		module: 'waits.test.js',
+		planned: 3,
+		errors: [],
+		time: 11_000,
+		pid: 7,
+	},
+	{ event: 'ready', project: 'unit', id: 'a0', name: 'fails first', time: 12_000, pid: 7 },
+	{ event: 'ready', project: 'unit', id: 'b0', name: 'runs long', time: 12_100, pid: 7 },
+	{ event: 'cancel', reason: 'test-failure', wall: PROGRESS_WALL + 50_000, time: 50_000, pid: 7 },
+	{
+		event: 'case',
+		project: 'unit',
+		module: 'fails.test.js',
+		id: 'a0',
+		name: 'fails first',
+		state: 'failed',
+		duration: 38_000,
+		start: PROGRESS_WALL + 12_000,
+		errors: [{ message: 'Error: planted failure', location: 'fails.test.js:1:40' }],
+		time: 50_500,
+		pid: 7,
+	},
+	{ event: 'cancel', reason: 'test-failure', wall: PROGRESS_WALL + 50_000, time: 50_600, pid: 7 },
+	{
+		event: 'case',
+		project: 'unit',
+		module: 'waits.test.js',
+		id: 'b0',
+		name: 'runs long',
+		state: 'failed',
+		duration: 40_000,
+		start: PROGRESS_WALL + 12_100,
+		errors: [{ message: 'Error: cut off' }],
+		time: 53_000,
+		pid: 7,
+	},
+	{
+		event: 'case',
+		project: 'unit',
+		module: 'waits.test.js',
+		id: 'b1',
+		name: 'follows',
+		state: 'skipped',
+		time: 53_100,
+		pid: 7,
+	},
+	{
+		event: 'case',
+		project: 'unit',
+		module: 'waits.test.js',
+		id: 'b2',
+		name: 'trails',
+		state: 'skipped',
+		time: 53_200,
+		pid: 7,
+	},
+	{
+		event: 'module',
+		project: 'unit',
+		module: 'fails.test.js',
+		state: 'failed',
+		duration: 40_000,
+		time: 53_300,
+		pid: 7,
+	},
+	{
+		event: 'module',
+		project: 'unit',
+		module: 'waits.test.js',
+		state: 'failed',
+		duration: 42_000,
+		time: 53_400,
+		pid: 7,
+	},
+	{ event: 'end', reason: 'interrupted', overhead: 1.25, unhandled: [], time: 54_000, pid: 7 },
+])
+
+/**
+ * Holds a live full run over two projects: two cases passed in `light`, one is running, and the
+ * `dark` project's module is not yet collected.
+ */
+export const PROGRESS_LIVE_EVENTS: readonly ProgressEvent[] = Object.freeze([
+	{ event: 'init', version: 1, wall: PROGRESS_WALL, bail: 0, time: 0, pid: 9 },
+	{
+		event: 'start',
+		modules: [
+			{ project: 'light', module: 'journey.test.ts' },
+			{ project: 'dark', module: 'journey.test.ts' },
+		],
+		time: 10,
+		pid: 9,
+	},
+	{
+		event: 'collected',
+		project: 'light',
+		module: 'journey.test.ts',
+		planned: 4,
+		errors: [],
+		time: 50,
+		pid: 9,
+	},
+	{ event: 'ready', project: 'light', id: 'c0', name: 'opens', time: 100, pid: 9 },
+	{
+		event: 'case',
+		project: 'light',
+		module: 'journey.test.ts',
+		id: 'c0',
+		name: 'opens',
+		state: 'passed',
+		duration: 100,
+		start: PROGRESS_WALL + 100,
+		time: 200,
+		pid: 9,
+	},
+	{ event: 'ready', project: 'light', id: 'c1', name: 'saves', time: 200, pid: 9 },
+	{
+		event: 'case',
+		project: 'light',
+		module: 'journey.test.ts',
+		id: 'c1',
+		name: 'saves',
+		state: 'passed',
+		duration: 100,
+		start: PROGRESS_WALL + 200,
+		time: 300,
+		pid: 9,
+	},
+	{ event: 'ready', project: 'light', id: 'c2', name: 'closes', time: 310, pid: 9 },
+])

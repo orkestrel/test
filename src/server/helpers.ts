@@ -2,9 +2,15 @@ import type { BigIntStats } from 'node:fs'
 import type { Socket } from 'node:net'
 import type { ChooserRequest, WaitOptions } from '@src/core'
 import type { FileChooser, Page } from 'playwright'
+import type { SerializedError } from 'vitest/node'
 import type {
 	ChooserContext,
 	InventoryOptions,
+	ProgressError,
+	ProgressEvent,
+	ProgressFailure,
+	ProgressProject,
+	ProgressRun,
 	ScratchIdentity,
 	ScratchInterface,
 	UpgradeOptions,
@@ -13,11 +19,15 @@ import type {
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import {
+	closeSync,
+	fstatSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	openSync,
 	readdirSync,
 	readFileSync,
+	readSync,
 	realpathSync,
 	rmSync,
 	statSync,
@@ -29,13 +39,18 @@ import { request as requestHTTP } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stripVTControlCharacters } from 'node:util'
 import { isNumber, isObject, isString } from '@orkestrel/contract'
-import { checkBounds, waitForDelay, waitForEvent } from '@src/core'
+import { checkBounds, decodeJSONLines, waitForDelay, waitForEvent } from '@src/core'
 import {
+	PROGRESS_LABELS,
+	PROGRESS_MESSAGE_LIMIT,
+	PROGRESS_VERSION,
 	REMOVE_TREE_MAX_ATTEMPTS,
 	REMOVE_TREE_RETRY_DELAY_MS,
 	REMOVE_TREE_RETRYABLE_CODES,
 } from './constants.js'
+import { isProgressEvent } from './validators.js'
 
 /**
  * Reads the lowercase hexadecimal SHA-256 digest of a captured file's bytes.
@@ -971,4 +986,429 @@ export async function chooseFiles(context: ChooserContext, request: ChooserReque
 		controller.abort()
 		await target.dispose()
 	}
+}
+
+/**
+ * Normalizes a module or stack-frame path to the form a progress line carries.
+ *
+ * @param file - The path Vitest reports, a Vite `/@fs/` path included.
+ * @param root - The run's root directory.
+ * @returns The path relative to the root with `/` separators, or the path unchanged when it resolves
+ * outside the root.
+ *
+ * @example
+ * ```ts
+ * import { normalizeProgressPath } from '@orkestrel/test/server'
+ *
+ * normalizeProgressPath('/work/tests/a.test.ts', '/work') // 'tests/a.test.ts'
+ * normalizeProgressPath('/elsewhere/b.ts', '/work') // '/elsewhere/b.ts'
+ * ```
+ */
+export function normalizeProgressPath(file: string, root: string): string {
+	const path = relative(root, file.replace(/^\/@fs\//u, '')).replaceAll('\\', '/')
+	return path === '..' || path.startsWith('../') || isAbsolute(path) ? file : path
+}
+
+/**
+ * Extracts the message line and location a progress line keeps from one Vitest error.
+ *
+ * @param error - The serialized error Vitest reports.
+ * @param root - The run's root directory, which the location is relative to.
+ * @returns The error's name and first message line, capped at `PROGRESS_MESSAGE_LIMIT` characters,
+ * and the first stack frame outside `node_modules`, or the first frame when every frame sits there.
+ *
+ * @example
+ * ```ts
+ * import { extractProgressError } from '@orkestrel/test/server'
+ *
+ * extractProgressError(
+ * 	{
+ * 		name: 'AssertionError',
+ * 		message: 'expected 1 to be 2\nfull diff',
+ * 		stacks: [{ method: '', file: '/work/tests/a.test.ts', line: 4, column: 9 }],
+ * 	},
+ * 	'/work',
+ * )
+ * // { message: 'AssertionError: expected 1 to be 2', location: 'tests/a.test.ts:4:9' }
+ * ```
+ */
+export function extractProgressError(error: SerializedError, root: string): ProgressError {
+	const [line = ''] = stripVTControlCharacters(`${error.name ?? 'Error'}: ${error.message}`).split(
+		/\r?\n/u,
+	)
+	const message = line.slice(0, PROGRESS_MESSAGE_LIMIT)
+	const frame =
+		error.stacks?.find((stack) => !stack.file.includes('node_modules')) ?? error.stacks?.[0]
+	return frame === undefined
+		? { message }
+		: {
+				message,
+				location: `${normalizeProgressPath(frame.file, root)}:${frame.line}:${frame.column}`,
+			}
+}
+
+/**
+ * Reports whether a collected case is one the run plans to report.
+ *
+ * @param test - A Vitest case, or any value carrying its `options.mode`.
+ * @returns True if the case's mode is `run` or `only`; false for a case that `skip`, `todo`, or a
+ * name filter removed.
+ *
+ * @example
+ * ```ts
+ * import { matchesPlannedCase } from '@orkestrel/test/server'
+ *
+ * matchesPlannedCase({ options: { mode: 'run' } }) // true
+ * matchesPlannedCase({ options: { mode: 'skip' } }) // false
+ * ```
+ */
+export function matchesPlannedCase(test: { readonly options: { readonly mode: string } }): boolean {
+	return test.options.mode === 'run' || test.options.mode === 'only'
+}
+
+/**
+ * Reads the bytes a file holds when it is opened, leaving out every byte appended during the read.
+ *
+ * @param path - The file to read.
+ * @returns The bytes up to the length the file had at open.
+ * @throws Thrown when the host refuses to open, inspect, or read the file.
+ *
+ * @example
+ * ```ts
+ * import { writeFileSync } from 'node:fs'
+ * import { readFileSnapshot } from '@orkestrel/test/server'
+ *
+ * writeFileSync('progress.jsonl', '{"event":"init"}\n')
+ * readFileSnapshot('progress.jsonl').length // 17
+ * ```
+ */
+export function readFileSnapshot(path: string): Buffer {
+	const descriptor = openSync(path, 'r')
+	try {
+		const bytes = Buffer.alloc(fstatSync(descriptor).size)
+		return bytes.subarray(0, readSync(descriptor, bytes, 0, bytes.length, 0))
+	} finally {
+		closeSync(descriptor)
+	}
+}
+
+/**
+ * Filters the progress lines of one event.
+ *
+ * @typeParam TName - The event to keep.
+ * @param events - The lines to filter.
+ * @param name - The event to keep.
+ * @returns The matching lines in order.
+ *
+ * @example
+ * ```ts
+ * import { filterProgressEvents } from '@orkestrel/test/server'
+ *
+ * filterProgressEvents(
+ * 	[
+ * 		{ event: 'cancel', reason: 'test-failure', wall: 1, time: 2, pid: 3 },
+ * 		{ event: 'ready', project: 'unit', id: 'a', name: 'adds', time: 3, pid: 3 },
+ * 	],
+ * 	'cancel',
+ * ).length // 1
+ * ```
+ */
+export function filterProgressEvents<TName extends ProgressEvent['event']>(
+	events: readonly ProgressEvent[],
+	name: TName,
+): ReadonlyArray<Extract<ProgressEvent, { readonly event: TName }>> {
+	return events.filter(
+		(event): event is Extract<ProgressEvent, { readonly event: TName }> => event.event === name,
+	)
+}
+
+/**
+ * Extracts the progress lines a text holds, skipping a partial last line.
+ *
+ * @param text - Progress file text, live or finished.
+ * @returns Each complete line's event, in file order. The text after the last line feed is a line
+ * the writer can still be appending, so it is never decoded.
+ * @throws Thrown when a complete line is not valid JSON, is not a progress event, or is an `init`
+ * line of another format version.
+ *
+ * @example
+ * ```ts
+ * import { extractProgressEvents } from '@orkestrel/test/server'
+ *
+ * extractProgressEvents(
+ * 	'{"event":"cancel","reason":"test-failure","wall":1,"time":2,"pid":3}\n{"event":"ca',
+ * ).length // 1
+ * ```
+ */
+export function extractProgressEvents(text: string): readonly ProgressEvent[] {
+	return decodeJSONLines(text.slice(0, text.lastIndexOf('\n') + 1)).map((value, index) => {
+		if (!isProgressEvent(value)) {
+			throw new Error(
+				`Progress record ${index + 1} is not a progress event: ${JSON.stringify(value)?.slice(0, 200)}`,
+			)
+		}
+		if (value.event === 'init' && value.version !== PROGRESS_VERSION) {
+			throw new Error(
+				`Progress record ${index + 1} follows format version ${value.version}; this reader reads version ${PROGRESS_VERSION}`,
+			)
+		}
+		return value
+	})
+}
+
+/**
+ * Computes where the run one process wrote stands, from its last `init` line on.
+ *
+ * @param events - The lines one process wrote, in file order.
+ * @param now - The wall-clock time of the reading, in milliseconds since the Unix epoch, which a
+ * live run's elapsed time is measured to.
+ * @returns The run, or `undefined` when no `init` line opens it.
+ *
+ * @example
+ * ```ts
+ * import { computeProgressRun } from '@orkestrel/test/server'
+ *
+ * computeProgressRun(
+ * 	[{ event: 'init', version: 1, wall: 1_000, bail: 1, time: 0, pid: 7 }],
+ * 	4_000,
+ * )?.elapsed // 3000
+ * ```
+ */
+export function computeProgressRun(
+	events: readonly ProgressEvent[],
+	now: number,
+): ProgressRun | undefined {
+	const begin = events.findLastIndex((event) => event.event === 'init')
+	const init = events[begin]
+	if (init?.event !== 'init') return undefined
+	const own = events.slice(begin)
+	const modules = filterProgressEvents(own, 'start').flatMap((start) => start.modules)
+	const collections = filterProgressEvents(own, 'collected')
+	const cases = filterProgressEvents(own, 'case')
+	const cancel = filterProgressEvents(own, 'cancel').at(0)
+	const end = filterProgressEvents(own, 'end').at(0)
+	const clock = end?.time ?? now - init.wall + init.time
+	const names = [
+		...new Set([
+			...modules.map((entry) => entry.project),
+			...collections.map((entry) => entry.project),
+			...cases.map((entry) => entry.project),
+		]),
+	]
+	const projects = names.map((name): ProgressProject => {
+		const results = cases.filter((entry) => entry.project === name)
+		const collected = collections.filter((entry) => entry.project === name)
+		return {
+			name,
+			planned: collected.reduce((total, entry) => total + entry.planned, 0),
+			done: results.length,
+			passed: results.filter((entry) => entry.state === 'passed').length,
+			failed: results.filter((entry) => entry.state === 'failed').length,
+			skipped: results.filter((entry) => entry.state === 'skipped').length,
+			modules: modules.filter((entry) => entry.project === name).length,
+			collected: collected.length,
+		}
+	})
+	const planned = projects.reduce((total, project) => total + project.planned, 0)
+	const collected =
+		modules.length > 0 && projects.every((project) => project.collected >= project.modules)
+	const first = cases.at(0)
+	const span = first === undefined ? 0 : clock - (first.time - (first.duration ?? 0))
+	const rate = cases.length > 0 && span > 0 ? (cases.length / span) * 60_000 : undefined
+	const finished = new Set(cases.map((entry) => entry.id))
+	const position = cancel === undefined ? -1 : own.indexOf(cancel)
+	const failures = own
+		.flatMap((event, index) =>
+			event.event === 'case' && event.state === 'failed' ? [{ event, index }] : [],
+		)
+		.map(({ event, index }, order): ProgressFailure => ({
+			project: event.project,
+			name: event.name,
+			time: event.time,
+			// Vitest can write the cancel before the result of the failure that caused it, so the
+			// failures up to the bail setting are causes whatever their order against the cancel.
+			relation:
+				order === 0
+					? 'first'
+					: order < init.bail ||
+						  cancel === undefined ||
+						  (index < position && (event.start ?? 0) + (event.duration ?? 0) <= cancel.wall)
+						? 'later'
+						: 'bail',
+			error: event.errors?.at(0),
+		}))
+	return {
+		pid: init.pid,
+		state: end?.reason ?? 'live',
+		bail: init.bail,
+		elapsed: clock,
+		done: cases.length,
+		planned,
+		collected,
+		rate,
+		remaining:
+			end === undefined && collected && rate !== undefined
+				? Math.max(0, ((planned - cases.length) / rate) * 60_000)
+				: undefined,
+		projects,
+		running:
+			end === undefined
+				? filterProgressEvents(own, 'ready')
+						.filter((ready) => !finished.has(ready.id))
+						.map((ready) => ({
+							project: ready.project,
+							name: ready.name,
+							duration: Math.max(0, clock - ready.time),
+						}))
+				: [],
+		cancel: cancel === undefined ? undefined : { reason: cancel.reason, time: cancel.time },
+		failures,
+		overhead: end?.overhead,
+		unhandled: end?.unhandled ?? [],
+	}
+}
+
+/**
+ * Computes where every run a progress file holds stands, one run per writing process.
+ *
+ * @param events - The file's lines, in file order.
+ * @param now - The wall-clock time of the reading, in milliseconds since the Unix epoch.
+ * @returns One run per process id in first-seen order, each from that process's last `init` line on.
+ *
+ * @example
+ * ```ts
+ * import { computeProgress } from '@orkestrel/test/server'
+ *
+ * computeProgress(
+ * 	[
+ * 		{ event: 'init', version: 1, wall: 1_000, bail: 0, time: 0, pid: 7 },
+ * 		{ event: 'init', version: 1, wall: 1_000, bail: 0, time: 0, pid: 8 },
+ * 	],
+ * 	2_000,
+ * ).map((run) => run.pid) // [7, 8]
+ * ```
+ */
+export function computeProgress(
+	events: readonly ProgressEvent[],
+	now: number,
+): readonly ProgressRun[] {
+	return [...new Set(events.map((event) => event.pid))].flatMap((pid) => {
+		const run = computeProgressRun(
+			events.filter((event) => event.pid === pid),
+			now,
+		)
+		return run === undefined ? [] : [run]
+	})
+}
+
+/**
+ * Reads where every run a progress file holds stands, live or finished.
+ *
+ * @param path - The progress file.
+ * @param now - The wall-clock time of the reading. Default: `Date.now()`.
+ * @returns One run per writing process.
+ * @throws Thrown when the host refuses to read the file, or when a complete line is not a progress
+ * event of this format version.
+ * @remarks Reads the file once, up to its length at open, decodes complete lines only, holds no
+ * timer, and writes nothing.
+ *
+ * @example
+ * ```ts
+ * import { readProgress } from '@orkestrel/test/server'
+ *
+ * const [run] = readProgress('tmp/runs/journey.progress.jsonl')
+ * run?.state // 'live' while the run writes, then its end reason
+ * ```
+ */
+export function readProgress(path: string, now: number = Date.now()): readonly ProgressRun[] {
+	const bytes = readFileSnapshot(path)
+	return computeProgress(
+		extractProgressEvents(bytes.subarray(0, bytes.lastIndexOf(0x0a) + 1).toString('utf8')),
+		now,
+	)
+}
+
+/**
+ * Renders a duration as whole minutes and seconds.
+ *
+ * @param milliseconds - The duration. A negative or non-finite duration renders as zero.
+ * @returns The duration as `<minutes>m<seconds>s`, the seconds padded to two digits.
+ *
+ * @example
+ * ```ts
+ * import { renderDuration } from '@orkestrel/test/server'
+ *
+ * renderDuration(65_400) // '1m05s'
+ * renderDuration(Number.NaN) // '0m00s'
+ * ```
+ */
+export function renderDuration(milliseconds: number): string {
+	const seconds = Number.isFinite(milliseconds) ? Math.max(0, Math.floor(milliseconds / 1000)) : 0
+	return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`
+}
+
+/**
+ * Renders the indented lines that show one progress error.
+ *
+ * @param error - The error, or `undefined` for a failure that carried none.
+ * @returns The message line, then an `at` line when the error has a location.
+ *
+ * @example
+ * ```ts
+ * import { renderProgressError } from '@orkestrel/test/server'
+ *
+ * renderProgressError({ message: 'Error: refused', location: 'tests/a.test.ts:4:9' })
+ * // ['    Error: refused', '    at tests/a.test.ts:4:9']
+ * ```
+ */
+export function renderProgressError(error: ProgressError | undefined): readonly string[] {
+	if (error === undefined) return ['    (no error recorded)']
+	return error.location === undefined
+		? [`    ${error.message}`]
+		: [`    ${error.message}`, `    at ${error.location}`]
+}
+
+/**
+ * Renders progress runs as the text a person reads mid-run.
+ *
+ * @param runs - The runs to render.
+ * @returns One block per run: a summary line with done against planned cases, elapsed time, rate, and
+ * estimate; a line per project; the running cases; the cancel; each failure labelled `FIRST`,
+ * `AFTER-BAIL`, or `FAILED` with its first message line and location; and, after the end, the
+ * reporter's overhead and each unhandled error.
+ *
+ * @example
+ * ```ts
+ * import { readProgress, renderProgress } from '@orkestrel/test/server'
+ *
+ * renderProgress(readProgress('tmp/runs/journey.progress.jsonl'))
+ * // 'run 37252 interrupted bail=1: 52/52 cases, elapsed 0m51s, rate 61.2/min, ETA -\n…'
+ * ```
+ */
+export function renderProgress(runs: readonly ProgressRun[]): string {
+	return runs
+		.map((run) => {
+			const width = Math.max(0, ...run.projects.map((project) => project.name.length))
+			return [
+				`run ${run.pid} ${run.state} ${run.bail === 0 ? 'full' : `bail=${run.bail}`}: ${run.done}/${run.planned}${run.collected ? '' : '+'} cases, elapsed ${renderDuration(run.elapsed)}, rate ${run.rate === undefined ? '-' : `${run.rate.toFixed(1)}/min`}, ETA ${run.remaining === undefined ? '-' : renderDuration(run.remaining)}`,
+				...run.projects.map(
+					(project) =>
+						`  ${project.name.padEnd(width)}  ${project.done}/${project.planned}  passed ${project.passed} failed ${project.failed} skipped ${project.skipped}${project.collected < project.modules ? `  (${project.collected}/${project.modules} modules collected)` : ''}`,
+				),
+				...run.running.map(
+					(entry) =>
+						`  running ${renderDuration(entry.duration)}  [${entry.project}] ${entry.name}`,
+				),
+				...(run.cancel === undefined
+					? []
+					: [`  cancelled (${run.cancel.reason}) at ${renderDuration(run.cancel.time)}`]),
+				...run.failures.flatMap((failure) => [
+					`  ${PROGRESS_LABELS[failure.relation]} ${renderDuration(failure.time)}  [${failure.project}] ${failure.name}`,
+					...renderProgressError(failure.error),
+				]),
+				...(run.overhead === undefined ? [] : [`  reporter overhead ${run.overhead} ms`]),
+				...run.unhandled.flatMap((error) => ['  UNHANDLED', ...renderProgressError(error)]),
+			].join('\n')
+		})
+		.join('\n')
 }

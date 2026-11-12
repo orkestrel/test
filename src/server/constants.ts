@@ -1,3 +1,5 @@
+import type { ProgressRelation } from './types.js'
+
 /**
  * Caps the attempts `removeTree` makes before rethrowing a retryable removal error.
  */
@@ -16,3 +18,22 @@ export const REMOVE_TREE_RETRYABLE_CODES: readonly string[] = Object.freeze([
 	'ENOTEMPTY',
 	'EPERM',
 ])
+
+/**
+ * Names the format version a progress file's `init` line carries; a reader refuses any other.
+ */
+export const PROGRESS_VERSION = 1
+
+/**
+ * Caps the characters a progress error message keeps.
+ */
+export const PROGRESS_MESSAGE_LIMIT = 300
+
+/**
+ * Names the label a rendered progress reading prints for each failure relation.
+ */
+export const PROGRESS_LABELS: Readonly<Record<ProgressRelation, string>> = Object.freeze({
+	first: 'FIRST',
+	bail: 'AFTER-BAIL',
+	later: 'FAILED',
+})
