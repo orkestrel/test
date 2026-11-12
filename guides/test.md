@@ -1681,7 +1681,7 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
    them is removed anyway; whoever swaps it runs as the same uid, which is the population the threat
    model already declines to defend against. And birth time is the host's to supply. This host
    supplies a real one — the allocation's `birthtimeNs` does not move when files are written into
-   it, while its `ctimeMs` does — so `destroy()` is sound here. Where a host has none, libuv reports
+   it, while its `ctimeNs` does — so `destroy()` is sound here. Where a host has none, libuv reports
    `ctime` in its place, the first seeded write moves it, and `destroy()` takes its early return. It
    returns `void`, so that refusal is indistinguishable from success and the allocation leaks
    silently.
@@ -4485,7 +4485,7 @@ Each entry names the contracts its file proves. The test names carry the cases.
   `ensure` takes an empty directory, every missing parent, and a repeated call. `link` takes
   traversal through a planted link, the final segment `has` reports rather than follows, and the
   `EEXIST` an occupied final segment throws. `remove` takes a file beside a kept
-  sibling, an empty directory, a populated subtree, a missing target, an ancestor link back to the
+  sibling, a file written immediately after allocation, an empty directory, a populated subtree, a missing target, an ancestor link back to the
   allocation with every seeded file read back afterwards, a final link whose destination is read back
   afterwards, a sibling directory reached through that same ancestor link, a target outside the root with
   the file outside left intact, the root refused as `''`, as `'.'`, and as its absolute path, a
