@@ -75,7 +75,7 @@ export class ProgressReporter implements Reporter {
 		this.#measure(() => {
 			this.#write({
 				event: 'start',
-				modules: specifications.map((specification) => ({
+				specifications: specifications.map((specification) => ({
 					project: specification.project.name,
 					module: this.#relative(specification.moduleId),
 				})),

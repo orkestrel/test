@@ -257,8 +257,11 @@ export interface ProgressInitEvent extends ProgressStamp {
 export interface ProgressStartEvent extends ProgressStamp {
 	/** Names the line's event. */
 	readonly event: 'start'
-	/** Lists every module the run starts, in Vitest's order. */
-	readonly modules: readonly ProgressModule[]
+	/**
+	 * Lists every module the run starts, in Vitest's order, mirroring the specifications Vitest passes
+	 * `onTestRunStart`.
+	 */
+	readonly specifications: readonly ProgressModule[]
 }
 
 /** Represents the line a reporter writes when Vitest collects one module's cases. */
@@ -408,17 +411,19 @@ export interface ProgressCase {
 	readonly duration: number
 }
 
-/** Represents one failed case in a progress reading. */
+/** Represents one failed case, or one module that failed to collect, in a progress reading. */
 export interface ProgressFailure {
 	/** Names the Vitest project. */
 	readonly project: string
-	/** Holds the case's full name. */
-	readonly name: string
-	/** Holds the milliseconds since the reporter started at which the result was written. */
+	/** Holds the module path relative to the run's root. */
+	readonly module: string
+	/** Holds the case's full name, or `undefined` for a module that failed to collect. */
+	readonly name: string | undefined
+	/** Holds the milliseconds since the reporter started at which the line was written. */
 	readonly time: number
 	/** Names how the failure relates to the run's bail. */
 	readonly relation: ProgressRelation
-	/** Holds the case's first error, or `undefined` when the result carried none. */
+	/** Holds the first error, or `undefined` when the line carried none. */
 	readonly error: ProgressError | undefined
 }
 
@@ -434,6 +439,11 @@ export interface ProgressCancel {
 export interface ProgressRun {
 	/** Holds the id of the process that wrote the run. */
 	readonly pid: number
+	/**
+	 * Holds the wall-clock time of the `init` line that opens the run, in milliseconds since the Unix
+	 * epoch, which tells apart runs one file holds.
+	 */
+	readonly wall: number
 	/** Names the run's state. */
 	readonly state: ProgressState
 	/** Holds the run's `bail` setting; `0` runs every case. */
@@ -444,8 +454,11 @@ export interface ProgressRun {
 	readonly done: number
 	/** Counts the cases the collected modules plan to report, across every project. */
 	readonly planned: number
-	/** True if the run started and every module it started has been collected; false otherwise. */
-	readonly collected: boolean
+	/**
+	 * True if the run started and every module it started has been collected, so `planned` is final;
+	 * false otherwise.
+	 */
+	readonly final: boolean
 	/** Holds the results per minute since the first case started, or `undefined` before one. */
 	readonly rate: number | undefined
 	/**

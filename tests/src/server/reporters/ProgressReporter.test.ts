@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import {
+	computeProgress,
 	createScratch,
 	extractProgressEvents,
 	filterProgressEvents,
@@ -8,7 +9,11 @@ import {
 	readProgress,
 	renderProgress,
 } from '@src/server'
-import { PROGRESS_MODULES, recordProgressRun } from '../../../setupServer.js'
+import {
+	PROGRESS_BROKEN_MODULES,
+	PROGRESS_MODULES,
+	recordProgressRun,
+} from '../../../setupServer.js'
 
 describe('ProgressReporter', () => {
 	it('writes one stamped line per run event, from init to end', { timeout: 60_000 }, async () => {
@@ -17,7 +22,7 @@ describe('ProgressReporter', () => {
 		expect(events.at(0)).toMatchObject({ event: 'init', version: 1, bail: 0 })
 		expect(events.at(-1)).toMatchObject({ event: 'end', reason: 'failed', unhandled: [] })
 		expect(events.every((event) => event.pid === process.pid && event.time >= 0)).toBe(true)
-		expect(filterProgressEvents(events, 'start').at(0)?.modules).toEqual(
+		expect(filterProgressEvents(events, 'start').at(0)?.specifications).toEqual(
 			expect.arrayContaining([
 				{ project: '', module: 'fails.test.js' },
 				{ project: '', module: 'waits.test.js' },
@@ -81,7 +86,10 @@ describe('ProgressReporter', () => {
 	it('writes exactly one case line for each planned case', { timeout: 60_000 }, async () => {
 		const { progress } = await recordProgressRun({ reporters: [new ProgressReporter()], bail: 1 })
 		const events = extractProgressEvents(progress ?? '')
-		const ids = filterProgressEvents(events, 'case').map((entry) => entry.id)
+		const cases = filterProgressEvents(events, 'case')
+		const ids = cases.map((entry) => entry.id)
+		// A run the bail cut nothing off in would pass the rest unread.
+		expect(cases.some((entry) => entry.state === 'skipped')).toBe(true)
 		expect(ids).toHaveLength(new Set(ids).size)
 		expect(ids).toHaveLength(
 			filterProgressEvents(events, 'collected').reduce((total, entry) => total + entry.planned, 0),
@@ -101,6 +109,20 @@ describe('ProgressReporter', () => {
 			expect(extractProgressEvents(progress ?? '').at(-1)).toMatchObject({ event: 'end' })
 		},
 	)
+
+	it('reads a module that fails to import as the first failure', { timeout: 60_000 }, async () => {
+		const { progress } = await recordProgressRun({
+			reporters: [new ProgressReporter()],
+			modules: PROGRESS_BROKEN_MODULES,
+		})
+		const [run] = computeProgress(extractProgressEvents(progress ?? ''), Date.now())
+		expect(run?.failures.at(0)).toMatchObject({
+			module: 'broken.test.js',
+			relation: 'first',
+			error: { message: 'Error: broken import' },
+		})
+		expect(run?.failures.at(0)?.name).toBeUndefined()
+	})
 
 	it('refuses to initialize without an outputFile.progress path', { timeout: 60_000 }, async () => {
 		await expect(

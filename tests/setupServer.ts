@@ -929,9 +929,8 @@ export function requireStage(
 }
 
 /**
- * Holds the test modules a nested progress run executes. The `waits` suite's first case writes a
- * flag when it starts and then runs on; `fails first` waits for that flag and throws, so a bail
- * cancels the run while the suite's first case is still running and cuts off the cases after it.
+ * Holds the test modules a nested progress run executes without a bail. The `waits` suite's first
+ * case writes a flag when it starts, and `fails first` waits for that flag before it throws.
  */
 export const PROGRESS_MODULES: Readonly<Record<string, string>> = Object.freeze({
 	'fails.test.js': [
@@ -953,9 +952,8 @@ export const PROGRESS_MODULES: Readonly<Record<string, string>> = Object.freeze(
 		"import { writeFileSync } from 'node:fs'",
 		'',
 		"describe('waits', () => {",
-		"\tit('runs long', async () => {",
+		"\tit('runs long', () => {",
 		"\t\twriteFileSync(new URL('./started.flag', import.meta.url), '')",
-		'\t\tawait new Promise((done) => setTimeout(done, 400))',
 		'\t})',
 		"\tit('follows', () => {})",
 		"\tit('trails', () => {})",
@@ -963,6 +961,35 @@ export const PROGRESS_MODULES: Readonly<Record<string, string>> = Object.freeze(
 		"it('kept by the filter', () => {})",
 		'',
 	].join('\n'),
+})
+
+/**
+ * Holds the test modules a nested bail run executes. The `waits` suite's first case writes the flag
+ * and then waits on its own abort signal, which only the bail's cancel ends, so the bail always cuts
+ * the suite off part-way through.
+ */
+export const PROGRESS_BAIL_MODULES: Readonly<Record<string, string>> = Object.freeze({
+	...PROGRESS_MODULES,
+	'waits.test.js': [
+		"import { writeFileSync } from 'node:fs'",
+		'',
+		"describe('waits', () => {",
+		"\tit('runs long', async ({ signal }) => {",
+		"\t\twriteFileSync(new URL('./started.flag', import.meta.url), '')",
+		"\t\tawait new Promise((done) => signal.addEventListener('abort', done))",
+		'\t})',
+		"\tit('follows', () => {})",
+		"\tit('trails', () => {})",
+		'})',
+		"it('kept by the filter', () => {})",
+		'',
+	].join('\n'),
+})
+
+/** Holds a module that throws while it is imported, beside one that collects and passes. */
+export const PROGRESS_BROKEN_MODULES: Readonly<Record<string, string>> = Object.freeze({
+	'broken.test.js': "throw new Error('broken import')\n",
+	'fine.test.js': "it('adds', () => {})\n",
 })
 
 /** Configures one nested Vitest run a progress proof drives. */
@@ -977,6 +1004,11 @@ export interface ProgressFixtureOptions {
 	readonly loader?: boolean
 	/** If `false`, the nested run names no progress file. Default: `true`. */
 	readonly named?: boolean
+	/**
+	 * Holds the test modules the nested run executes. Default: `PROGRESS_BAIL_MODULES` under a bail,
+	 * `PROGRESS_MODULES` otherwise.
+	 */
+	readonly modules?: Readonly<Record<string, string>>
 }
 
 /** Holds what one nested progress run wrote. */
@@ -988,19 +1020,22 @@ export interface ProgressFixtureResult {
 }
 
 /**
- * Records the progress file and JSON report one nested Vitest run writes over `PROGRESS_MODULES`.
+ * Records the progress file and JSON report one nested Vitest run writes.
  *
  * @remarks The run sits in its own scratch directory, uses Vitest globals so the modules import
- * nothing, and restores the process exit code a failing run sets.
+ * only `node:` modules, runs two files at once, and restores the process exit code a failing run
+ * sets.
  */
 export async function recordProgressRun(
 	options: ProgressFixtureOptions,
 ): Promise<ProgressFixtureResult> {
+	const modules =
+		options.modules ?? (options.bail === undefined ? PROGRESS_MODULES : PROGRESS_BAIL_MODULES)
 	const scratch = createScratch({
 		prefix: 'progress-',
 		files: options.loader
-			? { ...PROGRESS_MODULES, 'vitest.config.mjs': 'export default { test: { globals: true } }\n' }
-			: PROGRESS_MODULES,
+			? { ...modules, 'vitest.config.mjs': 'export default { test: { globals: true } }\n' }
+			: modules,
 	})
 	const exit = process.exitCode
 	try {
@@ -1011,6 +1046,7 @@ export async function recordProgressRun(
 			...(options.loader ? { configLoader: 'runner' } : {}),
 			watch: false,
 			globals: true,
+			maxWorkers: 2,
 			include: ['*.test.js'],
 			reporters: [...options.reporters],
 			outputFile:
@@ -1053,7 +1089,7 @@ export const PROGRESS_BAIL_EVENTS: readonly ProgressEvent[] = Object.freeze([
 	{ event: 'init', version: 1, wall: PROGRESS_WALL, bail: 1, time: 0, pid: 7 },
 	{
 		event: 'start',
-		modules: [
+		specifications: [
 			{ project: 'unit', module: 'fails.test.js' },
 			{ project: 'unit', module: 'waits.test.js' },
 		],
@@ -1157,7 +1193,7 @@ export const PROGRESS_LIVE_EVENTS: readonly ProgressEvent[] = Object.freeze([
 	{ event: 'init', version: 1, wall: PROGRESS_WALL, bail: 0, time: 0, pid: 9 },
 	{
 		event: 'start',
-		modules: [
+		specifications: [
 			{ project: 'light', module: 'journey.test.ts' },
 			{ project: 'dark', module: 'journey.test.ts' },
 		],
@@ -1200,4 +1236,54 @@ export const PROGRESS_LIVE_EVENTS: readonly ProgressEvent[] = Object.freeze([
 		pid: 9,
 	},
 	{ event: 'ready', project: 'light', id: 'c2', name: 'closes', time: 310, pid: 9 },
+])
+
+/**
+ * Holds a finished full run in which one module fails to collect before another module's case
+ * fails.
+ */
+export const PROGRESS_BROKEN_EVENTS: readonly ProgressEvent[] = Object.freeze([
+	{ event: 'init', version: 1, wall: PROGRESS_WALL, bail: 0, time: 0, pid: 5 },
+	{
+		event: 'start',
+		specifications: [
+			{ project: 'unit', module: 'broken.test.js' },
+			{ project: 'unit', module: 'fine.test.js' },
+		],
+		time: 10,
+		pid: 5,
+	},
+	{
+		event: 'collected',
+		project: 'unit',
+		module: 'broken.test.js',
+		planned: 0,
+		errors: [{ message: 'Error: broken import', location: 'broken.test.js:1:7' }],
+		time: 5_000,
+		pid: 5,
+	},
+	{
+		event: 'collected',
+		project: 'unit',
+		module: 'fine.test.js',
+		planned: 1,
+		errors: [],
+		time: 5_100,
+		pid: 5,
+	},
+	{ event: 'ready', project: 'unit', id: 'f0', name: 'adds', time: 5_200, pid: 5 },
+	{
+		event: 'case',
+		project: 'unit',
+		module: 'fine.test.js',
+		id: 'f0',
+		name: 'adds',
+		state: 'failed',
+		duration: 100,
+		start: PROGRESS_WALL + 5_200,
+		errors: [{ message: 'Error: later' }],
+		time: 6_300,
+		pid: 5,
+	},
+	{ event: 'end', reason: 'failed', overhead: 0.75, unhandled: [], time: 7_000, pid: 5 },
 ])

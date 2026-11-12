@@ -40,7 +40,7 @@ export const isProgressEvent: Guard<ProgressEvent> = unionOf(
 	}),
 	recordOf({
 		event: literalOf('start'),
-		modules: arrayOf(recordOf({ project: isString, module: isString })),
+		specifications: arrayOf(recordOf({ project: isString, module: isString })),
 		time: isNumber,
 		pid: isNumber,
 	}),
