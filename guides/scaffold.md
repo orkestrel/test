@@ -1352,8 +1352,8 @@ The project loads `tests/setup.ts` alone. The tests import
 `tests/setupStudy.ts`, a harness module the package owns, so scaffold plans no such file and no
 project loads it as a setup file. In publishing and `private: true` workspaces, run the project on
 demand with `npm run test:studies` alone; no gate or chain runs it.
-Its longer timeouts and disabled file parallelism match the
-live-service project. The root `studies/` directory holds the adapters and declarations the study
+Its longer timeouts match the live-service project, and its files run in parallel, because its
+proofs drive seeded, replayed, or scripted runs rather than a live service. The root `studies/` directory holds the adapters and declarations the study
 tests run, and it selects nothing. A chain that carries a study step fails the configuration proof
 until the workspace removes that step during scaffold adoption.
 
