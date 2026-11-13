@@ -276,41 +276,47 @@ export function srcServer(override?: UserConfig): UserConfig {
 	return mergeOverride(project, override)
 }
 
-function resolveReporterFilename(): string {
-	return 'main.js'
+function resolveBinFilename(_format: string, entry: string): string {
+	return `${entry}.js`
 }
 
-function resolveReporterExternal(id: string): boolean {
+function resolveBinExternal(id: string): boolean {
 	return id.startsWith('@src/') || resolveExternal(id, { peers, refused: [], siblings: [] })
 }
 
-export function srcReporter(override?: UserConfig): UserConfig {
+export function srcBin(override?: UserConfig): UserConfig {
 	const project: UserConfig = {
 		resolve,
 		publicDir: false,
-		plugins: [outputBoundary('dist/reporter')],
+		plugins: [outputBoundary('dist/bin')],
 		build: {
 			emptyOutDir: true,
 			sourcemap: true,
 			minify: false,
 			lib: {
-				entry: resolveWorkspacePath('src/reporter/main.ts'),
+				entry: {
+					reporter: resolveWorkspacePath('src/bin/reporter.ts'),
+				},
 				formats: ['es'],
-				fileName: resolveReporterFilename,
+				fileName: resolveBinFilename,
 			},
-			outDir: 'dist/reporter',
+			outDir: 'dist/bin',
 			target: 'node22',
 			rolldownOptions: {
 				onLog: enforceBuildLog,
-				external: resolveReporterExternal,
+				external: resolveBinExternal,
 			},
 		},
 		test: {
-			name: { label: 'src:reporter', color: 'cyan' },
-			include: ['tests/src/reporter/**/*.test.ts'],
+			name: { label: 'src:bin', color: 'yellow' },
+			include: ['tests/src/bin/**/*.test.ts'],
 			setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
 			environment: 'node',
 			browser: { enabled: false },
+			// A bin test drives the real executable over a real temporary repository, so it
+			// spends seconds in process startup and filesystem work rather than milliseconds.
+			// Vitest's five-second default clears one alone and times out under a full suite.
+			testTimeout: 15_000,
 		},
 	}
 	return mergeOverride(project, override)
@@ -449,7 +455,7 @@ export default defineConfig({
 			srcCore,
 			srcBrowser,
 			srcServer,
-			srcReporter,
+			srcBin,
 			policy,
 			config,
 			setup,
