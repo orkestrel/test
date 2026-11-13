@@ -136,8 +136,8 @@ Object.keys(
 Object.keys(
 	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
 )
-// ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts', 'src/core/validators.ts', 'src/reporter/main.ts']
+// ['src/bin/reporter.ts', 'src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts',
+//  'src/core/helpers.ts', 'src/core/index.ts', 'src/core/types.ts', 'src/core/validators.ts']
 ```
 
 Keys are root-relative and `/`-separated whatever the host separator is. The suite gates that proof
@@ -220,7 +220,9 @@ Published as typed entry points per the `exports` field in `package.json`: `@ork
 host-independent core, `@orkestrel/test/browser` for the journey layer, `@orkestrel/test/server`
 for the Node helpers, and `@orkestrel/test/reporter` for the progress reporter Vitest loads by
 specifier. Core and server ship ESM and CommonJS. The browser face ships ESM only, because
-`vitest/browser` is an ES-only module, and the reporter entry ships ESM only.
+`vitest/browser` is an ES-only module, and the reporter entry ships ESM only. The reporter entry
+lives at `src/bin/reporter.ts` and builds to `dist/bin/reporter.js`; the specifier does not name
+that path.
 
 Run a suite with the progress reporter by naming the entry and the file it appends to:
 

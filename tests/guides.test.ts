@@ -662,6 +662,7 @@ await new GuideCommand({
 					}),
 				),
 			).toStrictEqual([
+				'src/bin/reporter.ts',
 				'src/core/Production.ts',
 				'src/core/Teardown.ts',
 				'src/core/constants.ts',
@@ -670,7 +671,6 @@ await new GuideCommand({
 				'src/core/index.ts',
 				'src/core/types.ts',
 				'src/core/validators.ts',
-				'src/reporter/main.ts',
 			])
 
 			expect(
