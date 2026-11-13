@@ -213,6 +213,12 @@ describe('installed reporter entry', () => {
 	it('writes progress the reader reads from init through end [requires the registry]', (context) => {
 		const stage = requireStage(context, STAGE)
 		expect(stage.subpaths).toContain('./reporter')
+		const manifest = readJson(join(stage.installed, 'package.json'))
+		const subpaths = isNonArrayObject(manifest) ? manifest.exports : undefined
+		expect(isNonArrayObject(subpaths) ? subpaths['./reporter'] : undefined).toStrictEqual({
+			import: { types: './dist/bin/reporter.d.ts', default: './dist/bin/reporter.js' },
+		})
+		expect(existsSync(join(stage.installed, 'dist/bin/reporter.js'))).toBe(true)
 		const name = readManifestName(join(stage.installed, 'package.json'))
 		const { result, progress } = runReporterConsumer(stage, `${name}/reporter`)
 		if (result.status !== 0) {
