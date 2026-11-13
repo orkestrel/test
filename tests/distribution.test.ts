@@ -1,10 +1,10 @@
 // The artifact a consumer installs, measured rather than described. This workspace
 // is packed and installed into a throwaway consumer, and every following claim is read
 // off that installed tree: the exports map it publishes, the declarations it ships,
-// and the module objects a real runtime hands a consumer. Nothing here names this
-// package, one of its exports, or how many there are, so the proof stays true as
-// the published surface moves.
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+// and the module objects a real runtime hands a consumer. Outside the reporter case,
+// nothing here names this package, one of its exports, or how many there are, so the
+// proof stays true as the published surface moves.
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
@@ -37,7 +37,9 @@ import {
 	readBrowserExports,
 	openStage,
 	requireStage,
+	runReporterConsumer,
 } from './setupServer.js'
+import { extractProgressEvents, readProgress } from '@src/server'
 
 // `prepublishOnly` runs this proof as `npm run test:distribution -- --mode release`.
 // Release is the publish gate, so evidence it cannot obtain fails there and skips
@@ -202,6 +204,33 @@ describe('installed package consumer', () => {
 		}
 		expect(reported).toStrictEqual([])
 		expect(silent).toStrictEqual([])
+	})
+})
+
+// A runner loads the reporter subpath by specifier rather than a consumer by import, so
+// this case runs the installed Vitest under the published specifier.
+describe('installed reporter entry', () => {
+	it('writes progress the reader reads from init through end [requires the registry]', (context) => {
+		const stage = requireStage(context, STAGE)
+		expect(stage.subpaths).toContain('./reporter')
+		const name = readManifestName(join(stage.installed, 'package.json'))
+		const { result, progress } = runReporterConsumer(stage, `${name}/reporter`)
+		if (result.status !== 0) {
+			throw new Error(
+				`The consumer's Vitest run exited ${String(result.status)}: ${readOutput(result)}`,
+			)
+		}
+		const events = extractProgressEvents(readFileSync(progress, 'utf8'))
+		expect([events.at(0)?.event, events.at(-1)?.event]).toStrictEqual(['init', 'end'])
+		const runs = readProgress(progress)
+		expect(
+			runs.map((run) => ({
+				state: run.state,
+				done: run.done,
+				planned: run.planned,
+				failures: run.failures,
+			})),
+		).toStrictEqual([{ state: 'passed', done: 1, planned: 1, failures: [] }])
 	})
 })
 

@@ -273,6 +273,13 @@ export interface InstalledConsumerFixture {
 	readonly targets: readonly string[]
 }
 
+// One run of the consumer's installed Vitest under the published reporter: the process result and
+// the progress file the run names.
+export interface ReporterRun {
+	readonly result: SpawnSyncReturns<string>
+	readonly progress: string
+}
+
 export function isNonArrayObject(value: unknown): value is Readonly<Record<string, unknown>> {
 	return isObject(value) && !isArray(value)
 }
@@ -893,6 +900,35 @@ export function buildStage(scratch: string): InstalledConsumerFixture {
 		})
 	}
 	return { consumer, installed, archives, entries, subpaths, undeclared, excluded, targets }
+}
+
+// The one-case module the published reporter's consumer run executes.
+export const REPORTER_CASE_SOURCE = `import { expect, it } from 'vitest'
+
+it('passes', () => {
+	expect(1 + 1).toBe(2)
+})
+`
+
+// Run the consumer's installed Vitest over one case with `specifier` as its only reporter. Vitest is
+// the package's peer, so the install put it beside the package. The outer run's `VITEST` variables
+// stay behind, so the nested run starts as a consumer's would.
+export function runReporterConsumer(
+	stage: InstalledConsumerFixture,
+	specifier: string,
+): ReporterRun {
+	const fixture = join(stage.consumer, 'reporter')
+	writeFile(join(fixture, 'one.test.js'), REPORTER_CASE_SOURCE)
+	const vitest = join(stage.consumer, 'node_modules', 'vitest', 'vitest.mjs')
+	const env = Object.fromEntries(
+		Object.entries(process.env).filter(([name]) => !name.startsWith('VITEST')),
+	)
+	const result = spawnSync(
+		process.execPath,
+		[vitest, 'run', `--reporter=${specifier}`, '--outputFile.progress=progress.jsonl'],
+		{ cwd: fixture, encoding: 'utf8', env, windowsHide: true },
+	)
+	return { result, progress: join(fixture, 'progress.jsonl') }
 }
 
 // Installing the packed archive resolves its own runtime dependencies, so an
