@@ -83,7 +83,8 @@
 		"test:distribution": "vitest run --config vite.config.ts --no-cache --reporter=dot --project distribution",
 		"test:bench": "vitest bench --config vite.config.ts --no-cache --project \"probe (bench)\" --mode benchmark",
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup",
-		"test:setup:browser": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup:browser"
+		"test:setup:browser": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup:browser",
+		"test:src:reporter": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:reporter"
 	},
 	"dependencies": {
 		"@orkestrel/contract": "^0.0.23"

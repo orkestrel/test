@@ -276,6 +276,46 @@ export function srcServer(override?: UserConfig): UserConfig {
 	return mergeOverride(project, override)
 }
 
+function resolveReporterFilename(): string {
+	return 'main.js'
+}
+
+function resolveReporterExternal(id: string): boolean {
+	return id.startsWith('@src/') || resolveExternal(id, { peers, refused: [], siblings: [] })
+}
+
+export function srcReporter(override?: UserConfig): UserConfig {
+	const project: UserConfig = {
+		resolve,
+		publicDir: false,
+		plugins: [outputBoundary('dist/reporter')],
+		build: {
+			emptyOutDir: true,
+			sourcemap: true,
+			minify: false,
+			lib: {
+				entry: resolveWorkspacePath('src/reporter/main.ts'),
+				formats: ['es'],
+				fileName: resolveReporterFilename,
+			},
+			outDir: 'dist/reporter',
+			target: 'node22',
+			rolldownOptions: {
+				onLog: enforceBuildLog,
+				external: resolveReporterExternal,
+			},
+		},
+		test: {
+			name: { label: 'src:reporter', color: 'cyan' },
+			include: ['tests/src/reporter/**/*.test.ts'],
+			setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
+			environment: 'node',
+			browser: { enabled: false },
+		},
+	}
+	return mergeOverride(project, override)
+}
+
 export function policy(override?: UserConfig): UserConfig {
 	const project: UserConfig = {
 		resolve,
@@ -409,6 +449,7 @@ export default defineConfig({
 			srcCore,
 			srcBrowser,
 			srcServer,
+			srcReporter,
 			policy,
 			config,
 			setup,
