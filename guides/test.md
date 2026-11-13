@@ -68,6 +68,8 @@ filesystem helpers, the process and socket readings, the cookie jar, the Vitest 
 and its reader, and the pure leaves they are built from. `@orkestrel/test/browser` is the
 journey layer, which drives a real browser through the installed Vitest provider. Core touches
 neither `node:*` nor the DOM, so a browser test project imports it unchanged.
+`@orkestrel/test/reporter` is the runner entry Vitest's `--reporter` flag loads: its default
+export is `ProgressReporter`, and it ships ES only.
 
 The browser face ships ES only. It is built on `vitest/browser`, which is an ES-only module, so no
 CommonJS consumer can reach it and no `.d.cts` is emitted for it.
@@ -3046,7 +3048,7 @@ Object.keys(
 	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
 )
 // ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts', 'src/core/validators.ts']
+//  'src/core/types.ts', 'src/core/validators.ts', 'src/reporter/main.ts']
 
 // An exclusion also applies to a target you name, so naming one file below an excluded directory
 // does not reinstate it.
@@ -3307,8 +3309,12 @@ from its last `init` line, and `wall` tells them apart. A run killed before its 
 `live` until its file is deleted. Watch mode initializes the reporter once, so its reruns pile under
 one `init` line and are outside what the format reads.
 
-This release publishes no module specifier for `--reporter`, so list the reporter as an instance in
-the configuration.
+Without a configuration, name the published entry and its file on the command line. Vitest
+constructs the entry's default export, `ProgressReporter`.
+
+```bash
+npx vitest run --reporter=@orkestrel/test/reporter --outputFile.progress=tmp/runs/progress.jsonl
+```
 
 ### Probe what the host supports
 

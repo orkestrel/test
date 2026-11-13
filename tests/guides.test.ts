@@ -670,6 +670,7 @@ await new GuideCommand({
 				'src/core/index.ts',
 				'src/core/types.ts',
 				'src/core/validators.ts',
+				'src/reporter/main.ts',
 			])
 
 			expect(

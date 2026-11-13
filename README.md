@@ -112,7 +112,7 @@ Object.keys(sources)
 // ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
 //  'src/core/types.ts', 'src/core/validators.ts', 'src/server/Loopback.ts', 'src/server/constants.ts',
 //  'src/server/factories.ts', 'src/server/helpers.ts', 'src/server/index.ts',
-//  'src/server/reporters/ProgressReporter.ts', 'src/server/reporters/index.ts',
+//  'src/server/reporters/ProgressReporter.ts',
 //  'src/server/types.ts', 'src/server/validators.ts']
 
 // The keys are paths; the values are the file contents.
@@ -137,7 +137,7 @@ Object.keys(
 	readInventory(root, ['src'], { extensions: ['.ts'], exclude: ['src/server', 'src/browser'] }),
 )
 // ['src/core/Production.ts', 'src/core/Teardown.ts', 'src/core/constants.ts', 'src/core/factories.ts', 'src/core/helpers.ts', 'src/core/index.ts',
-//  'src/core/types.ts', 'src/core/validators.ts']
+//  'src/core/types.ts', 'src/core/validators.ts', 'src/reporter/main.ts']
 ```
 
 Keys are root-relative and `/`-separated whatever the host separator is. The suite gates that proof
@@ -217,9 +217,16 @@ rule deciding what ships and what stays in the package that owns it — see
 ## Package
 
 Published as typed entry points per the `exports` field in `package.json`: `@orkestrel/test` for the
-host-independent core, `@orkestrel/test/browser` for the journey layer, and
-`@orkestrel/test/server` for the Node helpers. Core and server ship ESM and CommonJS; the browser
-face ships ESM only, because `vitest/browser` is an ES-only module.
+host-independent core, `@orkestrel/test/browser` for the journey layer, `@orkestrel/test/server`
+for the Node helpers, and `@orkestrel/test/reporter` for the progress reporter Vitest loads by
+specifier. Core and server ship ESM and CommonJS. The browser face ships ESM only, because
+`vitest/browser` is an ES-only module, and the reporter entry ships ESM only.
+
+Run a suite with the progress reporter by naming the entry and the file it appends to:
+
+```sh
+npx vitest run --reporter=@orkestrel/test/reporter --outputFile.progress=tmp/runs/progress.jsonl
+```
 
 ## License
 
