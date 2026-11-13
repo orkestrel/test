@@ -12,6 +12,7 @@
 	},
 	"files": [
 		"dist/src",
+		"dist/reporter",
 		"README.md"
 	],
 	"type": "module",
@@ -43,6 +44,12 @@
 			"require": {
 				"types": "./dist/src/server/index.d.cts",
 				"default": "./dist/src/server/index.cjs"
+			}
+		},
+		"./reporter": {
+			"import": {
+				"types": "./dist/reporter/main.d.ts",
+				"default": "./dist/reporter/main.js"
 			}
 		},
 		"./package.json": "./package.json"
