@@ -1053,9 +1053,16 @@ describe('isRunning', () => {
 			try {
 				const [line]: unknown[] = await once(createInterface({ input: parent.stdout }), 'line')
 				const pid = Number(line)
+				// The leader reads Z while the child's other threads still run, so wait for every thread.
 				await waitForCondition(
-					'the unreaped child to read Z',
-					() => scanThreadStates(pid)?.[String(pid)] === 'Z',
+					'every thread of the unreaped child to read Z or X',
+					() => {
+						const states = scanThreadStates(pid)
+						return (
+							states?.[String(pid)] === 'Z' &&
+							Object.values(states).every((state) => state === 'Z' || state === 'X')
+						)
+					},
 					{ budget: 10_000 },
 				)
 
@@ -1776,7 +1783,7 @@ describe('shootClip', () => {
 			).toStrictEqual({
 				success: false,
 				error:
-					'Clip 10x10 at (0, 0) has no emulated window to fit, so a page screenshot would trim it to the window it finds: set contextOptions.viewport to at least 10x10',
+					'Clip 10x10 at (0, 0) has no emulated window, so a page screenshot trims it to the window size Playwright reads from the page: set contextOptions.viewport to at least 10x10',
 			})
 			expect(
 				await shootClip(context, 'frame.png', { x: 0, y: 0, width: 1280, height: 720 }),

@@ -43,7 +43,13 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 import { attempt, failure, holds, isNumber, isObject, isString, success } from '@orkestrel/contract'
-import { checkBounds, decodeJSONLines, waitForDelay, waitForEvent } from '@src/core'
+import {
+	checkBounds,
+	decodeJSONLines,
+	describeWindowlessClip,
+	waitForDelay,
+	waitForEvent,
+} from '@src/core'
 import {
 	PROGRESS_BRAND,
 	PROGRESS_LABELS,
@@ -1029,7 +1035,10 @@ export async function chooseFiles(context: ChooserContext, request: ChooserReque
  * path resolves against the test file's directory, as the provider resolves a screenshot path, and
  * the bytes are written through Vitest's `writeFile` command, which applies its write and
  * `server.fs` checks. The refusal is returned rather than thrown, because Playwright trims a clip to
- * the window without an error and a trimmed frame is a valid image of another size.
+ * the window without an error and a trimmed frame is a valid image of another size. On a page with
+ * no emulated window, Playwright trims the clip to the window size it reads from the page, so every
+ * clip there is refused with the {@link describeWindowlessClip} text, which `captureFrame` and
+ * `captureViewport` answer by taking the element path.
  * @example
  * ```ts
  * // configs/commands.ts
@@ -1056,15 +1065,11 @@ export async function shootClip(
 		)
 	}
 	const viewport = context.page.viewportSize()
+	if (viewport === null) return failure(describeWindowlessClip(clip))
 	const right = clip.x + clip.width
 	const bottom = clip.y + clip.height
 	const described = `Clip ${String(clip.width)}x${String(clip.height)} at (${String(clip.x)}, ${String(clip.y)})`
 	const correction = `set contextOptions.viewport to at least ${String(right)}x${String(bottom)}`
-	if (viewport === null) {
-		return failure(
-			`${described} has no emulated window to fit, so a page screenshot would trim it to the window it finds: ${correction}`,
-		)
-	}
 	const window = `${String(viewport.width)}x${String(viewport.height)}`
 	if (clip.x < 0 || clip.y < 0) {
 		return failure(`${described} starts before the origin of the ${window} window, which trims it`)

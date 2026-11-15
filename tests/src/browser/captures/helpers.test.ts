@@ -1,7 +1,7 @@
 import type { FrameOptions, ViewportOptions } from '@src/browser'
 import type { FrameClip } from '@src/core'
 import { TestValue } from '../../../setup.js'
-import { isNumber, isRecord, isString } from '@orkestrel/contract'
+import { failure, isNumber, isRecord, isString } from '@orkestrel/contract'
 import * as browser from '@src/browser'
 import {
 	build,
@@ -53,6 +53,7 @@ import {
 } from '@src/browser'
 import {
 	createRecorder,
+	describeWindowlessClip,
 	invokeUnchecked,
 	readProperty,
 	requireValue,
@@ -2850,6 +2851,190 @@ describe('clip route', () => {
 			element: mover,
 		})
 		expect(await commands.readFile(written, 'base64')).toBe(await commands.readFile(rest, 'base64'))
+	})
+
+	it('hands a subject that starts moving while the tester fonts load to the element path, which writes it at rest', async () => {
+		const paused = createRecorder<[event: unknown]>()
+		const session: unknown = cdp()
+		buildStylesheet(
+			'body { margin: 0 } @font-face { font-family: "late-face-gap"; src: url("/late-face-gap.woff2") format("woff2"); font-display: block }',
+		)
+		invokeUnchecked(session, readProperty(session, 'on'), ['Fetch.requestPaused', paused.handler])
+		await sendProtocol('Fetch.enable', {
+			patterns: [{ urlPattern: '*late-face-*', requestStage: 'Request' }],
+		})
+		try {
+			const track = requireValue(
+				buildFixture(
+					'<div style="position: relative; height: 120px; background: linear-gradient(90deg, rgb(0, 0, 0), rgb(255, 255, 255))">' +
+						'<div style="position: absolute; left: 0; top: 40px; width: 40px; height: 40px; background: rgba(255, 0, 0, 0.5)"></div></div>' +
+						`<p style="margin: 0; font: 20px 'late-face-gap', serif">Late</p>`,
+				).querySelector('div'),
+			)
+			const mover = requireValue(track.querySelector('div'))
+			await page.viewport(390, 400)
+			await waitForCondition(
+				'the tester at the frame size',
+				() => window.innerWidth === 390 && window.innerHeight === 400,
+			)
+			await waitForCondition('the gap font request held', () => paused.count === 1)
+			expect(document.fonts.status).toBe('loading')
+			const written = captureFrame({
+				path: `${FRAMES}/clip-gap.png`,
+				width: 390,
+				height: 400,
+				element: mover,
+			})
+			// A tester already at the frame size stages without a resize, so the staging's two frames
+			// come before these two, and the capture then waits on the held font.
+			await waitForFrame()
+			await waitForFrame()
+			mover.style.transition = 'left 1500ms linear'
+			mover.style.left = '200px'
+			await waitForCondition('the mover under way', () => mover.getBoundingClientRect().x > 0)
+			const [held] = requireValue(paused.calls[0])
+			await sendProtocol('Fetch.failRequest', {
+				requestId: isRecord(held) && isString(held.requestId) ? held.requestId : '',
+				errorReason: 'Failed',
+			})
+			const shot = await written
+			await waitForCondition('the mover at rest', () => mover.getBoundingClientRect().x === 200, {
+				budget: 3000,
+			})
+			const rest = await captureFrame({
+				path: `${FRAMES}/clip-gap-rest.png`,
+				width: 390,
+				height: 400,
+				element: mover,
+			})
+			expect(await commands.readFile(shot, 'base64')).toBe(await commands.readFile(rest, 'base64'))
+		} finally {
+			invokeUnchecked(session, readProperty(session, 'off'), [
+				'Fetch.requestPaused',
+				paused.handler,
+			])
+			await sendProtocol('Fetch.disable')
+		}
+	})
+
+	it('hands a row a scrolling ancestor cuts, wholly or in part, to the element path, which scrolls it into view', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const options = { width: 390, height: 400 }
+		buildStylesheet(
+			'body { margin: 0 } li { height: 60px } [data-card] { flex: none; width: 120px; height: 40px }',
+		)
+		const container = buildFixture(
+			'<ul style="margin: 0; padding: 0; list-style: none; height: 120px; overflow: auto">' +
+				'<li style="background: rgb(200, 40, 40)"></li><li style="background: rgb(40, 160, 60)"></li>' +
+				'<li style="background: rgb(40, 80, 200)"></li><li style="background: rgb(220, 180, 30)"></li>' +
+				'<li style="background: rgb(140, 50, 160)"></li></ul>' +
+				'<div style="display: flex; width: 200px; overflow-x: auto">' +
+				'<div data-card style="background: rgb(30, 30, 30)"></div><div data-card style="background: rgb(90, 90, 90)"></div>' +
+				'<div data-card style="background: rgb(160, 160, 160)"></div></div>',
+		)
+		const list = requireValue(container.querySelector('ul'))
+		const strip = requireValue(container.querySelector('div'))
+		const rows = [...list.querySelectorAll('li')]
+		const cards = [...strip.querySelectorAll('[data-card]')]
+		// The fifth row lies wholly below the list, the first and third rows each lose 30 px of a
+		// list scrolled 30 px down, and the third card lies wholly past the strip's right edge.
+		const cases = [
+			{ subject: rows[4], scroller: list, top: 0, left: 0 },
+			{ subject: rows[0], scroller: list, top: 30, left: 0 },
+			{ subject: rows[2], scroller: list, top: 30, left: 0 },
+			{ subject: cards[2], scroller: strip, top: 0, left: 0 },
+		]
+		try {
+			await stagePane(390, 400)
+			for (const [index, { subject, scroller, top, left }] of cases.entries()) {
+				scroller.scrollTo({ top, left, behavior: 'instant' })
+				const routed = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-cut-${String(index)}.png` },
+					requireValue(subject),
+					async (target, clip) => {
+						clips.handler(target, clip)
+						return await handler(target, clip)
+					},
+				)
+				scroller.scrollTo({ top, left, behavior: 'instant' })
+				const element = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-cut-${String(index)}-element.png` },
+					requireValue(subject),
+				)
+				expect(routed.base64).toBe(element.base64)
+			}
+			expect(clips.count).toBe(0)
+			// Control: the second row, wholly inside the list at scroll 0, takes the clip route.
+			list.scrollTo({ top: 0, behavior: 'instant' })
+			const shown = requireValue(rows[1])
+			const routed = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-uncut.png` },
+				shown,
+				async (target, clip) => {
+					clips.handler(target, clip)
+					return await handler(target, clip)
+				},
+			)
+			const element = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-uncut-element.png` },
+				shown,
+			)
+			expect([clips.count, routed.base64]).toStrictEqual([1, element.base64])
+			list.scrollTo({ top: 0, behavior: 'instant' })
+			const reference = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-row-element.png` },
+				requireValue(rows[4]),
+			)
+			list.scrollTo({ top: 0, behavior: 'instant' })
+			await releasePane()
+			const written = await captureFrame({
+				path: `${FRAMES}/clip-row.png`,
+				...options,
+				element: requireValue(rows[4]),
+			})
+			expect(await commands.readFile(written, 'base64')).toBe(reference.base64)
+			expect(list.scrollTop).toBe(0)
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('hands a frame the command refuses for a page with no emulated window to the element path', async () => {
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const options = { width: 390, height: 200 }
+		const card = requireValue(
+			buildFixture(
+				'<article style="margin: 20px; padding: 16px; background: rgb(240, 200, 120)">Invoice 2041 paid</article>',
+			).querySelector('article'),
+		)
+		try {
+			await stagePane(390, 200)
+			const element = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-windowless-element.png` },
+				card,
+			)
+			const path = `${FRAMES}/clip-windowless.png`
+			const shot = await takeFrameShot({ ...options, path }, card, async (target, clip) => {
+				clips.handler(target, clip)
+				return failure(describeWindowlessClip(clip))
+			})
+			expect(clips.count).toBe(1)
+			expect(shot.base64).toBe(element.base64)
+			await verifyFrame(shot, path, readCaptureReader())
+			// Control: the same refusal written for another clip is no answer about this one, so it throws.
+			const clip = requireValue(readFrameClip(card))
+			const other = { ...clip, y: clip.y + 1 }
+			await expect(
+				takeFrameShot({ ...options, path }, card, async () =>
+					failure(describeWindowlessClip(other)),
+				),
+			).rejects.toThrow(
+				`Capture frame at ${path} was refused by the shootClip command: ${describeWindowlessClip(other)}`,
+			)
+		} finally {
+			await releasePane()
+		}
 	})
 
 	it('takes the element path for a frame taller than the runner window', async () => {

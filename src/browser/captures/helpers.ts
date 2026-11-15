@@ -13,7 +13,7 @@ import type {
 	StabilityOptions,
 	ViewportOptions,
 } from './types.js'
-import { readProperty, waitForCondition } from '@src/core'
+import { describeWindowlessClip, readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
 import { readStyle, sendProtocol, waitForFrame } from '../helpers.js'
 import {
@@ -302,6 +302,43 @@ export function clipsOverflow(element: Element): boolean {
 		readStyle(element, 'overflow-y') !== 'visible' ||
 		/\b(?:paint|content|strict)\b/u.test(readStyle(element, 'contain'))
 	)
+}
+
+/**
+ * Reports whether an element's border box reaches past the client area of an ancestor that clips
+ * its overflow.
+ *
+ * @param element - The element to read.
+ * @returns True if any side of the element's box lies outside the client area of a clipping
+ * ancestor the {@link collectClippingAncestors} helper finds; false otherwise.
+ * @throws Thrown when the element is not connected to a document, as the
+ * {@link collectClippingAncestors} helper throws.
+ *
+ * @remarks
+ * The client area is the padding box less any scrollbar, which is the part of a scroll container
+ * that shows its content. Every side counts, so a row a list scrolled past reads as reaching past
+ * it, and so does a card past a horizontal strip's right edge. The area takes no
+ * `overflow-clip-margin` length, so an element inside that margin of a `clip` overflow reads as
+ * reaching past it too.
+ *
+ * @example
+ * ```ts
+ * overflowsClip(row) // true where the list around the row is scrolled so the row leaves it
+ * ```
+ */
+export function overflowsClip(element: Element): boolean {
+	const box = element.getBoundingClientRect()
+	return collectClippingAncestors(element).some((frame) => {
+		const placed = frame.getBoundingClientRect()
+		const left = placed.left + frame.clientLeft
+		const top = placed.top + frame.clientTop
+		return (
+			box.left < left ||
+			box.top < top ||
+			box.right > left + frame.clientWidth ||
+			box.bottom > top + frame.clientHeight
+		)
+	})
 }
 
 /**
@@ -1254,9 +1291,12 @@ export async function releaseMedia(): Promise<void> {
  * Where the page registered the `shootClip` command, {@link readClipHandler} returns it and the shot
  * takes the clip route that {@link takeFrameShot} describes, for a subject whose box held still
  * across the two frames of the last staging, as {@link stagePane} reads it. The clip route writes the
- * element path's bytes without the element path's locator, scroll, and stability round trips. A
- * frame whose clip leaves the runner window, a frame the tester must be offset for, and a subject
- * that moved keep the element path.
+ * element path's bytes without the element path's locator and stability round trips. The element
+ * path scrolls every scroll container around its subject until the subject shows, and the clip route
+ * scrolls none, so a subject whose box reaches past an ancestor that clips its overflow, as
+ * {@link overflowsClip} reads it, keeps the element path. A frame whose clip leaves the runner
+ * window, a frame the tester must be offset for, a subject that moved, and a frame the command
+ * refuses for a page with no emulated window keep the element path too.
  *
  * To shoot the declared viewport at the scroll the page holds rather than the document, call
  * {@link captureViewport}.
@@ -1861,8 +1901,10 @@ export function readFrameHeight(
  * @param handler - The registered clip command. Omit it to keep the element path.
  * @remarks
  * Given a handler, the shot takes the clip route through {@link takeClipShot} for a subject that
- * `checkVisibility` reports visible with its opacity and visibility checks and whose clip fits the
- * runner window. Every other subject takes the element path: a `visibility: hidden`, a
+ * `checkVisibility` reports visible with its opacity and visibility checks, whose box reaches past
+ * no ancestor that clips its overflow, as {@link overflowsClip} reads it, and whose clip fits the
+ * runner window. Every other subject takes the element path, which scrolls each scroll container
+ * around the subject until it shows: a `visibility: hidden`, a
  * `display: none`, or an empty-box subject waits there until Playwright counts it visible, and an
  * `opacity: 0` subject is written at once, because Playwright counts it visible. Pass a handler only
  * for a subject that held still, as {@link captureFrame} does: the clip route runs no stability wait.
@@ -1888,7 +1930,8 @@ export async function takeFrameShot(
 	const subject = element ?? document.body
 	const clipped =
 		handler === undefined ||
-		!subject.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+		!subject.checkVisibility({ opacityProperty: true, visibilityProperty: true }) ||
+		overflowsClip(subject)
 			? undefined
 			: await takeClipShot(handler, options.path, subject)
 	if (clipped !== undefined) {
@@ -1968,15 +2011,21 @@ export function readFrameClip(subject: Element): FrameClip | undefined {
  * @param handler - The registered clip command, as {@link readClipHandler} returns it.
  * @param path - The frame's path, relative to the calling test file.
  * @param subject - The element whose box the frame covers.
- * @returns The written shot, or `undefined` where {@link readFrameClip} reads no clip or the clip
- * leaves the runner window, which Playwright trims a page clip to.
- * @throws Thrown when the command refuses the clip, naming the clip and the window, and when the
- * command fails.
+ * @returns The written shot, or `undefined` where the subject's box changed during the fonts wait,
+ * {@link readFrameClip} reads no clip, the clip leaves the runner window, which Playwright trims a
+ * page clip to, or the command refuses the clip with the {@link describeWindowlessClip} text of a
+ * page with no emulated window.
+ * @throws Thrown when the command refuses the clip for another reason, naming the clip and the
+ * window, and when the command fails.
  *
  * @remarks
  * The tester document's `document.fonts.ready` is awaited before the clip is read, because
  * Playwright's page screenshot waits only for the runner document's fonts, and a web font that
- * loads late changes both the glyphs and the box. The window is `window.top`'s inner size.
+ * loads late changes both the glyphs and the box. The subject's box is read before that wait and
+ * again after it, immediately before the command, so a subject that starts to move or changes size
+ * while the fonts load is handed back for the element path's stability wait. A move that starts
+ * after the second reading, during the command's round trip, reaches the shot. The window is
+ * `window.top`'s inner size.
  *
  * @example
  * ```ts
@@ -1988,10 +2037,16 @@ export async function takeClipShot(
 	path: string,
 	subject: Element,
 ): Promise<FrameShot | undefined> {
+	const staged = subject.getBoundingClientRect()
 	await subject.ownerDocument.fonts.ready
+	const box = subject.getBoundingClientRect()
 	const clip = readFrameClip(subject)
 	const view = window.top
 	if (
+		box.x !== staged.x ||
+		box.y !== staged.y ||
+		box.width !== staged.width ||
+		box.height !== staged.height ||
 		clip === undefined ||
 		view === null ||
 		clip.x < 0 ||
@@ -2002,6 +2057,7 @@ export async function takeClipShot(
 		return undefined
 	}
 	const result = await handler(path, clip)
+	if (!result.success && result.error === describeWindowlessClip(clip)) return undefined
 	if (!result.success) {
 		throw new Error(
 			`Capture frame at ${path} was refused by the shootClip command: ${result.error}`,

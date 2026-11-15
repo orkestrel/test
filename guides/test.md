@@ -203,6 +203,7 @@ instead of propagating.
 | `checkBounds`            | function | `(subject: string, budget: number, interval: number) => void`                                                                                                                                                                               | Checks the resolved bounds one bounded wait runs under.                                                                                     |
 | `captureProduction`      | function | `<T>(produce: () => T \| Promise<T>) => Promise<Readonly<PromiseSettledResult<T>>>`                                                                                                                                                         | Captures a synchronous or asynchronous producer's value or exact refusal.                                                                   |
 | `renderRetryValue`       | function | `(value: unknown) => string`                                                                                                                                                                                                                | Renders a retry value as JSON, plain text, or an unreadable-value marker.                                                                   |
+| `describeWindowlessClip` | function | `(clip: FrameClip) => string`                                                                                                                                                                                                               | Describes the refusal of a clip on a page with no emulated window.                                                                          |
 | `buildRetryExhausted`    | function | `(description: string, budget: number, elapsed: number, last: string \| undefined, cause: unknown) => Error`                                                                                                                                | Builds the error `retryUntil` raises when its elapsed-time budget runs out.                                                                 |
 | `buildRefusal`           | function | `(name: string, cause: unknown) => Error`                                                                                                                                                                                                   | Builds the error a refused fixture build raises, named for the row it was building for.                                                     |
 | `dropRegistration`       | function | `(registrations: SignalRegistration[], installed: EventListener \| EventListenerObject) => SignalRegistration \| undefined`                                                                                                                 | Drops the registration an instrumented signal installed for one listener.                                                                   |
@@ -459,6 +460,7 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `collectScrollContainers`  | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the scroll containers in an element's subtree, the element included unless it is the body or the root element.                                                                                                                                                         |
 | `collectUnrolledRegions`   | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the vertical scroll regions an unrolled frame releases in an element's subtree, the element included unless it is the body or the root element.                                                                                                                        |
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
+| `overflowsClip`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element's border box reaches past the client area of an ancestor that clips its overflow.                                                                                                                                                                    |
 | `measureContent`           | function | `() => number`                                                                                                                                                                                | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `containsFixed`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element is the containing block of the fixed-position boxes inside it.                                                                                                                                                                                       |
 | `collectFlatDescendants`   | function | `(element: Element) => readonly Element[]`                                                                                                                                                    | Collects the elements under an element in the flat tree, in the order a browser paints them.                                                                                                                                                                                    |
@@ -836,8 +838,12 @@ in the same `configs/commands.ts`. The registration is the opt-in: `readClipHand
 command, and `captureFrame` and `captureViewport` take the clip route only on a page that registered
 it, while every other page keeps the element path. The clip route shoots the subject's box, rounded
 out to whole pixels the way Playwright rounds an element screenshot, off the runner page through
-`page.screenshot({ clip })`, and writes the element path's bytes without the element path's locator,
-scroll, and stability round trips. `shootClip` writes the file through Vitest's own `writeFile`
+`page.screenshot({ clip })`, and writes the element path's bytes without the element path's locator
+and stability round trips. The element path scrolls every scroll container around its subject until
+the subject shows, and the clip route scrolls none, so a subject whose box reaches past the client
+area of an ancestor that clips its overflow, which `overflowsClip` reads, takes the element path: a
+row a list scrolled past, wholly or in part, is written as the element path writes it, with the list
+scrolled to it. `shootClip` writes the file through Vitest's own `writeFile`
 command, so Vitest's write and `server.fs` checks apply. This package's `configs/commands.ts`
 registers it, so this package's capture proofs run the route.
 
@@ -847,7 +853,11 @@ suite shoots. Playwright trims a page clip to the context's window, which is 128
 compares the clip with `window.top`'s inner size and keeps the element path for a frame that does
 not fit, which costs that frame the route's gain. `shootClip` refuses a clip outside
 `page.viewportSize()` with a failure value rather than a throw, naming the clip, the window, and
-the viewport size that fits the clip, and the capture throws that refusal.
+the viewport size that fits the clip, and the capture throws that refusal. A page opened with
+`contextOptions: { viewport: null }` has no emulated window, and Playwright trims a page clip there
+to the window size it reads from the page, so `shootClip` refuses every clip on it with the text
+`describeWindowlessClip` renders, and the capture takes the element path for that frame instead of
+throwing.
 
 The route keeps the element path's guarantees through three checks:
 
@@ -855,7 +865,11 @@ The route keeps the element path's guarantees through three checks:
   `takeClipShot` awaits the tester's `document.fonts.ready` before it reads the clip.
 - **Motion.** `stagePane` reads the subject's box after each of its two painted frames, and
   `captureFrame` hands a subject whose box moved to the element path, whose stability wait shoots
-  it at rest.
+  it at rest. `takeClipShot` reads the box again after the fonts wait, immediately before the
+  command, and hands a subject whose box changed during that wait to the element path too. Inside
+  `captureFrame`, no frame paints between the staging's last reading and the start of the fonts
+  wait, so the stretch left unread is the command's own round trip: a subject that starts to move
+  after the reading before the command is shot where the move has taken it.
 - **Visibility.** The clip route takes only a subject that
   `checkVisibility({ opacityProperty: true, visibilityProperty: true })` reports visible and whose
   box is not empty. A `visibility: hidden`, `display: none`, or empty-box subject takes the element

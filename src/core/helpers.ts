@@ -1,6 +1,7 @@
 import type { Result } from '@orkestrel/contract'
 import type {
 	EventSubscriber,
+	FrameClip,
 	HeadersSource,
 	JSONSafe,
 	RetryObservation,
@@ -799,4 +800,28 @@ export function renderRetryValue(value: unknown): string {
 	if (serialized.success) return serialized.value
 	const text = attempt(() => String(value))
 	return text.success ? text.value : '[unrenderable]'
+}
+
+/**
+ * Describes the refusal of a clip on a page with no emulated window.
+ *
+ * @param clip - The clip the page was asked to shoot.
+ * @returns The refusal, naming the clip and the viewport size that fits it.
+ *
+ * @remarks
+ * A Playwright page opened with no emulated window trims a page clip to the window size it reads
+ * from the page itself, so a frame shot there can come back smaller than its clip. The `shootClip`
+ * command refuses such a clip with this text, and the page side compares a refusal against it to
+ * hand the frame to the element path.
+ *
+ * @example
+ * ```ts
+ * import { describeWindowlessClip } from '@orkestrel/test'
+ *
+ * describeWindowlessClip({ x: 0, y: 40, width: 390, height: 80 })
+ * // 'Clip 390x80 at (0, 40) has no emulated window, so a page screenshot trims it to the window size Playwright reads from the page: set contextOptions.viewport to at least 390x120'
+ * ```
+ */
+export function describeWindowlessClip(clip: FrameClip): string {
+	return `Clip ${String(clip.width)}x${String(clip.height)} at (${String(clip.x)}, ${String(clip.y)}) has no emulated window, so a page screenshot trims it to the window size Playwright reads from the page: set contextOptions.viewport to at least ${String(clip.x + clip.width)}x${String(clip.y + clip.height)}`
 }
