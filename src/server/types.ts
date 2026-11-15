@@ -1,5 +1,6 @@
 import type { WaitOptions } from '@src/core'
 import type { FrameLocator, Page } from 'playwright'
+import type { VitestPluginContext } from 'vitest/node'
 
 /** Supplies the real Playwright page and tester frame to a native chooser command. */
 export interface ChooserContext {
@@ -483,4 +484,18 @@ export interface ProgressRun {
 	readonly overhead: number | undefined
 	/** Lists the errors Vitest reported outside any case, empty while the run is live. */
 	readonly unhandled: readonly ProgressError[]
+}
+
+/** Represents the Vitest plugin that adds one progress reporter to every run naming a progress file. */
+export interface ProgressPluginInterface {
+	/** Names the plugin to Vite. */
+	readonly name: string
+	/**
+	 * Adds a `ProgressReporter` to the run's reporters when `outputFile` names `progress`, and adds
+	 * nothing when no progress file is named or the reporters already hold a `ProgressReporter`.
+	 *
+	 * @remarks Mirrors the `configureVitest` hook of a Vitest plugin, which Vitest calls once per
+	 * project that carries the plugin and before it constructs the run's reporters.
+	 */
+	configureVitest(context: VitestPluginContext): void
 }

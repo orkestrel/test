@@ -2,7 +2,7 @@ import type { PlaywrightProviderOptions } from '@vitest/browser-playwright'
 import type { SpawnSyncReturns } from 'node:child_process'
 import type { TestContext } from 'vitest'
 import type { Reporter } from 'vitest/node'
-import type { ProgressEvent } from '@src/server'
+import type { ProgressEvent, ScratchInterface } from '@src/server'
 import type { DistributionResolution, Format } from './setup.js'
 import { attempt, isArray, isObject, isString } from '@orkestrel/contract'
 import { spawnSync } from 'node:child_process'
@@ -273,11 +273,24 @@ export interface InstalledConsumerFixture {
 	readonly targets: readonly string[]
 }
 
-// One run of the consumer's installed Vitest under the published reporter: the process result and
-// the progress file the run names.
-export interface ReporterRun {
+/** Holds what one spawned Vitest run over a fixture configuration returned and wrote. */
+export interface VitestFixtureRun {
+	/** Holds the spawned process result. */
 	readonly result: SpawnSyncReturns<string>
-	readonly progress: string
+	/** Holds the progress file text, or `undefined` when the run wrote none. */
+	readonly progress: string | undefined
+	/** Holds the JSON report text, or `undefined` when the run wrote none. */
+	readonly report: string | undefined
+}
+
+/** Places the progress plugin, or a listed progress reporter, in one fixture configuration. */
+export interface PluginFixtureOptions {
+	/** If `true`, the root `plugins` mount the plugin; if `false`, they mount nothing. */
+	readonly root: boolean
+	/** If `true`, every project's `plugins` mount the same plugin value; if `false`, none does. */
+	readonly projects: boolean
+	/** If `true`, the root `test.reporters` list a `ProgressReporter`; if `false`, it lists none. */
+	readonly listed: boolean
 }
 
 export function isNonArrayObject(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -902,33 +915,118 @@ export function buildStage(scratch: string): InstalledConsumerFixture {
 	return { consumer, installed, archives, entries, subpaths, undeclared, excluded, targets }
 }
 
-// The one-case module the published reporter's consumer run executes.
-export const REPORTER_CASE_SOURCE = `import { expect, it } from 'vitest'
+/** Holds the one-case module a spawned fixture run executes in each of its projects. */
+export const PASSING_CASE_SOURCE = `import { expect, it } from 'vitest'
 
 it('passes', () => {
 	expect(1 + 1).toBe(2)
 })
 `
 
-// Run the consumer's installed Vitest over one case with `specifier` as its only reporter. Vitest is
-// the package's peer, so the install put it beside the package. The outer run's `VITEST` variables
-// stay behind, so the nested run starts as a consumer's would.
-export function runReporterConsumer(
-	stage: InstalledConsumerFixture,
-	specifier: string,
-): ReporterRun {
-	const fixture = join(stage.consumer, 'reporter')
-	writeFile(join(fixture, 'one.test.js'), REPORTER_CASE_SOURCE)
-	const vitest = join(stage.consumer, 'node_modules', 'vitest', 'vitest.mjs')
+/** Holds the installed Vitest command-line entry a fixture run spawns through `process.execPath`. */
+export const VITEST_ENTRY = join(ROOT, 'node_modules', 'vitest', 'vitest.mjs')
+
+/**
+ * Holds the reporter flags every `@orkestrel/capture` stage passes: the dot and JSON reporters, the
+ * JSON report file, and the progress file.
+ */
+export const CAPTURE_FLAGS: readonly string[] = Object.freeze([
+	'--reporter=dot',
+	'--reporter=json',
+	'--outputFile.json=report.json',
+	'--outputFile.progress=progress.jsonl',
+])
+
+/** Names the package a fixture configuration imports the built server entry from. */
+export const SERVER_FIXTURE_PACKAGE = 'built-server'
+
+/**
+ * Allocates a scratch directory under the workspace's `tmp/` and builds the server entry from source
+ * into its `node_modules` as the package `SERVER_FIXTURE_PACKAGE`, so a configuration written there
+ * imports the entry by that name. A failed build removes the directory before it rethrows.
+ *
+ * @remarks Neither Vite config loader resolves the workspace's `@src/*` aliases, so a configuration
+ * a spawned Vitest loads reaches the current source only through this build, which reads the
+ * aliases from `tsconfig.json` and leaves every installed package external. The config bundler
+ * inlines a module a file URL names into every evaluation of the configuration, and keeps a bare
+ * specifier external as one module instance, as it does for a consumer's installed package. The
+ * directory sits under the workspace so the spawned run resolves `vitest` and the entry's externals
+ * from the workspace's `node_modules`.
+ */
+export async function createServerFixture(prefix: string): Promise<ScratchInterface> {
+	mkdirSync(join(ROOT, 'tmp'), { recursive: true })
+	const scratch = createScratch({ parent: join(ROOT, 'tmp'), prefix })
+	const output = join(scratch.path, 'node_modules', SERVER_FIXTURE_PACKAGE)
+	try {
+		await build({
+			build: {
+				emptyOutDir: true,
+				minify: false,
+				outDir: output,
+				rolldownOptions: { output: { entryFileNames: 'index.mjs' } },
+				ssr: join(ROOT, 'src', 'server', 'index.ts'),
+			},
+			configFile: false,
+			logLevel: 'error',
+			resolve: { tsconfigPaths: true },
+			root: ROOT,
+		})
+	} catch (error) {
+		scratch.destroy()
+		throw error
+	}
+	scratch.write(
+		join(output, 'package.json'),
+		`${JSON.stringify({ name: SERVER_FIXTURE_PACKAGE, type: 'module', exports: './index.mjs' })}\n`,
+	)
+	return scratch
+}
+
+/**
+ * Renders a fixture configuration shaped like a capture wrapper's output: root `plugins` and two
+ * `test.projects` functions, `alpha` and `beta`, each running the one passing case.
+ */
+export function renderPluginConfig(options: PluginFixtureOptions): string {
+	const mounted = options.projects ? 'plugins: [plugin], ' : ''
+	return [
+		`import { createProgressPlugin, ProgressReporter } from '${SERVER_FIXTURE_PACKAGE}'`,
+		'',
+		'const plugin = createProgressPlugin()',
+		'',
+		'export default {',
+		`\tplugins: ${options.root ? '[plugin]' : '[]'},`,
+		'\ttest: {',
+		...(options.listed ? ['\t\treporters: [new ProgressReporter()],'] : []),
+		`\t\tprojects: ['alpha', 'beta'].map((name) => () => ({ ${mounted}test: { name, include: ['one.test.js'] } })),`,
+		'\t},',
+		'}',
+		'',
+	].join('\n')
+}
+
+/**
+ * Runs the installed Vitest through `process.execPath` in a scratch directory over a fixture
+ * configuration and the one passing case, and reads the progress file and JSON report it wrote.
+ *
+ * @remarks The outer run's `VITEST` variables stay behind, so the spawned run starts as a
+ * consumer's would.
+ */
+export function runVitestFixture(
+	scratch: ScratchInterface,
+	config: string,
+	flags: readonly string[],
+): VitestFixtureRun {
+	scratch.write('vitest.config.mjs', config)
+	scratch.write('one.test.js', PASSING_CASE_SOURCE)
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([name]) => !name.startsWith('VITEST')),
 	)
 	const result = spawnSync(
 		process.execPath,
-		[vitest, 'run', `--reporter=${specifier}`, '--outputFile.progress=progress.jsonl'],
-		{ cwd: fixture, encoding: 'utf8', env, windowsHide: true },
+		[VITEST_ENTRY, 'run', '--config', 'vitest.config.mjs', ...flags],
+		{ cwd: scratch.path, encoding: 'utf8', env, windowsHide: true },
 	)
-	return { result, progress: join(fixture, 'progress.jsonl') }
+	return { result, progress: scratch.read('progress.jsonl'), report: scratch.read('report.json') }
 }
 
 // Installing the packed archive resolves its own runtime dependencies, so an

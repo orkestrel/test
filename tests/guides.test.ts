@@ -689,7 +689,6 @@ await new GuideCommand({
 					}),
 				),
 			).toStrictEqual([
-				'src/bin/reporter.ts',
 				'src/core/Production.ts',
 				'src/core/Teardown.ts',
 				'src/core/constants.ts',
