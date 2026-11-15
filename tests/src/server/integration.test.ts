@@ -19,7 +19,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: false, named: false }),
+			renderPluginConfig({ root: true, projects: false, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -49,7 +49,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: false, projects: false, listed: true, named: false }),
+			renderPluginConfig({ root: false, projects: false, listed: true, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -65,7 +65,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: false, named: false }),
+			renderPluginConfig({ root: true, projects: false, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS.filter((flag) => !flag.startsWith('--outputFile.progress=')),
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -81,7 +81,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: false, named: true }),
+			renderPluginConfig({ root: true, projects: false, listed: false, named: true, path: false }),
 			CAPTURE_FLAGS.filter((flag) => !flag.startsWith('--outputFile.')),
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -98,7 +98,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: true, named: false }),
+			renderPluginConfig({ root: true, projects: false, listed: true, named: false, path: false }),
 			['--outputFile.progress=progress.jsonl'],
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -117,7 +117,7 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: true, listed: false, named: false }),
+			renderPluginConfig({ root: true, projects: true, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
@@ -127,5 +127,31 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 			'init',
 			'end',
 		])
+	})
+
+	it('holds one reporter when the configuration imports the entry by file path', async ({
+		onTestFinished,
+	}) => {
+		const scratch = await createServerFixture('path-')
+		onTestFinished(() => scratch.destroy())
+		const run = runVitestFixture(
+			scratch,
+			renderPluginConfig({ root: true, projects: true, listed: false, named: false, path: true }),
+			CAPTURE_FLAGS,
+		)
+		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
+		const events = extractProgressEvents(run.progress ?? '').map((event) => event.event)
+		expect(events.filter((event) => event === 'init' || event === 'end')).toStrictEqual([
+			'init',
+			'end',
+		])
+		expect(
+			readProgress(join(scratch.path, 'progress.jsonl')).map((progress) => [
+				progress.state,
+				progress.done,
+				progress.planned,
+			]),
+		).toStrictEqual([['passed', 2, 2]])
 	})
 })

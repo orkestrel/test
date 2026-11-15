@@ -505,7 +505,8 @@ export interface ProgressPluginInterface {
 	readonly name: string
 	/**
 	 * Adds a `ProgressReporter` to the run's reporters when `outputFile` names `progress`, and adds
-	 * nothing when no progress file is named or the reporters already hold a `ProgressReporter`.
+	 * nothing when no progress file is named or the reporters already hold a `ProgressReporter` from
+	 * any copy of this package.
 	 *
 	 * @remarks Mirrors the `configureVitest` hook of a Vitest plugin, which Vitest calls once per
 	 * project that carries the plugin and before it constructs the run's reporters.

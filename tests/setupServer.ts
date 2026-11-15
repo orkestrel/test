@@ -301,6 +301,12 @@ export interface PluginFixtureOptions {
 	 * the configuration names no output file.
 	 */
 	readonly named: boolean
+	/**
+	 * If `true`, the configuration imports the built entry by its file path, so each evaluation of
+	 * the configuration loads its own copy of the module; if `false`, it imports the entry by its
+	 * package name.
+	 */
+	readonly path: boolean
 }
 
 export function isNonArrayObject(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -999,18 +1005,22 @@ export async function createServerFixture(prefix: string): Promise<ScratchInterf
  * @remarks The root `plugins` always mount a recorder plugin, whose reporter writes the number of
  * `ProgressReporter` instances the run holds to `instances.json` at `onInit`, after Vitest has built
  * every reporter. A plugin adds it, because command-line `--reporter` flags replace the reporters a
- * configuration lists.
+ * configuration lists. The recorder counts by constructor name rather than by the brand the
+ * reporter carries, so it counts every copy's instances without reading the mechanism under test.
  */
 export function renderPluginConfig(options: PluginFixtureOptions): string {
 	const mounted = options.projects ? 'plugins: [plugin], ' : ''
+	const specifier = options.path
+		? `./node_modules/${SERVER_FIXTURE_PACKAGE}/index.mjs`
+		: SERVER_FIXTURE_PACKAGE
 	return [
 		"import { writeFileSync } from 'node:fs'",
-		`import { createProgressPlugin, ProgressReporter } from '${SERVER_FIXTURE_PACKAGE}'`,
+		`import { createProgressPlugin, ProgressReporter } from '${specifier}'`,
 		'',
 		'const plugin = createProgressPlugin()',
 		'const recorder = {',
 		'\tonInit(vitest) {',
-		'\t\tconst count = vitest.config.reporters.filter((entry) => entry instanceof ProgressReporter).length',
+		"\t\tconst count = vitest.config.reporters.filter((entry) => entry?.constructor?.name === 'ProgressReporter').length",
 		"\t\twriteFileSync('instances.json', JSON.stringify(count))",
 		'\t},',
 		'}',

@@ -30,6 +30,12 @@ export const PROGRESS_VERSION = 1
 export const PROGRESS_MESSAGE_LIMIT = 300
 
 /**
+ * Keys the brand every `ProgressReporter` carries, registered so that each copy of this package
+ * reads the same key.
+ */
+export const PROGRESS_BRAND: unique symbol = Symbol.for('@orkestrel/test.ProgressReporter')
+
+/**
  * Names the label a rendered progress reading prints for each failure relation.
  */
 export const PROGRESS_LABELS: Readonly<Record<ProgressRelation, string>> = Object.freeze({
