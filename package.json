@@ -94,19 +94,19 @@
 		"test:src:bin": "vitest run --config vite.config.ts --no-cache --reporter=dot --project src:bin"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.23"
+		"@orkestrel/contract": "^0.0.24"
 	},
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.60.1",
 		"@orkestrel/browser": "^0.0.33",
 		"@orkestrel/guide": "^0.0.31",
 		"@orkestrel/probe": "^0.0.30",
-		"@orkestrel/scaffold": "^0.0.135",
+		"@orkestrel/scaffold": "^0.0.136",
 		"@types/node": "^26.6.6",
 		"@vitest/browser-playwright": "^5.1.0",
 		"oxfmt": "^0.78.0",
 		"oxlint": "^1.93.0",
-		"playwright": "^1.65.0",
+		"playwright": "^1.65.1",
 		"typescript": "^7.0.2",
 		"vite": "^8.3.8",
 		"vitest": "^5.1.0"
