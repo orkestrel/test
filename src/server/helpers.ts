@@ -1,10 +1,12 @@
 import type { BigIntStats } from 'node:fs'
 import type { Socket } from 'node:net'
-import type { ChooserRequest, WaitOptions } from '@src/core'
+import type { Result } from '@orkestrel/contract'
+import type { ChooserRequest, FrameClip, FrameShot, WaitOptions } from '@src/core'
 import type { FileChooser, Page } from 'playwright'
 import type { SerializedError } from 'vitest/node'
 import type {
 	ChooserContext,
+	ClipContext,
 	InventoryOptions,
 	ProgressError,
 	ProgressEvent,
@@ -40,7 +42,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
-import { attempt, holds, isNumber, isObject, isString } from '@orkestrel/contract'
+import { attempt, failure, holds, isNumber, isObject, isString, success } from '@orkestrel/contract'
 import { checkBounds, decodeJSONLines, waitForDelay, waitForEvent } from '@src/core'
 import {
 	PROGRESS_BRAND,
@@ -1012,6 +1014,71 @@ export async function chooseFiles(context: ChooserContext, request: ChooserReque
 }
 
 /**
+ * Shoots a clip of the runner page through Playwright's page screenshot and writes it at a path
+ * relative to the calling test file.
+ *
+ * @param context - The runner page, the calling test file, and Vitest's own `writeFile` command.
+ * @param path - The frame's path, relative to the calling test file.
+ * @param clip - The whole-pixel rectangle of the runner window to shoot.
+ * @returns The written path and the shot's base64 bytes, or a refusal naming the clip and the window
+ * where the clip leaves `page.viewportSize()` or the page has no emulated window.
+ * @throws Thrown when the call carries no test file, when a clip member is not a whole number or its
+ * size is not positive, and when Vitest's `writeFile` command refuses the path.
+ * @remarks Register this function as the `shootClip` command in the workspace's `configs/commands.ts`;
+ * `captureFrame` and `captureViewport` take the clip route only on a page that registered it. The
+ * path resolves against the test file's directory, as the provider resolves a screenshot path, and
+ * the bytes are written through Vitest's `writeFile` command, which applies its write and
+ * `server.fs` checks. The refusal is returned rather than thrown, because Playwright trims a clip to
+ * the window without an error and a trimmed frame is a valid image of another size.
+ * @example
+ * ```ts
+ * // configs/commands.ts
+ * import { shootClip } from '@orkestrel/test/server'
+ * import type { BrowserConfigOptions } from 'vitest/node'
+ *
+ * export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> = Object.freeze({
+ * 	shootClip,
+ * })
+ * ```
+ */
+export async function shootClip(
+	context: ClipContext,
+	path: string,
+	clip: FrameClip,
+): Promise<Result<FrameShot, string>> {
+	if (context.testPath === undefined) {
+		throw new Error('The shootClip command needs a calling test file to resolve its path against')
+	}
+	const members = [clip.x, clip.y, clip.width, clip.height]
+	if (!members.every((member) => Number.isInteger(member)) || clip.width <= 0 || clip.height <= 0) {
+		throw new Error(
+			`The shootClip command needs whole-pixel clip members and a positive size, not ${JSON.stringify(clip)}`,
+		)
+	}
+	const viewport = context.page.viewportSize()
+	const right = clip.x + clip.width
+	const bottom = clip.y + clip.height
+	const described = `Clip ${String(clip.width)}x${String(clip.height)} at (${String(clip.x)}, ${String(clip.y)})`
+	const correction = `set contextOptions.viewport to at least ${String(right)}x${String(bottom)}`
+	if (viewport === null) {
+		return failure(
+			`${described} has no emulated window to fit, so a page screenshot would trim it to the window it finds: ${correction}`,
+		)
+	}
+	const window = `${String(viewport.width)}x${String(viewport.height)}`
+	if (clip.x < 0 || clip.y < 0) {
+		return failure(`${described} starts before the origin of the ${window} window, which trims it`)
+	}
+	if (right > viewport.width || bottom > viewport.height) {
+		return failure(`${described} leaves the ${window} window, which trims it: ${correction}`)
+	}
+	const target = resolve(dirname(context.testPath), path)
+	const base64 = (await context.page.screenshot({ clip })).toString('base64')
+	await context.triggerCommand('writeFile', target, base64, 'base64')
+	return success({ path: target, base64 })
+}
+
+/**
  * Normalizes a module or stack-frame path to the form a progress line carries.
  *
  * @param file - The path Vitest reports, a Vite `/@fs/` path included.
@@ -1457,9 +1524,9 @@ export function renderProgress(runs: readonly ProgressRun[]): string {
 					? []
 					: [`  cancelled (${run.cancel.reason}) at ${renderDuration(run.cancel.time)}`]),
 				...[
-					...run.failures.map((failure) => ({
-						heading: `  ${PROGRESS_LABELS[failure.relation]} ${renderDuration(failure.time)}  [${failure.project}] ${failure.name === undefined ? failure.module : `${failure.module} > ${failure.name}`}`,
-						error: failure.error,
+					...run.failures.map((row) => ({
+						heading: `  ${PROGRESS_LABELS[row.relation]} ${renderDuration(row.time)}  [${row.project}] ${row.name === undefined ? row.module : `${row.module} > ${row.name}`}`,
+						error: row.error,
 					})),
 					...run.unhandled.map((error) => ({ heading: '  UNHANDLED', error })),
 				].flatMap(({ heading, error }) => [

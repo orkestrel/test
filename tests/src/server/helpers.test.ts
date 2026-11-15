@@ -79,6 +79,7 @@ import {
 	requestUpgrade,
 	requireContained,
 	resolveContained,
+	shootClip,
 	supportsCase,
 	supportsMode,
 	waitForSocketClose,
@@ -86,6 +87,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import {
 	createChooserFixture,
+	createClipFixture,
 	DIRECTORY_LINKS,
 	FILE_LINKS,
 	FOREIGN_ROOT_PATHS,
@@ -1713,6 +1715,104 @@ describe('host capability probes', () => {
 		} finally {
 			chmodSync(parent, 0o700)
 			rmSync(parent, { force: true, recursive: true })
+		}
+	})
+})
+
+describe('shootClip', () => {
+	it('shoots the clip off the page and writes it through writeFile at the test file path', async () => {
+		const { browser, context, writes } = await createClipFixture()
+		try {
+			const result = await shootClip(context, '../frames/orders.png', {
+				x: 4,
+				y: 6,
+				width: 30,
+				height: 20,
+			})
+			const target = resolve('fixture', 'frames', 'orders.png')
+			expect(result.success && result.value.path).toBe(target)
+			const base64 = result.success ? result.value.base64 : ''
+			const bytes = Buffer.from(base64, 'base64')
+			expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toStrictEqual([30, 20])
+			expect(writes.calls).toStrictEqual([['writeFile', target, base64, 'base64']])
+		} finally {
+			await browser.close()
+		}
+	})
+
+	it('refuses a clip the window would trim, and a page with no emulated window, writing nothing', async () => {
+		const { browser, context, writes } = await createClipFixture()
+		try {
+			expect(context.page.viewportSize()).toStrictEqual({ width: 1280, height: 720 })
+			expect(
+				await shootClip(context, 'frame.png', { x: 0, y: 0, width: 390, height: 844 }),
+			).toStrictEqual({
+				success: false,
+				error:
+					'Clip 390x844 at (0, 0) leaves the 1280x720 window, which trims it: set contextOptions.viewport to at least 390x844',
+			})
+			expect(
+				await shootClip(context, 'frame.png', { x: 1000, y: 0, width: 281, height: 10 }),
+			).toStrictEqual({
+				success: false,
+				error:
+					'Clip 281x10 at (1000, 0) leaves the 1280x720 window, which trims it: set contextOptions.viewport to at least 1281x10',
+			})
+			expect(
+				await shootClip(context, 'frame.png', { x: 0, y: -1, width: 10, height: 10 }),
+			).toStrictEqual({
+				success: false,
+				error:
+					'Clip 10x10 at (0, -1) starts before the origin of the 1280x720 window, which trims it',
+			})
+			const bare = await browser.newPage({ viewport: null })
+			expect(
+				await shootClip({ ...context, page: bare }, 'frame.png', {
+					x: 0,
+					y: 0,
+					width: 10,
+					height: 10,
+				}),
+			).toStrictEqual({
+				success: false,
+				error:
+					'Clip 10x10 at (0, 0) has no emulated window to fit, so a page screenshot would trim it to the window it finds: set contextOptions.viewport to at least 10x10',
+			})
+			expect(
+				await shootClip(context, 'frame.png', { x: 0, y: 0, width: 1280, height: 720 }),
+			).toMatchObject({ success: true })
+			expect(writes.count).toBe(1)
+		} finally {
+			await browser.close()
+		}
+	})
+
+	it('throws for a call with no test file and for a clip that is not whole pixels of positive size', async () => {
+		const { browser, context, writes } = await createClipFixture()
+		try {
+			await expect(
+				shootClip({ ...context, testPath: undefined }, 'frame.png', {
+					x: 0,
+					y: 0,
+					width: 10,
+					height: 10,
+				}),
+			).rejects.toThrow(
+				'The shootClip command needs a calling test file to resolve its path against',
+			)
+			for (const clip of [
+				{ x: 0.5, y: 0, width: 10, height: 10 },
+				{ x: 0, y: 0, width: 0, height: 10 },
+				{ x: 0, y: 0, width: 10, height: -2 },
+				{ x: 0, y: Number.NaN, width: 10, height: 10 },
+			]) {
+				await expect(shootClip(context, 'frame.png', clip)).rejects.toThrow(
+					`The shootClip command needs whole-pixel clip members and a positive size, not ${JSON.stringify(clip)}`,
+				)
+			}
+			expect(writes.count).toBe(0)
+		} finally {
+			await browser.close()
 		}
 	})
 })
