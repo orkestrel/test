@@ -1,14 +1,14 @@
-import { collectClippingAncestors, measureContent, readClipEdge, readPixels } from '@src/browser'
+import { measureContent } from '@src/browser'
 import { expect, it } from 'vitest'
-import { buildFixture, resetFixtures } from '../../../setupBrowser.js'
+import { buildFixture, climbContentEdge, resetFixtures } from '../../../setupBrowser.js'
 
 // The content edge cost of one `measureContent` call, at the DOM-growth populations the capture
 // audit measured: chains of plain boxes, each holding a scroll frame and a paint-contained frame
-// near its leaf. The per-element climb arm transcribes the reading the shipped measurement took
-// before its clip bounds shared one memo. The two one-walk arms are identical sides that bracket it,
-// so their gap is the run's own spread. Keep the one walk while the climb's gap to it is outside
-// that spread and at least 10 ms per call at 3,201 elements, which a prepared frame pays twice. No
-// gate collects this file; run it with
+// near its leaf. The per-element climb arm runs `climbContentEdge`, the reading the shipped
+// measurement took before its clip bounds shared one memo. The two one-walk arms are identical
+// sides that bracket it, so their gap is the run's own spread. Keep the one walk while the climb's
+// gap to it is outside that spread and at least 10 ms per call at 3,201 elements, which a prepared
+// frame pays twice. No gate collects this file; run it with
 // `npx vitest bench --config vite.config.ts --project bench:browser --mode benchmark tests/src/browser/captures/helpers.bench.ts`.
 
 it.for([
@@ -25,27 +25,7 @@ it.for([
 			'</div>'.repeat(depth - 3)
 		buildFixture(chain.repeat(chains))
 		try {
-			const climb = bench('per-element climb', () =>
-				Math.ceil(
-					Array.from(document.body.querySelectorAll('*')).reduce((greatest, element) => {
-						const bottom = Math.min(
-							element.getBoundingClientRect().bottom +
-								window.scrollY +
-								readPixels(element, 'margin-bottom'),
-							...collectClippingAncestors(element)
-								.filter((frame) => frame !== document.body && frame !== document.documentElement)
-								.flatMap((frame) => {
-									const limit = readClipEdge(frame)
-									return limit === undefined ? [] : [limit]
-								}),
-						)
-						return bottom > greatest ? bottom : greatest
-					}, 0) +
-						readPixels(document.body, 'padding-bottom') +
-						readPixels(document.body, 'margin-bottom') +
-						readPixels(document.documentElement, 'padding-bottom') +
-						readPixels(document.documentElement, 'margin-bottom'),
-				))
+			const climb = bench('per-element climb', () => climbContentEdge())
 			expect(climb.fn?.()).toBe(measureContent())
 			const result = await bench.compare(
 				bench('one walk', () => measureContent()),

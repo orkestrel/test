@@ -347,9 +347,7 @@ describe('createPortfolio', () => {
 			enabled: true,
 		})
 		const surface = await whole.place('start-empty')
-		const element = await part.place('start-empty', {
-			element: requireValue(container.firstElementChild),
-		})
+		const element = await part.place('start-empty', requireValue(container.firstElementChild))
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 		expect(rewriteWindowsAbsolutePath(requireValue(element))).toBe(
 			rewriteWindowsAbsolutePath(
@@ -368,24 +366,22 @@ describe('createPortfolio', () => {
 			states: STATES,
 			variants: VARIANTS,
 			variant: 'dark-390',
-			directory: `${DIRECTORY}/visible`,
+			directory: `${DIRECTORY}/viewport`,
 			enabled: true,
 		})
 		await page.viewport(390, 844)
 		window.scrollTo({ top: 600, behavior: 'instant' })
-		const visible = await readFrame(
-			requireValue(await portfolio.place('start-empty', { visible: true })),
-		)
+		const viewed = await readFrame(requireValue(await portfolio.view('start-empty')))
 		const whole = await readFrame(requireValue(await portfolio.place('answer-ideal')))
 		// Rows 600 to 1443: the yellow band ends the viewport; the page frame ends on purple.
-		expect(visible).toStrictEqual({ width: 390, height: 844, floor: 'rgb(255, 255, 0)' })
+		expect(viewed).toStrictEqual({ width: 390, height: 844, floor: 'rgb(255, 255, 0)' })
 		expect(whole).toStrictEqual({ width: 390, height: 2000, floor: 'rgb(128, 0, 128)' })
 		expect(window.scrollY).toBe(600)
 		expect(portfolio.placements).toStrictEqual(['start-empty', 'answer-ideal'])
 	})
 
-	it('refuses a visible placement in an unrolled portfolio, and records no placement', async () => {
-		const portfolio = createPortfolio({
+	it('refuses a viewport placement in an unrolled portfolio before the enabled and projection gate', async () => {
+		const enabled = createPortfolio({
 			states: STATES,
 			variants: VARIANTS,
 			variant: 'dark-390',
@@ -393,11 +389,94 @@ describe('createPortfolio', () => {
 			enabled: true,
 			unrolled: true,
 		})
-		await expect(portfolio.place('start-empty', { visible: true })).rejects.toThrow(
-			`Capture frame at ${DIRECTORY}/start-empty--dark-390.png is visible, so it takes neither an element nor unrolled`,
-		)
+		const disabled = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			unrolled: true,
+		})
+		const projected = createPortfolio({
+			states: STATES,
+			state: 'answer-ideal',
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			enabled: true,
+			unrolled: true,
+		})
+		const refusal =
+			'Capture state "start-empty" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled'
+		for (const portfolio of [enabled, disabled, projected]) {
+			await expect(portfolio.view('start-empty')).rejects.toThrow(refusal)
+			expect(portfolio.observed).toStrictEqual([])
+		}
+		expect(enabled.paths).toStrictEqual([])
+		// Control: the disabled and projected runs accept a placement of the page for that state.
+		await expect(disabled.place('start-empty')).resolves.toBeUndefined()
+		await expect(projected.place('start-empty')).resolves.toBeUndefined()
+	})
+
+	it('releases a state whose placement throws, so a later placement of it writes', async () => {
+		buildFixture(BANDS_MARKUP)
+		const sheet = buildStylesheet(`${BANDS_SHEET} html { contain: paint }`)
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: `${DIRECTORY}/viewport`,
+			enabled: true,
+		})
+		await page.viewport(390, 844)
+		window.scrollTo({ top: 600, behavior: 'instant' })
+		await expect(portfolio.view('start-empty')).rejects.toThrow('cannot cover the viewport')
 		expect(portfolio.observed).toStrictEqual([])
-		expect(portfolio.paths).toStrictEqual([])
+		sheet.textContent = BANDS_SHEET
+		const written = await portfolio.view('start-empty')
+		expect(rewriteWindowsAbsolutePath(requireValue(written))).toBe(
+			rewriteWindowsAbsolutePath(
+				`${server.config.root}/tmp/capture/portfolio/viewport/start-empty--dark-390.png`,
+			),
+		)
+		expect(portfolio.placements).toStrictEqual(['start-empty'])
+	})
+
+	it('refuses the second of two concurrent placements of one state', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			enabled: true,
+		})
+		const first = portfolio.place('answer-ideal')
+		const second = portfolio.place('answer-ideal')
+		await expect(second).rejects.toThrow('Capture state "answer-ideal" is already placed')
+		const expected = rewriteWindowsAbsolutePath(
+			`${server.config.root}/tmp/capture/portfolio/answer-ideal--dark-390.png`,
+		)
+		expect(rewriteWindowsAbsolutePath(requireValue(await first))).toBe(expected)
+		expect(portfolio.observed).toStrictEqual(['answer-ideal'])
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
+	})
+
+	it('refuses the second of two concurrent viewport placements of one state', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: `${DIRECTORY}/viewport`,
+			enabled: true,
+		})
+		const first = portfolio.view('start-empty')
+		const second = portfolio.view('start-empty')
+		await expect(second).rejects.toThrow('Capture state "start-empty" is already placed')
+		const expected = rewriteWindowsAbsolutePath(
+			`${server.config.root}/tmp/capture/portfolio/viewport/start-empty--dark-390.png`,
+		)
+		expect(rewriteWindowsAbsolutePath(requireValue(await first))).toBe(expected)
+		expect(portfolio.observed).toStrictEqual(['start-empty'])
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
 	})
 
 	// guides/test.md → Patterns → "Place a capture portfolio". A browser fence carries in this
@@ -442,7 +521,15 @@ describe('createPortfolio', () => {
 			expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 			expect(portfolio.placements).toStrictEqual(['start-empty'])
 
-			// A run that omits `enabled` returns undefined here, resizes nothing, and records nothing.
+			const viewed = await portfolio.view('answer-ideal')
+			expect(rewriteWindowsAbsolutePath(requireValue(viewed))).toBe(
+				rewriteWindowsAbsolutePath(
+					`${server.config.root}/tmp/capture/states/answer-ideal--dark-390.png`,
+				),
+			)
+			expect(portfolio.placements).toStrictEqual(['start-empty', 'answer-ideal'])
+
+			// A run that omits `enabled` returns undefined here, resizes nothing, and writes nothing.
 			// The preceding placement handed the viewport back and left the theme at what `dark-390`
 			// selects, so a viewport and a theme that variant does not produce are staged before the
 			// disabled call. The readings after it then answer for that call rather than for the one

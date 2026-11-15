@@ -227,6 +227,7 @@ export const INTERNAL: readonly string[] = Object.freeze([
 	'class Loopback',
 	'class Journal',
 	'class WebStorage',
+	'class Portfolio',
 ])
 
 /** Counts callback invocations within one test fixture. */

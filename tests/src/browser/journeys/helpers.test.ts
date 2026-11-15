@@ -87,8 +87,8 @@ import {
 	FIELD_ROLE_CASES,
 	FILE_REFUSALS,
 	IMPLICIT_ROLE_CASES,
-	requirePointerRestoration,
 	resetFixtures,
+	skipUnrestoredPointer,
 } from '../../../setupBrowser.js'
 
 // An icon font paints its glyph as `::before` content on an element marked `aria-hidden`, which is
@@ -275,7 +275,7 @@ describe('touch input', () => {
 	})
 
 	it('releases after a completed tap without clicking again', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		const target = requireValue(buildFixture('<button>Tap</button>').querySelector('button'))
 		const clicks = createRecorder<readonly [Event]>()
 		target.addEventListener('click', clicks.handler)
@@ -291,7 +291,7 @@ describe('touch input', () => {
 	})
 
 	it('disables a staged coarse pointer after touch without changing its restoration marker', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		const target = requireValue(buildFixture('<button>Tap</button>').querySelector('button'))
 		const coarse = matchMedia('(pointer: coarse)').matches
 		try {
@@ -319,7 +319,7 @@ describe('touch input', () => {
 	})
 
 	it('restores the original fine pointer when media is released before touch', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		const target = requireValue(
 			buildFixture('<button>Tap before staging</button>').querySelector('button'),
 		)
@@ -344,7 +344,7 @@ describe('touch input', () => {
 	})
 
 	it('ends coarse when touch is released before a media stage that recorded the tap', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		const target = requireValue(
 			buildFixture('<button>Tap before staging</button>').querySelector('button'),
 		)

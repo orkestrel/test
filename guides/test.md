@@ -308,14 +308,14 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `RGBA`                | type      | `readonly [red: number, green: number, blue: number, alpha: number]`            | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
 | `ContrastOptions`     | interface | `{ floor?, opacity? }`                                                          | Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the painted color is shown at.                    |
 | `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                              | Configures one built element: its class list, its text, and its attributes.                                                                     |
-| `FrameOptions`        | interface | `{ path, width, height, element?, unrolled?, visible? }`                        | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
-| `PlacementOptions`    | type      | `Pick<FrameOptions, 'element' \| 'visible'>`                                    | Configures one placement: the element it shoots, or the viewport at the current scroll.                                                         |
+| `ViewportOptions`     | interface | `{ path, width, height }`                                                       | Configures one viewport shot: where it is written and the viewport it is shot at.                                                               |
+| `FrameOptions`        | interface | `{ element?, unrolled? }`                                                       | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
 | `FrameOffset`         | interface | `{ top, left }`                                                                 | Represents how far an element frame moves the tester frame from the runner window's origin for the shot, in CSS pixels.                         |
 | `FrameResult`         | interface | `{ width, height, floor }`                                                      | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
 | `CaptureVariant`      | interface | `{ apply? }`                                                                    | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
 | `ScopeHandler`        | type      | `(state: string) => string`                                                     | Names the scope directory one capture state is written under, one path segment.                                                                 |
 | `PortfolioOptions`    | interface | `{ states, state?, variants, variant, directory, scope?, enabled?, unrolled? }` | Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where it writes, and whether it writes at all.      |
-| `PortfolioInterface`  | interface | `{ variant, observed, placements, paths, files, place() }`                      | Holds the registry of capture states one run places, and the files it wrote placing them.                                                       |
+| `PortfolioInterface`  | interface | `{ variant, observed, placements, paths, files, place(), view() }`              | Holds the registry of capture states one run places, and the files it wrote placing them.                                                       |
 | `JournalStep`         | interface | `{ action, trigger, result }`                                                   | Represents one scripted step a journal recorded, and what the surface did about it.                                                             |
 | `JournalInterface`    | interface | `{ steps, output, start(), stop(), record() }`                                  | Records one scenario: every step it took and everything the page said while it ran.                                                             |
 | `StateOptions`        | interface | `{ absent? }`                                                                   | Configures a bounded wait over the states a control announces.                                                                                  |
@@ -469,6 +469,9 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `readFrameHeight`          | function | `(options: FrameOptions, element: Element \| undefined, pane: number) => number \| undefined`                                                                                                       | Reads a capture subject's height after applying its native scroll clearance.                                                                                                                                                                                                    |
 | `takeFrameShot`            | function | `(options: FrameOptions, element: Element \| undefined) => Promise<FrameShot>`                                                                                                                      | Takes a screenshot while temporarily positioning the runner frame around its subject.                                                                                                                                                                                           |
 | `captureFrame`             | function | `(options: FrameOptions) => Promise<string>`                                                                                                                                                        | Shoots one frame at one viewport size and proves the file on disk holds this run's bytes.                                                                                                                                                                                       |
+| `captureViewport`          | function | `(options: ViewportOptions) => Promise<string>`                                                                                                                                                     | Shoots the declared viewport at the scroll the page holds and proves the file on disk holds this run's bytes.                                                                                                                                                                   |
+| `recordScroll`             | function | `() => () => void`                                                                                                                                                                                  | Records the scroll position of the tester's window and of every scroll container in its body, and returns the callback that scrolls each of them back.                                                                                                                          |
+| `describeUnrolledView`     | function | `(state: string) => string`                                                                                                                                                                         | Describes the refusal of a viewport placement in an unrolled portfolio.                                                                                                                                                                                                         |
 | `readCaptureReader`        | function | `() => CaptureReader \| undefined`                                                                                                                                                                  | Reads the optional disk-digest command the tester page registered.                                                                                                                                                                                                              |
 | `verifyFrame`              | function | `(shot: FrameShot, path: string, reader?: CaptureReader) => Promise<void>`                                                                                                                          | Verifies a screenshot's destination and compares its returned bytes with the written file.                                                                                                                                                                                      |
 | `paintImage`               | function | `(encoded: string) => Promise<OffscreenCanvasRenderingContext2D \| undefined>`                                                                                                                      | Decodes a base64 PNG and paints it, unscaled, onto a fresh offscreen 2D canvas.                                                                                                                                                                                                 |
@@ -924,17 +927,23 @@ naming the regions. A `:modal` dialog or a `:popover-open` element under a trans
 counted as a row, though the top layer lays it out. A region inside a closed shadow root is
 unreachable, so its rows stay hidden without a refusal.
 
-To shoot what a person sees at the scroll a journey reached, set the `visible` option. The capture stages the
-pane at the declared viewport alone, measures no height, and stages no taller pane, so a mark the
-scroll drives, such as a contents entry naming the section in view, still names what the viewport
-shows. It shoots a transparent fixed box appended to the root element and removes the box on every
-path. A tester that is not at the declared viewport is resized to it first, and the frame then
-holds the scroll the page keeps at that size. A visible frame takes neither the `element` option nor
-an `unrolled: true` setting, and refuses both before it stages anything with
-`Capture frame at <path> is visible, so it takes neither an element nor unrolled`. A root element
-that becomes the box's containing block, through a transform or a paint containment, refuses the
-shot with
+To shoot what a person sees at the scroll a journey reached, call `captureViewport` with a
+`ViewportOptions` value: the path, the width, and the height, and nothing else. It stages the pane
+at the declared viewport alone, measures no height, and stages no taller pane, so a mark the scroll
+drives, such as a contents entry naming the section in view, still names what the viewport shows.
+It shoots a transparent fixed box, the cover, appended to the root element, and removes the cover
+on every path. The cover's `position`, `inset`, `opacity`, and `pointer-events` declarations are
+inline and important, so a page rule marked important does not paint the cover over the shot. A
+tester that is not at the declared viewport is resized to it first, and the frame then holds the
+scroll the page keeps at that size. The cover's box is read after it is appended, and a box that
+does not start at the viewport's origin at the viewport's size refuses the shot with
 `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`.
+The check reads the box, not its cause: a root element that becomes the cover's containing block,
+through a transform or a paint containment, lays the cover out over its own box, so the shot is
+refused wherever that box differs from the viewport, as a scrolled or a taller document's does, and
+taken where the two coincide. `captureViewport` hands back the pane and the scroll as
+`captureFrame` does; `recordScroll` records the scroll of the window and of every scroll container
+before either stages and returns the callback that restores it.
 
 A region that still hides rows after the settling refuses the capture with
 `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled`.
@@ -1010,11 +1019,13 @@ pixels; a file with no PNG header is refused without a size.
 
 `createPortfolio` refuses an unregistered variant name at creation, so a run cannot write a filename
 naming a combination it did not render. A portfolio left un-`enabled` is the ordinary run: `place`
-resizes nothing and writes nothing, so a journey calls it unconditionally. It
-still refuses an unregistered state and a second placement of one state, so a journey that names a
+and `view` resize nothing and write nothing, so a journey calls them unconditionally. They
+still refuse an unregistered state and a second placement of one state, so a journey that names a
 state wrongly fails the ordinary run rather than the first capture run; `placements` and `paths`
 stay empty, because they answer for what was written, while `observed` lists every state `place`
-accepted, written or not, in placement order. A portfolio created with `state` writes that one
+and `view` accepted, written or not, in placement order. A placement holds its state from before
+its first await until it settles, so a second placement of that state started meanwhile is refused
+as already placed, and a placement that throws leaves its state free to place again. A portfolio created with `state` writes that one
 state alone and accepts every other registered state unwritten, and creation refuses a `state` the
 registry does not carry. A `scope` handler names one directory segment per state: `files` and every
 written path carry it, and `expandCaptures` takes the same handler, so both refuse a scope that is
@@ -1022,9 +1033,12 @@ empty, `.`, `..`, or carries a slash. An enabled `place` applies the variant and
 `<directory>/<state>--<variant>.png`, or `<directory>/<scope>/<state>--<variant>.png`, through
 `captureFrame`, so it stages the pane at the variant's size, covers the whole document, verifies the
 written bytes, and records only a path that read back as this run's own frame. A portfolio created
-with `unrolled` passes it to every frame `place` writes. A placement takes a `PlacementOptions` value:
-its `element` option shoots one element, and its `visible` option shoots the viewport at the scroll
-the journey reached, which an unrolled portfolio refuses. The tester comes back
+with `unrolled` passes it to every frame `place` writes. `place` takes an element to shoot that
+element alone. `view` writes the same filename through `captureViewport`, so it shoots the declared
+viewport at the scroll the journey reached. An unrolled portfolio refuses every `view` in every
+run, enabled or not, before it reads the projection, with
+`Capture state "<state>" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled`,
+the text `describeUnrolledView` renders. The tester comes back
 at the viewport it had before the placement, so a journey that places a state carries on at its own
 size rather than at the variant's. `observed`, `placements`, and `paths` hand out snapshots, so a list read
 before a placement stays what it was.
@@ -1038,7 +1052,8 @@ drops when it stops. There is no shared instance: a file that needs one journal 
 one per scenario.
 
 The filename law is injective within one run: one variant is selected, and every filename is
-`<state>--<variant>.png`. A duplicate filename therefore implies a duplicate placement, which
+`<state>--<variant>.png`, or `<scope>/<state>--<variant>.png` under a `scope` handler, which names
+one scope per state. A duplicate filename therefore implies a duplicate placement, which
 `place` already refuses. Any future naming change that breaks this injectivity must reintroduce a
 collision refusal before writing.
 
@@ -1356,9 +1371,10 @@ adopted.release()
 
 #### `PortfolioInterface`
 
-| Method  | Returns                        | Summary                                                                                                |
-| ------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `place` | `Promise<string \| undefined>` | Places one registered state: applies the variant, stages the pane, and writes the verified screenshot. |
+| Method  | Returns                        | Summary                                                                                                                                                                                       |
+| ------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `place` | `Promise<string \| undefined>` | Places one registered state: applies the variant, stages the pane, and writes the verified screenshot.                                                                                        |
+| `view`  | `Promise<string \| undefined>` | Places one registered state as the declared viewport at the scroll the journey reached: applies the variant, stages the pane at the variant's size alone, and writes the verified screenshot. |
 
 #### `JournalInterface`
 
@@ -1523,10 +1539,9 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                                                                                                      | `stagePane`                                                     |
 | `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane[; scroll regions still hiding rows: <region> hides <n> px, …]`                            | `captureFrame`                                                  |
 | `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled` | `captureFrame`                                                  |
-| `Capture frame at <path> is visible, so it takes neither an element nor unrolled`                                                                                          | `captureFrame`                                                  |
-| `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`                             | `captureFrame`                                                  |
-| `Capture frame was written to <path> where <path> was asked for`                                                                                                           | `captureFrame`, `verifyFrame`                                   |
-| `Capture frame at <path> is not the one this run shot`                                                                                                                     | `captureFrame`, `verifyFrame`                                   |
+| `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`                             | `captureViewport`                                               |
+| `Capture frame was written to <path> where <path> was asked for`                                                                                                           | `captureFrame`, `captureViewport`, `verifyFrame`                |
+| `Capture frame at <path> is not the one this run shot`                                                                                                                     | `captureFrame`, `captureViewport`, `verifyFrame`                |
 | `Capture path must be absolute: <path>`                                                                                                                                    | `readCapture`                                                   |
 | `Capture frame at <path> could not be read`                                                                                                                                | `readFrame`                                                     |
 | `Capture frame at <path> is not an image this browser decodes`                                                                                                             | `readFrame`                                                     |
@@ -1537,8 +1552,9 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Shot pixel position must be a fraction from 0 to 1`                                                                                                                       | `readShotPixel`                                                 |
 | `Capture variant "<name>" is not registered`                                                                                                                               | `createPortfolio`                                               |
 | `Capture scope "<scope>" of state "<state>" is not one path segment`                                                                                                       | `expandCaptures`, `createPortfolio`                             |
-| `Capture state "<state>" is not registered`                                                                                                                                | `createPortfolio`, `place`                                      |
-| `Capture state "<state>" is already placed`                                                                                                                                | `place`                                                         |
+| `Capture state "<state>" is not registered`                                                                                                                                | `createPortfolio`, `place`, `view`                              |
+| `Capture state "<state>" is already placed`                                                                                                                                | `place`, `view`                                                 |
+| `Capture state "<state>" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled`                     | `view`, `describeUnrolledView`                                  |
 | `IndexedDB database "<name>" could not be deleted`                                                                                                                         | `removeDatabase`                                                |
 | `IndexedDB database "<name>" is blocked by an open connection`                                                                                                             | `removeDatabase`                                                |
 | `Key sequence "<keys>" was sent with nothing focused`                                                                                                                      | `pressKeys`                                                     |
@@ -4116,6 +4132,8 @@ portfolio.files // the same four names, so a proof compares one expansion agains
 
 // Placed from inside the journey that reached the state, right after the assertion that proves it.
 await portfolio.place('start-empty')
+// Shot as the declared viewport at the scroll the journey reached, rather than the whole page.
+await portfolio.view('answer-ideal')
 // A run that omits `enabled` returns undefined here, resizes nothing, and writes nothing.
 
 portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is not registered
@@ -4457,12 +4475,17 @@ Each entry names the contracts its file proves. The test names carry the cases.
   missing paths. `captureFrame` takes a real file written, read back, and matched, with a planted file as the
   comparison's negative control, one element shot rather than the page, and a pane pinned to the
   wrong size by a rule of higher specificity, which is the refusal that also proves the release runs
-  on the failing path. A visible frame of five 400-row bands, scrolled to row 600 with the
-  viewport prepared and with it resized, holds rows 600 to 999, green at the top and blue on the
+  on the failing path. `captureViewport` takes five 400-row bands, scrolled to row 600 with the
+  viewport prepared and with it resized, and holds rows 600 to 999, green at the top and blue on the
   floor, with no resize past the starting height and the scroll kept; the plain frame of the same
-  page is its control, restaged to 2000 rows and ending on purple. A visible frame refuses an
-  element and an unrolled frame before it stages, and a root element under a paint containment
-  refuses the cover with the pane and the scroll handed back. It also takes a document taller than
+  page is its control, restaged to 2000 rows and ending on purple. A page rule marked important
+  that sets `opacity` and a magenta background on the root element's `div` children leaves that
+  frame green over blue, beside the control that the cover's declarations written without priority
+  read the rule's opacity. A root element under a paint containment refuses the cover with the pane
+  and the scroll handed back. A type assertion pins `ViewportOptions` to the path and the viewport
+  and keeps `FrameOptions` without a viewport switch. `recordScroll` scrolls the window and a scroll
+  container back to the positions it recorded, and `describeUnrolledView` renders the refusal text
+  word for word. It also takes a document taller than
   the pane, whose frame equals the
   fixture's own declared 1600 rows and ends on the background the document declares rather than on
   the runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height
@@ -4524,7 +4547,10 @@ Each entry names the contracts its file proves. The test names carry the cases.
   the box its scroll height reads, with a trailing margin counted, and a descendant capped at an
   inner frame's clip edge, and leaves out a fixed box and an absolute box laid out against a block
   outside the region until the region is positioned; it reads the rows a host scrolls in its own
-  shadow root and the slotted rows a shadow scroller holds. The `collectRegionRows` function
+  shadow root and the slotted rows a shadow scroller holds. `measureRegion` and `measureContent`
+  each read a shared clipping ancestor's computed style as many times under twelve rows as under
+  one, counted through `recordStyleReads`, beside the control that a memo per row reads it again
+  for every row. The `collectRegionRows` function
   takes the flat tree through an open shadow root and its slot, an absolute box under a positioned
   ancestor and a fixed box under a transformed one, and leaves out an absolute box and a fixed box
   with their subtrees where no ancestor at or under the region contains them. The `containsFixed`
@@ -4605,10 +4631,13 @@ Each entry names the contracts its file proves. The test names carry the cases.
   the variant, resizes the viewport, writes a real file through the provider, records it, and hands
   out snapshots rather than its own lists; it refuses an unregistered state and a second placement of
   one state; a placement handed an element writes a frame that is not the whole page's and leaves
-  the staged pane released; a visible placement of five 400-row bands scrolled to row 600 writes the
-  844-row viewport ending on yellow beside a placement of the page that writes 2000 rows ending on
-  purple, with the scroll kept; and an unrolled portfolio refuses a visible placement and records
-  nothing. `createJournal` takes a step recorded only while it is started, every
+  the staged pane released; `view` of five 400-row bands scrolled to row 600 writes the 844-row
+  viewport ending on yellow beside a placement of the page that writes 2000 rows ending on purple,
+  with the scroll kept; an unrolled portfolio refuses `view` enabled, disabled, and projected away
+  alike and records nothing, while the disabled and projected runs accept `place` for that state;
+  the second of two concurrent `place` calls, and of two concurrent `view` calls, for one state is
+  refused as already placed while the first writes; and a `view` that throws leaves its state free
+  for a later `view` that writes. `createJournal` takes a step recorded only while it is started, every
   console channel forwarded to the recorder that was there, a call's arguments joined into a line,
   an uncaught error and an unhandled rejection recorded and then ignored after the stop, the
   channels handed back by identity with a second stop proven a no-op against a replacement, a restart
