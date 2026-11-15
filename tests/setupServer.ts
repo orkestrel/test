@@ -200,6 +200,68 @@ export function overrideTemporaryDirectory(path: string): () => void {
 	}
 }
 
+/**
+ * Holds a Node program that keeps a worker thread running, prints `ready`, and exits from its main
+ * thread when its standard input ends.
+ */
+export const THREAD_EXIT_SOURCE = `const { Worker } = require('node:worker_threads')
+new Worker('for (;;) {}', { eval: true }).once('online', () => {
+	process.stdin.once('end', () => process.exit(0))
+	process.stdin.resume()
+	process.stdout.write('ready\\n')
+})`
+
+/**
+ * Holds a Node program that starts a child which exits immediately, prints the child's pid, and then
+ * blocks its own thread, so its event loop never reaps the child.
+ */
+export const ZOMBIE_SOURCE = `const { spawn } = require('node:child_process')
+const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+child.once('spawn', () => {
+	process.stdout.write(String(child.pid) + '\\n')
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)
+})`
+
+/**
+ * Scans the state letter of every thread of one process from the Linux process table.
+ *
+ * @param pid - The process id.
+ * @returns Each thread id whose `stat` reads mapped to its state letter, or `undefined` when the
+ * process's `task` directory cannot be listed.
+ */
+export function scanThreadStates(pid: number): Readonly<Record<string, string>> | undefined {
+	const directory = join('/proc', String(pid), 'task')
+	const listing = attempt(() => readdirSync(directory))
+	if (!listing.success) return undefined
+	return Object.freeze(
+		Object.fromEntries(
+			listing.value.flatMap((thread) => {
+				const text = attempt(() => readFileSync(join(directory, thread, 'stat'), 'utf8'))
+				const state = text.success ? /\) (\S) [^)]*$/u.exec(text.value)?.[1] : undefined
+				return state === undefined ? [] : [[thread, state]]
+			}),
+		),
+	)
+}
+
+/**
+ * Checks whether a thread scan shows a process's leader exited while another of its threads runs.
+ *
+ * @param pid - The process id, which is also its leader thread's id.
+ * @param states - A {@link scanThreadStates} reading of that process.
+ * @returns True if the leader reads `Z` and another thread reads a state other than `Z` or `X`;
+ * false otherwise.
+ */
+export function matchesExitWindow(
+	pid: number,
+	states: Readonly<Record<string, string>> | undefined,
+): boolean {
+	return (
+		states?.[String(pid)] === 'Z' &&
+		Object.values(states).some((state) => state !== 'Z' && state !== 'X')
+	)
+}
+
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // The built output directory convention a browser face may publish from. Every
 // selection reads this prefix off the export target and never off the subpath name. A

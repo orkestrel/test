@@ -1143,7 +1143,7 @@ adds it to a run whose command line names the reporters.
 | `readErrorCode`           | function | `(error: unknown) => string \| undefined`                                                                                                                    | Reads the `code` an unknown thrown value carries.                                                                                  |
 | `createLink`              | function | `(path: string, source: string) => void`                                                                                                                     | Creates a symbolic link with a directory-junction fallback for hosts that refuse symbolic links.                                   |
 | `removeTree`              | function | `(path: string) => void`                                                                                                                                     | Removes a directory tree, retrying past a transient Windows handle-release race.                                                   |
-| `isRunning`               | function | `(pid: number) => boolean`                                                                                                                                   | Reports whether a process id names a live process.                                                                                 |
+| `isRunning`               | function | `(pid: number) => boolean`                                                                                                                                   | Reports whether a process id names a live process, reading each of its threads on Linux.                                           |
 | `waitForSocketClose`      | function | `(socket: Socket, options?: WaitOptions) => Promise<void>`                                                                                                   | Waits for a socket to close, accepting a peer reset as a forced close.                                                             |
 | `normalizeProgressPath`   | function | `(file: string, root: string) => string`                                                                                                                     | Normalizes a module or stack-frame path to the form a progress line carries.                                                       |
 | `extractProgressError`    | function | `(error: SerializedError, root: string) => ProgressError`                                                                                                    | Extracts the message line and location a progress line keeps from one Vitest error.                                                |
@@ -4688,7 +4688,9 @@ Each entry names the contracts its file proves. The test names carry the cases.
   holding the tree as its working directory, and the hosts split rather than branching at
   runtime: on Windows the un-retried `rmSync` baseline is proven to fail first, so the retry is what
   succeeds, and on POSIX the removal is permitted outright. `isRunning` takes the process making the
-  call, a child that has exited, and a pid the host refuses without throwing. `waitForSocketClose`
+  call, a child that has exited, a pid the host refuses without throwing, pid `0`, and, where the
+  host publishes each thread's state, a child read while its leader thread has exited and a worker
+  thread still runs, and an unreaped zombie whose every thread has exited. `waitForSocketClose`
   takes an already-closed socket, a peer that ends the connection, a reset waited past to the close
   that follows it, a socket error that is not a reset, a socket left open past the budget, both
   listeners removed after it resolves and after it rejects, an abort before and during the wait, and
