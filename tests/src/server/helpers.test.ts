@@ -1934,7 +1934,12 @@ describe('matchesProgressReporter', () => {
 		revoke()
 		expect(matchesProgressReporter(reporter)).toBe(true)
 		expect(matchesProgressReporter(copy)).toBe(true)
-		expect(Object.keys(reporter)).toEqual([])
+		expect(Object.getOwnPropertyDescriptor(reporter, PROGRESS_BRAND)).toEqual({
+			value: reporter,
+			writable: false,
+			enumerable: false,
+			configurable: false,
+		})
 		expect(matchesProgressReporter(borrowed)).toBe(false)
 		expect(matchesProgressReporter(Object.create(reporter))).toBe(false)
 		expect(matchesProgressReporter(new Proxy(reporter, {}))).toBe(false)

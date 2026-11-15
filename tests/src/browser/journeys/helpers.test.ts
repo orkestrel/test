@@ -4016,6 +4016,21 @@ describe('settleCapture', () => {
 		expect(spin.getAnimations()[0]?.playState).toBe('running')
 	})
 
+	it('waits out a transition the page starts from an animation-frame callback after the act', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		const box = requireValue(
+			buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end'),
+		)
+		requestAnimationFrame(() => startTransition(box, false))
+		const resume = await settleCapture({ pointer: false, budget: 2000 })
+		try {
+			expect(readStyle(box, 'opacity')).toBe('0.5')
+			expect(readAnimations(box).finite).toHaveLength(0)
+		} finally {
+			resume()
+		}
+	})
+
 	it('resolves after a finished transition has reached the end listener that finalizes the layout', async () => {
 		restartTransition()
 		const box = requireValue(document.querySelector<HTMLElement>('.settle-end'))

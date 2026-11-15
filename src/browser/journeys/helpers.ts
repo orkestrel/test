@@ -2430,9 +2430,11 @@ export function readAnimations(element: Element): AnimationResult {
  * the same one, so each is paused at its first frame. Call the resume after the frame is shot; a
  * capture that throws still owes it, so call it from a `finally` block.
  *
- * The browser dispatches an animation's end event, such as `transitionend`, after its `finished`
- * promise settles, so the settle yields one task after the wait: a page listener that finalizes
- * its layout on that event has run when the settle resolves.
+ * The settle waits one frame before it reads the animations, so a transition the page starts from
+ * an animation-frame callback after the act is running when the wait reads it. The browser
+ * dispatches an animation's end event, such as `transitionend`, after its `finished` promise
+ * settles, so the settle yields one task after the wait: a page listener that finalizes its layout
+ * on that event has run when the settle resolves.
  *
  * The subject is the whole document, its root element included. The pointer parks through
  * {@link parkPointer}, which sends no button release, so a held press stays held either way. Pass
@@ -2451,6 +2453,7 @@ export function readAnimations(element: Element): AnimationResult {
  */
 export async function settleCapture(options?: SettleOptions): Promise<() => void> {
 	if (options?.pointer ?? true) await parkPointer()
+	await waitForFrame()
 	await waitForAnimations(document.documentElement, options)
 	await waitForDelay(0)
 	const held = readAnimations(document.documentElement).endless

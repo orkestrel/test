@@ -713,9 +713,10 @@ export function measureContent(): number {
  * there. Staging and releasing as a pair resizes and then undoes the resize, so the journey step
  * after it runs at the size the file started at.
  *
- * The rule is declared rather than written inline, because the runner writes its own scale onto the
- * pane as inline custom properties and rewrites them whenever the tester resizes. A declared rule
- * marked important outranks an inline value and survives every rewrite. It finds the pane by the
+ * The rule is declared rather than written inline, because the runner writes its scale as an inline
+ * `transform` on the tester's iframe and the viewport as inline custom properties on the body, and
+ * rewrites them whenever the tester resizes. A declared rule marked important outranks an inline
+ * value and survives every rewrite. It finds the pane by the
  * tester it contains as well as by {@link CAPTURE_PANE}, because a re-render between the staging and
  * the shot replaces the node and takes any attribute of ours with it.
  *

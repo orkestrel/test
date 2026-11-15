@@ -2220,8 +2220,9 @@ the helper rather than to the host, and each names what to reach for instead.
   for one frame.
 - **`settleCapture` holds endless animations until its resume runs.** It parks the pointer through
   `parkPointer`, so a held press stays held and only loses its hover and pressed paint; `pointer: false`
-  leaves the pointer, its hover, and that paint where they are. It waits out every finite animation
-  in the document, root element included, yields one task so that a listener on an animation's end
+  leaves the pointer, its hover, and that paint where they are. It waits one frame, so a transition
+  the page starts from an animation-frame callback after the act is running, waits out every finite
+  animation in the document, root element included, yields one task so that a listener on an animation's end
   event, such as `transitionend`, has run, then pauses each endless one at its first frame and
   resolves to the resume. Call the resume from a `finally` block after the frame is shot. A settle
   whose wait exhausts throws before it holds anything, so it owes no resume.
@@ -4358,7 +4359,8 @@ Each entry names the contracts its file proves. The test names carry the cases.
   takes a hovered control's transition waited out and a spinner held at its first frame until the
   resume sets it running, a held press whose hover and pressed paint `pointer: false` leaves in
   place beside the default park that takes both away, an exhausted wait and an aborted one refused
-  with nothing held, a transition's end listener run by the time it resolves, and one frame shot
+  with nothing held, a transition the page starts from an animation-frame callback waited out, a
+  transition's end listener run by the time it resolves, and one frame shot
   across repeated settles of a held spinner, a parked hover, and a finalized transition, beside a
   running spinner, a kept hover, and an unfinalized transition that each shoot another.
   `collectScrollRegions` takes a vertical and a horizontal scroller beside a box whose content
