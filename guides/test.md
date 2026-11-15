@@ -460,9 +460,7 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `collectScrollContainers`  | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the scroll containers in an element's subtree, the element included unless it is the body or the root element.                                                                                                                                                         |
 | `collectUnrolledRegions`   | function | `(element?: Element) => readonly Element[]`                                                                                                                                                   | Collects the vertical scroll regions an unrolled frame releases in an element's subtree, the element included unless it is the body or the root element.                                                                                                                        |
 | `clipsOverflow`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element clips its descendants' overflow.                                                                                                                                                                                                                     |
-| `overflowsClip`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element's border box reaches past the snapport of an ancestor that clips its overflow, or cannot be compared with it.                                                                                                                                        |
-| `transformsSpace`          | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element or one of its flat-tree ancestors maps the boxes under it into another coordinate space.                                                                                                                                                             |
-| `readSnapport`             | function | `(element: Element) => DOMRectReadOnly \| undefined`                                                                                                                                          | Reads the snapport of an element: its client area, in the viewport coordinates its box is read in, less its computed scroll padding on each side.                                                                                                                               |
+| `needsScroll`              | function | `(subject: Element) => boolean`                                                                                                                                                               | Reports whether a shot of an element can differ between the clip route and the element path, which scrolls the element into view.                                                                                                                                               |
 | `measureContent`           | function | `() => number`                                                                                                                                                                                | Measures the row the document's own content ends on, in document coordinates.                                                                                                                                                                                                   |
 | `containsFixed`            | function | `(element: Element) => boolean`                                                                                                                                                               | Reports whether an element is the containing block of the fixed-position boxes inside it.                                                                                                                                                                                       |
 | `collectFlatDescendants`   | function | `(element: Element) => readonly Element[]`                                                                                                                                                    | Collects the elements under an element in the flat tree, in the order a browser paints them.                                                                                                                                                                                    |
@@ -841,20 +839,22 @@ command, and `captureFrame` and `captureViewport` take the clip route only on a 
 it, while every other page keeps the element path. The clip route shoots the subject's box, rounded
 out to whole pixels the way Playwright rounds an element screenshot, off the runner page through
 `page.screenshot({ clip })`, and writes the element path's bytes without the element path's locator
-and stability round trips. The element path scrolls every scroll container around its subject until
-the subject shows, and the clip route scrolls none, so a subject `overflowsClip` reports takes the
-element path. It reports a subject whose box reaches past, or lies within 1 px of, the snapport of
-an ancestor below the root element that clips its overflow: the ancestor's client area less its
-scroll padding, which `readSnapport` reads. It also reports every subject of such an ancestor that
-sits under a transform, an individual `rotate`, `scale`, or `translate`, or a `zoom`, which
-`transformsSpace` reads, because the subject's box is then measured on screen and the client area
-is not. A transform between the ancestor and the subject keeps the route. A row a list scrolled
-past, wholly or in part, or slid under a sticky header the list's scroll padding makes room for, is
-written as the element path writes it, with the list scrolled to it; a row flush with an edge
-costs the route's gain and keeps the bytes. `shootClip` writes the file through Vitest's own
-`writeFile`
-command, so Vitest's write and `server.fs` checks apply. This package's `configs/commands.ts`
-registers it, so this package's capture proofs run the route.
+and stability round trips. The element path scrolls its subject into view, and the clip route
+scrolls nothing, so a subject `needsScroll` reports takes the element path. The check models no
+geometry. It reports a subject under any ancestor below the root element that clips its overflow,
+the body included, whether or not that ancestor cuts the subject. It also reports a page whose root
+element computes a `scroll-padding` side other than `auto` or `0px`, and a page whose root scrollbar
+takes room from the window, which a Chromium launch lays out only without Playwright's
+`--hide-scrollbars` default argument. It reports a subject whose box, rounded out to whole pixels,
+leaves the window, and a subject that computes a `scroll-margin` side other than `0px`. A row of a
+scrolling list is written as the element path writes it, with the list scrolled to it, and a row
+the list shows whole costs the route's gain and keeps the bytes. A transform, a zoom, or an
+`offset-path` with no clipping ancestor keeps the route. A subject assigned to a slot of a closed
+shadow root climbs through its light parent, so a scroller inside that shadow root is not read, and
+the route writes the subject as that scroller shows it rather than scrolled into view. `shootClip`
+writes the file through Vitest's own `writeFile` command, so Vitest's write and `server.fs` checks
+apply. This package's `configs/commands.ts` registers it, so this package's capture proofs run the
+route.
 
 Set `contextOptions.viewport` in the Playwright provider options to at least the largest frame the
 suite shoots. Playwright trims a page clip to the context's window, which is 1280x720 where no

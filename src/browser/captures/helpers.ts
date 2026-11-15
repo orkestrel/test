@@ -305,128 +305,52 @@ export function clipsOverflow(element: Element): boolean {
 }
 
 /**
- * Reports whether an element's border box reaches past the snapport of an ancestor that clips its
- * overflow, or cannot be compared with it.
+ * Reports whether a shot of an element can differ between the clip route and the element path,
+ * which scrolls the element into view.
  *
- * @param element - The element to read.
- * @returns True if the nearest clipping ancestor below the root element, or one of its own
- * ancestors, maps its box into another coordinate space, as {@link transformsSpace} reads it, or if
- * any side of the element's box lies outside, or within 1 px inside, the snapport
- * {@link readSnapport} reads on a clipping ancestor the {@link collectClippingAncestors} helper
- * finds; false otherwise.
- * @throws Thrown when the element is not connected to a document, as the
+ * @param subject - The element to shoot.
+ * @returns True if the subject has a clipping ancestor other than the root element, the root
+ * element computes a `scroll-padding` side other than `auto` or `0px`, the root element's client
+ * area differs from the window's inner size, the subject's box rounded out to whole pixels leaves
+ * the window, or the subject computes a `scroll-margin` side other than `0px`; false otherwise.
+ * @throws Thrown when the subject is not connected to a document, as the
  * {@link collectClippingAncestors} helper throws.
  *
  * @remarks
- * Every side counts, so a row a list scrolled past reads as reaching past it, and so does a card
- * past either edge of a horizontal strip. The snapport leaves out the room the ancestor's scroll
- * padding reserves, so a row under a sticky header that padding makes room for reads as reaching
- * past it too.
- *
- * The comparison leans toward reaching past. The client area it starts from is whole pixels while
- * the boxes are fractional, so an element within 1 px of an edge reads as reaching past it; the
- * area takes no `overflow-clip-margin` length, so an element inside that margin of a `clip`
- * overflow does too; and a box under a transform, an individual `rotate`, `scale`, or `translate`,
- * or a `zoom` on the clipping ancestor or above it is measured on screen while the client area is
- * not, so it reads as reaching past without a comparison. A transform between the ancestor and the
- * element moves the element's box alone, which stays comparable. The root element is left out of
- * the ancestors, because the window bounds what it shows and a capture compares the frame with the
- * window itself.
+ * Each condition is one where the element path can scroll the subject while the clip route scrolls
+ * nothing, so the two can write other bytes. The check models no geometry: a subject under any
+ * ancestor that clips its overflow, the body included, reads as needing the scroll whether or not
+ * that ancestor cuts it, which costs the frame the route's gain and keeps its bytes. A transform, a
+ * zoom, or an `offset-path` with no clipping ancestor keeps the route, because both paths shoot the
+ * box the screen shows. A root scrollbar takes room from the window only where the browser lays one
+ * out, which Playwright's `--hide-scrollbars` default argument prevents. Each start edge of the box
+ * rounds down and each end edge rounds up before it is compared with the window, with no tolerance.
+ * The climb is the one {@link collectClippingAncestors} takes, so a subject assigned to a slot of a
+ * closed shadow root climbs through its light parent and a scroller inside that shadow tree is not
+ * read.
  *
  * @example
  * ```ts
- * overflowsClip(row) // true where the list around the row is scrolled so the row leaves it
+ * needsScroll(row) // true where a scrolling list holds the row
  * ```
  */
-export function overflowsClip(element: Element): boolean {
-	const frames = collectClippingAncestors(element).filter(
-		(frame) => frame !== frame.ownerDocument.documentElement,
-	)
-	const nearest = frames.at(0)
-	if (nearest === undefined) return false
-	if (transformsSpace(nearest)) return true
-	const box = element.getBoundingClientRect()
-	return frames.some((frame) => {
-		const port = readSnapport(frame)
-		return (
-			port === undefined ||
-			box.left < port.left + 1 ||
-			box.top < port.top + 1 ||
-			box.right > port.right - 1 ||
-			box.bottom > port.bottom - 1
-		)
-	})
-}
-
-/**
- * Reports whether an element or one of its flat-tree ancestors maps the boxes under it into another
- * coordinate space.
- *
- * @param element - The element to read.
- * @returns True if the element or an ancestor the {@link readFlatParent} helper climbs to computes a
- * `transform`, `rotate`, `scale`, or `translate` value other than the `none` keyword, or a `zoom`
- * value other than `1`; false otherwise.
- *
- * @remarks
- * The `getBoundingClientRect` method reports a box as the screen shows it, through every such
- * mapping above it, while the `clientWidth` and `clientHeight` properties report a box in its own
- * untransformed space, so the two compare only where neither mapping applies.
- *
- * @example
- * ```ts
- * transformsSpace(list) // true where a wrapper above the list declares `transform: scale(0.5)`
- * ```
- */
-export function transformsSpace(element: Element): boolean {
-	const mapped =
-		['transform', 'rotate', 'scale', 'translate'].some(
-			(property) => readStyle(element, property) !== 'none',
-		) || readStyle(element, 'zoom') !== '1'
-	if (mapped) return true
-	const parent = readFlatParent(element)
-	return parent !== undefined && transformsSpace(parent)
-}
-
-/**
- * Reads the snapport of an element: its client area, in the viewport coordinates its box is read
- * in, less its computed scroll padding on each side.
- *
- * @param element - The element to read.
- * @returns The snapport, or `undefined` where a computed `scroll-padding` side is neither the `auto`
- * keyword, a pixel length, nor a percentage.
- *
- * @remarks
- * The client area is the padding box less any scrollbar, the part of a scroll container that shows
- * its content. The `auto` keyword reserves nothing, and a percentage resolves against the client
- * area's height for the top and bottom sides and its width for the left and right ones, as the
- * scroll padding of a scroll container resolves. A computed value this reads no length from, such
- * as a `calc()` expression that mixes a percentage with a length, reads as no snapport, so a caller
- * can lean toward the element path.
- *
- * @example
- * ```ts
- * readSnapport(list)?.top // the list's top edge plus its 40 px scroll-padding-top
- * ```
- */
-export function readSnapport(element: Element): DOMRectReadOnly | undefined {
-	const placed = element.getBoundingClientRect()
-	const [top, right, bottom, left] = ['top', 'right', 'bottom', 'left'].map((side) => {
-		const value = readStyle(element, `scroll-padding-${side}`)
-		const base = side === 'top' || side === 'bottom' ? element.clientHeight : element.clientWidth
-		const length = /^(-?\d*\.?\d+)(px|%)$/u.exec(value)
-		if (value === 'auto') return 0
-		if (length === null) return undefined
-		const amount = Number.parseFloat(length[1] ?? '')
-		return length[2] === '%' ? (amount * base) / 100 : amount
-	})
-	if (top === undefined || right === undefined || bottom === undefined || left === undefined) {
-		return undefined
-	}
-	return new DOMRectReadOnly(
-		placed.left + element.clientLeft + left,
-		placed.top + element.clientTop + top,
-		element.clientWidth - left - right,
-		element.clientHeight - top - bottom,
+export function needsScroll(subject: Element): boolean {
+	const root = subject.ownerDocument.documentElement
+	const box = subject.getBoundingClientRect()
+	return (
+		collectClippingAncestors(subject).some((frame) => frame !== root) ||
+		readStyle(root, 'scroll-padding')
+			.split(' ')
+			.some((side) => side !== 'auto' && side !== '0px') ||
+		root.clientWidth !== window.innerWidth ||
+		root.clientHeight !== window.innerHeight ||
+		Math.floor(box.left) < 0 ||
+		Math.floor(box.top) < 0 ||
+		Math.ceil(box.right) > window.innerWidth ||
+		Math.ceil(box.bottom) > window.innerHeight ||
+		readStyle(subject, 'scroll-margin')
+			.split(' ')
+			.some((side) => side !== '0px')
 	)
 }
 
@@ -1381,13 +1305,12 @@ export async function releaseMedia(): Promise<void> {
  * takes the clip route that {@link takeFrameShot} describes, for a subject whose box held still
  * across the two frames of the last staging, as {@link stagePane} reads it. The clip route writes the
  * element path's bytes without the element path's locator and stability round trips. The element
- * path scrolls every scroll container around its subject until the subject shows, and the clip route
- * scrolls none, so a subject {@link overflowsClip} reports keeps the element path: one whose box
- * reaches past, or lies within 1 px of, the snapport of an ancestor below the root element that
- * clips its overflow, and one whose clipping ancestor sits under a transform or a zoom, where its box
- * and that ancestor's client area cannot be compared. A frame whose clip leaves the runner
- * window, a frame the tester must be offset for, a subject that moved, and a frame the command
- * refuses for a page with no emulated window keep the element path too.
+ * path scrolls its subject into view, and the clip route scrolls nothing, so a subject
+ * {@link needsScroll} reports keeps the element path: one under any ancestor below the root element
+ * that clips its overflow, one on a page whose root element reserves scroll padding or loses room to
+ * a scrollbar, one whose box leaves the window, and one with a scroll margin. A frame whose clip
+ * leaves the runner window, a frame the tester must be offset for, a subject that moved, and a frame
+ * the command refuses for a page with no emulated window keep the element path too.
  *
  * To shoot the declared viewport at the scroll the page holds rather than the document, call
  * {@link captureViewport}.
@@ -1992,10 +1915,9 @@ export function readFrameHeight(
  * @param handler - The registered clip command. Omit it to keep the element path.
  * @remarks
  * Given a handler, the shot takes the clip route through {@link takeClipShot} for a subject that
- * `checkVisibility` reports visible with its opacity and visibility checks, that
- * {@link overflowsClip} does not report, which takes a subject clear of every clipping ancestor's
- * snapport in a space it can compare, and whose clip fits the runner window. Every other subject takes the element path, which scrolls each scroll container
- * around the subject until it shows: a `visibility: hidden`, a
+ * `checkVisibility` reports visible with its opacity and visibility checks, unless
+ * {@link takeClipShot} hands the subject back. Every other subject takes the element path, which
+ * scrolls each scroll container around the subject until it shows: a `visibility: hidden`, a
  * `display: none`, or an empty-box subject waits there until Playwright counts it visible, and an
  * `opacity: 0` subject is written at once, because Playwright counts it visible. Pass a handler only
  * for a subject that held still, as {@link captureFrame} does: the clip route runs no stability wait.
@@ -2021,8 +1943,7 @@ export async function takeFrameShot(
 	const subject = element ?? document.body
 	const clipped =
 		handler === undefined ||
-		!subject.checkVisibility({ opacityProperty: true, visibilityProperty: true }) ||
-		overflowsClip(subject)
+		!subject.checkVisibility({ opacityProperty: true, visibilityProperty: true })
 			? undefined
 			: await takeClipShot(handler, options.path, subject)
 	if (clipped !== undefined) {
@@ -2104,8 +2025,8 @@ export function readFrameClip(subject: Element): FrameClip | undefined {
  * @param subject - The element whose box the frame covers.
  * @returns The written shot, or `undefined` where the subject's box changed during the fonts wait,
  * {@link readFrameClip} reads no clip, the clip leaves the runner window, which Playwright trims a
- * page clip to, or the command refuses the clip with the {@link describeWindowlessClip} text of a
- * page with no emulated window.
+ * page clip to, {@link needsScroll} reports the subject, or the command refuses the clip with the
+ * {@link describeWindowlessClip} text of a page with no emulated window.
  * @throws Thrown when the command refuses the clip for another reason, naming the clip and the
  * window, and when the command fails.
  *
@@ -2143,7 +2064,8 @@ export async function takeClipShot(
 		clip.x < 0 ||
 		clip.y < 0 ||
 		clip.x + clip.width > view.innerWidth ||
-		clip.y + clip.height > view.innerHeight
+		clip.y + clip.height > view.innerHeight ||
+		needsScroll(subject)
 	) {
 		return undefined
 	}
