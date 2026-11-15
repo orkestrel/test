@@ -276,52 +276,6 @@ export function srcServer(override?: UserConfig): UserConfig {
 	return mergeOverride(project, override)
 }
 
-function resolveBinFilename(_format: string, entry: string): string {
-	return `${entry}.js`
-}
-
-function resolveBinExternal(id: string): boolean {
-	return id.startsWith('@src/') || resolveExternal(id, { peers, refused: [], siblings: [] })
-}
-
-export function srcBin(override?: UserConfig): UserConfig {
-	const project: UserConfig = {
-		resolve,
-		publicDir: false,
-		plugins: [outputBoundary('dist/bin')],
-		build: {
-			emptyOutDir: true,
-			sourcemap: true,
-			minify: false,
-			lib: {
-				entry: {
-					reporter: resolveWorkspacePath('src/bin/reporter.ts'),
-				},
-				formats: ['es'],
-				fileName: resolveBinFilename,
-			},
-			outDir: 'dist/bin',
-			target: 'node22',
-			rolldownOptions: {
-				onLog: enforceBuildLog,
-				external: resolveBinExternal,
-			},
-		},
-		test: {
-			name: { label: 'src:bin', color: 'yellow' },
-			include: ['tests/src/bin/**/*.test.ts'],
-			setupFiles: ['./tests/setup.ts', './tests/setupServer.ts'],
-			environment: 'node',
-			browser: { enabled: false },
-			// A bin test drives the real executable over a real temporary repository, so it
-			// spends seconds in process startup and filesystem work rather than milliseconds.
-			// Vitest's five-second default clears one alone and times out under a full suite.
-			testTimeout: 15_000,
-		},
-	}
-	return mergeOverride(project, override)
-}
-
 export function policy(override?: UserConfig): UserConfig {
 	const project: UserConfig = {
 		resolve,
@@ -485,7 +439,6 @@ export default defineConfig({
 			srcCore,
 			srcBrowser,
 			srcServer,
-			srcBin,
 			policy,
 			config,
 			setup,
