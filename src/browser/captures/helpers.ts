@@ -694,17 +694,15 @@ export function measureContent(): number {
  *
  * @remarks
  * This depends on the runner's own tester layout, and that dependency is contract rather than an
- * accident: `vitest@4.1.12` lays its tester out inside a smaller page, fits it by scaling the pane
- * the tester sits in, and clips whatever overflows that pane. Layout inside the tester is
+ * accident: `vitest@5.1.0` lays its tester out inside a smaller page, fits it with a CSS scale, and
+ * clips whatever overflows the pane the tester sits in. Layout inside the tester is
  * unaffected — the tester reports the viewport it was given and every breakpoint answers to it —
  * but a screenshot is taken off the page the runner painted, so a frame shot through that scale is
  * a thumbnail of the surface and a frame shot after only unscaling it is a sliver. The tester is
  * therefore unscaled and lifted to the window's own origin for the shot. The `iframe[data-vitest]`
- * selector and the `--tester-transform`, `--tester-margin-left`, `--viewport-width`, and
- * `--viewport-height` custom properties are the runner's, so a Vitest release that renames any of
- * them reddens the size check that follows rather than writing a wrong frame.
- * The custom-property overrides serve Vitest 4; `transform: none !important` on the pane and
- * iframe also suppresses Vitest 5's direct CSS transform.
+ * selector and the `--viewport-width` and `--viewport-height` custom properties are the runner's, so
+ * a Vitest release that renames any of them reddens the size check that follows rather than writing
+ * a wrong frame. `transform: none !important` on the pane and iframe suppresses the fitting scale.
  *
  * Hand the pane straight back with {@link releasePane}. A tester pinned at a viewport taller than
  * the window puts its lower half beyond what a pointer can reach, so an ordinary press then fails
@@ -752,7 +750,7 @@ export async function stagePane(width: number, height: number): Promise<void> {
 		rule.setAttribute(CAPTURE_PANE, viewport)
 		rule.textContent = [
 			`[${CAPTURE_PANE}],:has(>iframe[data-vitest])`,
-			'{--tester-transform:none !important;--tester-margin-left:0px !important;transform:none !important}',
+			'{transform:none !important}',
 			'iframe[data-vitest]',
 			'{transform:none !important;position:fixed !important;left:0 !important;top:0 !important;right:auto !important;',
 			'bottom:auto !important;width:var(--viewport-width) !important;',

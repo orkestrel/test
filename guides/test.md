@@ -782,12 +782,11 @@ where that distinction matters.
 
 `stagePane` unscales the runner's tester and lifts it to the window's origin, because a frame shot
 through the runner's fitting scale is a thumbnail of the surface. That couples it to Vitest's own
-tester layout, which is contract rather than accident: `vitest@4.1.12` is the version behind the
-`iframe[data-vitest]` selector and the `--tester-transform`, `--tester-margin-left`,
-`--viewport-width`, and `--viewport-height` custom properties it writes. A release that renames any
-of them reddens the size check rather than writing a wrong frame. The custom-property overrides
-serve Vitest 4; the pane and iframe also carry `transform: none !important` for Vitest 5's direct
-transform. An already matching viewport skips the resize command while retaining the staging
+tester layout, which is contract rather than accident: `vitest@5.1.0` is the version behind the
+`iframe[data-vitest]` selector and the `--viewport-width` and `--viewport-height` custom
+properties it writes. A release that renames any of them reddens the size check rather than
+writing a wrong frame. The pane and iframe carry `transform: none !important`, which suppresses the
+fitting scale. An already matching viewport skips the resize command while retaining the staging
 rule, paint waits, and rendered-size check. Always hand the pane back with
 `releasePane`: a tester left pinned at a viewport taller than the window puts its lower half beyond
 what a pointer can reach, so the next ordinary press fails as a control that is covered. The release
@@ -1965,13 +1964,12 @@ These hold across `src/core`, `src/browser`, `src/server`, and this guide.
     stopped, and `steps` and `output` hand out snapshots. There is no shared instance: a file that
     needs one journal per scenario creates one per scenario.
 18. **The capture layer depends on the Vitest runner's own tester layout, deliberately.** A
-    screenshot is taken off the page the runner painted, and `vitest@4.1.12` lays its tester out
-    inside a smaller page and fits it by scaling the pane the tester sits in, so a frame shot through
-    that scale is a thumbnail of the surface. `stagePane` therefore reaches into that layout: the
-    `iframe[data-vitest]` selector and the `--tester-transform`, `--tester-margin-left`,
-    `--viewport-width`, and `--viewport-height` custom properties are the runner's, not this
-    package's. Direct `transform: none !important` rules also suppress Vitest 5's pane and iframe
-    scaling. The disk check compares Node and browser SHA-256 digests where the consumer registers
+    screenshot is taken off the page the runner painted, and `vitest@5.1.0` lays its tester out
+    inside a smaller page and fits it with a CSS scale, so a frame shot through that scale is a
+    thumbnail of the surface. `stagePane` therefore reaches into that layout: the
+    `iframe[data-vitest]` selector and the `--viewport-width` and `--viewport-height` custom
+    properties are the runner's, not this package's, and `transform: none !important` rules on the
+    pane and iframe suppress the fitting scale. The disk check compares Node and browser SHA-256 digests where the consumer registers
     `readCapture`, and keeps the runner's built-in base64 read-back otherwise. That is contract
     rather than accident. A Vitest release that renames any of
     them reddens `stagePane`'s size check, which throws
