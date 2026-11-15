@@ -1,5 +1,6 @@
 import type { VitestPluginContext } from 'vitest/node'
 import type { ProgressPluginInterface } from './types.js'
+import { matchesProgressReporter } from './helpers.js'
 import { ProgressReporter } from './reporters/ProgressReporter.js'
 
 /**
@@ -8,9 +9,12 @@ import { ProgressReporter } from './reporters/ProgressReporter.js'
  *
  * @remarks Mount the value in the root `plugins` of a configuration. Vitest calls its hook once per
  * project that carries it, and the hook adds a reporter only while the run's reporters hold no
- * `ProgressReporter`, so a run writes one `init` line wherever the plugin is mounted. A run with no
- * `--outputFile.progress` gets no reporter, because `ProgressReporter` refuses to initialize
- * without that file.
+ * `ProgressReporter` from any copy of this package, read by its `PROGRESS_BRAND` brand, so a run
+ * writes one `init` line wherever the plugin is mounted, a configuration that imports the package
+ * by a file path included. The hook adds
+ * a reporter when the resolved `outputFile` names `progress`, from `--outputFile.progress` or from
+ * the configuration's `outputFile`, and adds none otherwise, because `ProgressReporter` refuses to
+ * initialize without that file.
  *
  * @example
  * ```ts
@@ -32,7 +36,7 @@ export function createProgressPlugin(): ProgressPluginInterface {
 			if (typeof output !== 'object' || output.progress === undefined) return
 			// A project that mounts the plugin evaluates the configuration again, so the run's
 			// reporters, not the plugin value, decide whether a progress reporter is already present.
-			if (vitest.config.reporters.some((entry) => entry instanceof ProgressReporter)) return
+			if (vitest.config.reporters.some((entry) => matchesProgressReporter(entry))) return
 			// Vitest builds the run's reporters from this array after the last configureVitest hook.
 			vitest.config.reporters.push(new ProgressReporter())
 		},

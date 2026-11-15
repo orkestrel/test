@@ -11,15 +11,21 @@ import type { ProgressError, ProgressEvent, ProgressStamp } from '../types.js'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { PROGRESS_VERSION } from '../constants.js'
-import { extractProgressError, matchesPlannedCase, normalizeProgressPath } from '../helpers.js'
+import { PROGRESS_BRAND, PROGRESS_VERSION } from '../constants.js'
+import {
+	extractProgressError,
+	matchesPlannedCase,
+	matchesProgressReporter,
+	normalizeProgressPath,
+} from '../helpers.js'
 
 /**
  * Appends one JSON line per Vitest run event to the file `--outputFile.progress` names, so a live
  * run's progress and each failure's first error can be read before the run ends.
  *
  * @remarks Only the first instance in `vitest.config.reporters` writes; a later instance in the same
- * Vitest writes nothing, so a run is never counted twice.
+ * Vitest writes nothing, so a run is never counted twice. Each instance carries the
+ * `PROGRESS_BRAND` brand, so an instance from another copy of this package counts as earlier.
  *
  * @example
  * ```ts
@@ -44,6 +50,7 @@ export class ProgressReporter implements Reporter {
 
 	constructor() {
 		this.#listener = this.#cancel.bind(this)
+		Object.defineProperty(this, PROGRESS_BRAND, { value: this })
 	}
 
 	onInit(vitest: Vitest): void {
@@ -56,7 +63,7 @@ export class ProgressReporter implements Reporter {
 				)
 			}
 			// Every instance in one Vitest reads the same file from its config, so only the first writes.
-			const writer = vitest.config.reporters.find((entry) => entry instanceof ProgressReporter)
+			const writer = vitest.config.reporters.find((entry) => matchesProgressReporter(entry))
 			if (writer !== undefined && writer !== this) return
 			this.#vitest = vitest
 			this.#path = resolve(vitest.config.root, named)

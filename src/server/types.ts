@@ -388,17 +388,24 @@ export interface ProgressProject {
 	readonly name: string
 	/** Counts the cases the project's collected modules plan to report. */
 	readonly planned: number
-	/** Counts the cases that reported a settled result: passed, failed, or skipped. */
+	/**
+	 * Counts the cases that reported a settled result: passed, failed, or skipped, the cases a bail's
+	 * cancel skipped included.
+	 */
 	readonly done: number
 	/** Counts the cases that passed. */
 	readonly passed: number
 	/** Counts the cases that failed and the modules that failed to collect. */
 	readonly failed: number
-	/** Counts the planned cases that reported a skip at run time, a bail-cut case included. */
+	/**
+	 * Counts the planned cases that reported a skip at run time. Under a bail, Vitest reports a skip
+	 * for the case a module is running when the cancel arrives and for each case left after it in
+	 * that module, and gives a reporter nothing that tells them from a case that skipped itself.
+	 */
 	readonly skipped: number
 	/**
-	 * Counts the planned cases that reported a `pending` result, which Vitest gives a case the run
-	 * ended before it started, such as a case a bail cuts off.
+	 * Counts the planned cases that reported a `pending` result, which Vitest gives each case a bail
+	 * leaves in a module that was running no case when the cancel arrived.
 	 */
 	readonly pending: number
 	/** Counts the modules the run started for the project. */
@@ -456,7 +463,10 @@ export interface ProgressRun {
 	readonly bail: number
 	/** Holds the milliseconds the run has taken, up to its end or to the reading. */
 	readonly elapsed: number
-	/** Counts the cases that reported a settled result, across every project. */
+	/**
+	 * Counts the cases that reported a settled result across every project, the cases a bail's cancel
+	 * skipped included.
+	 */
 	readonly done: number
 	/** Counts the cases the collected modules plan to report, across every project. */
 	readonly planned: number
@@ -465,7 +475,10 @@ export interface ProgressRun {
 	 * false otherwise.
 	 */
 	readonly exact: boolean
-	/** Holds the settled results per minute since the first case started, or `undefined` before one. */
+	/**
+	 * Holds the settled results per minute since the first case started, the cases a bail's cancel
+	 * skipped included, or `undefined` before one.
+	 */
 	readonly rate: number | undefined
 	/**
 	 * Holds the estimated milliseconds left, or `undefined` once the run ended, before a rate exists,
@@ -492,7 +505,8 @@ export interface ProgressPluginInterface {
 	readonly name: string
 	/**
 	 * Adds a `ProgressReporter` to the run's reporters when `outputFile` names `progress`, and adds
-	 * nothing when no progress file is named or the reporters already hold a `ProgressReporter`.
+	 * nothing when no progress file is named or the reporters already hold a `ProgressReporter` from
+	 * any copy of this package.
 	 *
 	 * @remarks Mirrors the `configureVitest` hook of a Vitest plugin, which Vitest calls once per
 	 * project that carries the plugin and before it constructs the run's reporters.

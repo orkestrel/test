@@ -60,7 +60,10 @@ import {
 	isRunning,
 	matchesIdentity,
 	matchesPlannedCase,
+	matchesProgressReporter,
 	normalizeProgressPath,
+	PROGRESS_BRAND,
+	ProgressReporter,
 	readCapture,
 	readErrorCode,
 	readFileSnapshot,
@@ -1832,6 +1835,32 @@ describe('matchesPlannedCase', () => {
 		expect(matchesPlannedCase({ options: { mode: 'only' } })).toBe(true)
 		expect(matchesPlannedCase({ options: { mode: 'skip' } })).toBe(false)
 		expect(matchesPlannedCase({ options: { mode: 'todo' } })).toBe(false)
+	})
+})
+
+describe('matchesProgressReporter', () => {
+	it('keys the brand under the registered package-scoped symbol', () => {
+		expect(PROGRESS_BRAND).toBe(Symbol.for('@orkestrel/test.ProgressReporter'))
+	})
+
+	it('recognizes a reporter and a value another copy branded, and refuses every look-alike', () => {
+		const reporter = new ProgressReporter()
+		const copy = {}
+		Object.defineProperty(copy, Symbol.for('@orkestrel/test.ProgressReporter'), { value: copy })
+		const borrowed = { [Symbol.for('@orkestrel/test.ProgressReporter')]: reporter }
+		const { proxy: revoked, revoke } = Proxy.revocable({}, {})
+		revoke()
+		expect(matchesProgressReporter(reporter)).toBe(true)
+		expect(matchesProgressReporter(copy)).toBe(true)
+		expect(Object.keys(reporter)).toEqual([])
+		expect(matchesProgressReporter(borrowed)).toBe(false)
+		expect(matchesProgressReporter(Object.create(reporter))).toBe(false)
+		expect(matchesProgressReporter(new Proxy(reporter, {}))).toBe(false)
+		expect(matchesProgressReporter(revoked)).toBe(false)
+		expect(matchesProgressReporter('dot')).toBe(false)
+		expect(matchesProgressReporter(['dot', {}])).toBe(false)
+		expect(matchesProgressReporter(null)).toBe(false)
+		expect(matchesProgressReporter(undefined)).toBe(false)
 	})
 })
 

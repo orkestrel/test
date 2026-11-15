@@ -19,10 +19,11 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: false }),
+			renderPluginConfig({ root: true, projects: false, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
 		expect(JSON.parse(run.report ?? 'null')).toMatchObject({
 			success: true,
 			numTotalTests: 2,
@@ -48,10 +49,11 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: false, projects: false, listed: true }),
+			renderPluginConfig({ root: false, projects: false, listed: true, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(0)
 		expect(JSON.parse(run.report ?? 'null')).toMatchObject({ success: true, numPassedTests: 2 })
 		expect(run.progress).toBeUndefined()
 	})
@@ -63,12 +65,49 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: false, listed: false }),
+			renderPluginConfig({ root: true, projects: false, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS.filter((flag) => !flag.startsWith('--outputFile.progress=')),
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(0)
 		expect(JSON.parse(run.report ?? 'null')).toMatchObject({ success: true, numPassedTests: 2 })
 		expect(run.progress).toBeUndefined()
+	})
+
+	it('adds its reporter when only the configuration names the progress file', async ({
+		onTestFinished,
+	}) => {
+		const scratch = await createServerFixture('configured-')
+		onTestFinished(() => scratch.destroy())
+		const run = runVitestFixture(
+			scratch,
+			renderPluginConfig({ root: true, projects: false, listed: false, named: true, path: false }),
+			CAPTURE_FLAGS.filter((flag) => !flag.startsWith('--outputFile.')),
+		)
+		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
+		expect(JSON.parse(run.report ?? 'null')).toMatchObject({ success: true, numPassedTests: 2 })
+		const events = extractProgressEvents(run.progress ?? '').map((event) => event.event)
+		expect([events.at(0), events.at(-1)]).toStrictEqual(['init', 'end'])
+	})
+
+	it('holds one reporter from a listed reporter and the plugin under no reporter flag', async ({
+		onTestFinished,
+	}) => {
+		const scratch = await createServerFixture('both-')
+		onTestFinished(() => scratch.destroy())
+		const run = runVitestFixture(
+			scratch,
+			renderPluginConfig({ root: true, projects: false, listed: true, named: false, path: false }),
+			['--outputFile.progress=progress.jsonl'],
+		)
+		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
+		const events = extractProgressEvents(run.progress ?? '').map((event) => event.event)
+		expect(events.filter((event) => event === 'init' || event === 'end')).toStrictEqual([
+			'init',
+			'end',
+		])
 	})
 
 	it('writes exactly one init line from the plugin on the root and on each project', async ({
@@ -78,14 +117,41 @@ describe('the progress plugin in a spawned Vitest run', { timeout: 30_000 }, () 
 		onTestFinished(() => scratch.destroy())
 		const run = runVitestFixture(
 			scratch,
-			renderPluginConfig({ root: true, projects: true, listed: false }),
+			renderPluginConfig({ root: true, projects: true, listed: false, named: false, path: false }),
 			CAPTURE_FLAGS,
 		)
 		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
 		const events = extractProgressEvents(run.progress ?? '').map((event) => event.event)
 		expect(events.filter((event) => event === 'init' || event === 'end')).toStrictEqual([
 			'init',
 			'end',
 		])
+	})
+
+	it('holds one reporter when the configuration imports the entry by file path', async ({
+		onTestFinished,
+	}) => {
+		const scratch = await createServerFixture('path-')
+		onTestFinished(() => scratch.destroy())
+		const run = runVitestFixture(
+			scratch,
+			renderPluginConfig({ root: true, projects: true, listed: false, named: false, path: true }),
+			CAPTURE_FLAGS,
+		)
+		expect([run.result.status, readOutput(run.result)]).toStrictEqual([0, expect.any(String)])
+		expect(run.instances).toBe(1)
+		const events = extractProgressEvents(run.progress ?? '').map((event) => event.event)
+		expect(events.filter((event) => event === 'init' || event === 'end')).toStrictEqual([
+			'init',
+			'end',
+		])
+		expect(
+			readProgress(join(scratch.path, 'progress.jsonl')).map((progress) => [
+				progress.state,
+				progress.done,
+				progress.planned,
+			]),
+		).toStrictEqual([['passed', 2, 2]])
 	})
 })

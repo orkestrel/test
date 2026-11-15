@@ -112,7 +112,7 @@ describe('ProgressReporter', () => {
 	)
 
 	it(
-		'reads the cases a bail cuts off as the JSON report does, outside the done count',
+		'reads the cases a bail cuts off as the JSON report does, skipped ones in the done count',
 		{ timeout: 60_000 },
 		async () => {
 			const { progress, report } = await recordProgressRun({
@@ -120,7 +120,8 @@ describe('ProgressReporter', () => {
 				bail: 1,
 				modules: PROGRESS_PENDING_MODULES,
 			})
-			// Vitest's own report reads the case the bail stopped before it started as pending.
+			// Vitest's own report reads the cases left in the module running `runs long` at the cancel as
+			// skipped, and the case left in the module running nothing as pending.
 			expect(JSON.parse(report ?? '')).toMatchObject({
 				numTotalTests: 6,
 				numPassedTests: 0,
@@ -142,7 +143,20 @@ describe('ProgressReporter', () => {
 					}),
 				]),
 			})
-			const [run] = computeProgress(extractProgressEvents(progress ?? ''), Date.now())
+			const events = extractProgressEvents(progress ?? '')
+			expect(
+				Object.fromEntries(
+					filterProgressEvents(events, 'case').map((entry) => [entry.name, entry.state]),
+				),
+			).toEqual({
+				'fails first': 'failed',
+				'follows the failure': 'pending',
+				'waits > runs long': 'skipped',
+				'waits > follows': 'skipped',
+				'waits > trails': 'skipped',
+				'kept by the filter': 'skipped',
+			})
+			const [run] = computeProgress(events, Date.now())
 			expect(run).toMatchObject({ state: 'interrupted', done: 5, planned: 6 })
 			expect(run?.projects).toEqual([
 				expect.objectContaining({

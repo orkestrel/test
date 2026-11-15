@@ -281,16 +281,32 @@ export interface VitestFixtureRun {
 	readonly progress: string | undefined
 	/** Holds the JSON report text, or `undefined` when the run wrote none. */
 	readonly report: string | undefined
+	/**
+	 * Counts the `ProgressReporter` instances the run's reporters held at `onInit`, or holds
+	 * `undefined` when the fixture's recorder never initialized.
+	 */
+	readonly instances: number | undefined
 }
 
 /** Places the progress plugin, or a listed progress reporter, in one fixture configuration. */
 export interface PluginFixtureOptions {
-	/** If `true`, the root `plugins` mount the plugin; if `false`, they mount nothing. */
+	/** If `true`, the root `plugins` mount the plugin; if `false`, they mount only the recorder. */
 	readonly root: boolean
 	/** If `true`, every project's `plugins` mount the same plugin value; if `false`, none does. */
 	readonly projects: boolean
 	/** If `true`, the root `test.reporters` list a `ProgressReporter`; if `false`, it lists none. */
 	readonly listed: boolean
+	/**
+	 * If `true`, the root `test.outputFile` names the progress file and the JSON report; if `false`,
+	 * the configuration names no output file.
+	 */
+	readonly named: boolean
+	/**
+	 * If `true`, the configuration imports the built entry by its file path, so each evaluation of
+	 * the configuration loads its own copy of the module; if `false`, it imports the entry by its
+	 * package name.
+	 */
+	readonly path: boolean
 }
 
 export function isNonArrayObject(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -985,18 +1001,38 @@ export async function createServerFixture(prefix: string): Promise<ScratchInterf
 /**
  * Renders a fixture configuration shaped like a capture wrapper's output: root `plugins` and two
  * `test.projects` functions, `alpha` and `beta`, each running the one passing case.
+ *
+ * @remarks The root `plugins` always mount a recorder plugin, whose reporter writes the number of
+ * `ProgressReporter` instances the run holds to `instances.json` at `onInit`, after Vitest has built
+ * every reporter. A plugin adds it, because command-line `--reporter` flags replace the reporters a
+ * configuration lists. The recorder counts by constructor name rather than by the brand the
+ * reporter carries, so it counts every copy's instances without reading the mechanism under test.
  */
 export function renderPluginConfig(options: PluginFixtureOptions): string {
 	const mounted = options.projects ? 'plugins: [plugin], ' : ''
+	const specifier = options.path
+		? `./node_modules/${SERVER_FIXTURE_PACKAGE}/index.mjs`
+		: SERVER_FIXTURE_PACKAGE
 	return [
-		`import { createProgressPlugin, ProgressReporter } from '${SERVER_FIXTURE_PACKAGE}'`,
+		"import { writeFileSync } from 'node:fs'",
+		`import { createProgressPlugin, ProgressReporter } from '${specifier}'`,
 		'',
 		'const plugin = createProgressPlugin()',
+		'const recorder = {',
+		'\tonInit(vitest) {',
+		"\t\tconst count = vitest.config.reporters.filter((entry) => entry?.constructor?.name === 'ProgressReporter').length",
+		"\t\twriteFileSync('instances.json', JSON.stringify(count))",
+		'\t},',
+		'}',
+		"const recording = { name: 'recorder', configureVitest: ({ vitest }) => { vitest.config.reporters.push(recorder) } }",
 		'',
 		'export default {',
-		`\tplugins: ${options.root ? '[plugin]' : '[]'},`,
+		`\tplugins: [${options.root ? 'plugin, ' : ''}recording],`,
 		'\ttest: {',
 		...(options.listed ? ['\t\treporters: [new ProgressReporter()],'] : []),
+		...(options.named
+			? ["\t\toutputFile: { json: 'report.json', progress: 'progress.jsonl' },"]
+			: []),
 		`\t\tprojects: ['alpha', 'beta'].map((name) => () => ({ ${mounted}test: { name, include: ['one.test.js'] } })),`,
 		'\t},',
 		'}',
@@ -1026,7 +1062,13 @@ export function runVitestFixture(
 		[VITEST_ENTRY, 'run', '--config', 'vitest.config.mjs', ...flags],
 		{ cwd: scratch.path, encoding: 'utf8', env, windowsHide: true },
 	)
-	return { result, progress: scratch.read('progress.jsonl'), report: scratch.read('report.json') }
+	const instances = scratch.read('instances.json')
+	return {
+		result,
+		progress: scratch.read('progress.jsonl'),
+		report: scratch.read('report.json'),
+		instances: instances === undefined ? undefined : Number(instances),
+	}
 }
 
 // Installing the packed archive resolves its own runtime dependencies, so an

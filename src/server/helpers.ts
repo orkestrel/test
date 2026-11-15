@@ -40,9 +40,10 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
-import { isNumber, isObject, isString } from '@orkestrel/contract'
+import { holds, isNumber, isObject, isString } from '@orkestrel/contract'
 import { checkBounds, decodeJSONLines, waitForDelay, waitForEvent } from '@src/core'
 import {
+	PROGRESS_BRAND,
 	PROGRESS_LABELS,
 	PROGRESS_MESSAGE_LIMIT,
 	PROGRESS_VERSION,
@@ -1068,6 +1069,34 @@ export function extractProgressError(error: SerializedError, root: string): Prog
  */
 export function matchesPlannedCase(test: { readonly options: { readonly mode: string } }): boolean {
 	return test.options.mode === 'run' || test.options.mode === 'only'
+}
+
+/**
+ * Checks whether a value is a progress reporter from any copy of this package, by the brand each
+ * one carries under `PROGRESS_BRAND`.
+ *
+ * @param value - The value to inspect, such as an entry of `vitest.config.reporters`.
+ * @returns True if the value holds an own `PROGRESS_BRAND` property whose value is the value
+ * itself; false otherwise, a value whose inspection throws included.
+ * @remarks A configuration that imports the package by a file path loads a separate copy of the
+ * module for each evaluation, so an `instanceof` check against one copy's class misses the
+ * reporters another copy made, and the brand recognizes them all.
+ *
+ * @example
+ * ```ts
+ * import { matchesProgressReporter, ProgressReporter } from '@orkestrel/test/server'
+ *
+ * matchesProgressReporter(new ProgressReporter()) // true
+ * matchesProgressReporter('dot') // false
+ * ```
+ */
+export function matchesProgressReporter(value: unknown): boolean {
+	return holds(
+		() =>
+			isObject(value) &&
+			Object.hasOwn(value, PROGRESS_BRAND) &&
+			Reflect.get(value, PROGRESS_BRAND) === value,
+	)
 }
 
 /**
