@@ -1059,7 +1059,7 @@ The progress reporter is a Vitest reporter a run lists beside its others.
 | `ProgressEvent`          | type      | `ProgressInitEvent \| ProgressStartEvent \| ProgressCollectedEvent \| ProgressReadyEvent \| ProgressCaseEvent \| ProgressCancelEvent \| ProgressModuleEvent \| ProgressEndEvent` | Represents one line of a progress file, discriminated by `event`.                                                                                                                                                            |
 | `ProgressState`          | type      | `'live' \| ProgressEndReason`                                                                                                                                                    | Names a run's state as a reader sees it: `live` until its `end` line, then the end reason.                                                                                                                                   |
 | `ProgressRelation`       | type      | `'first' \| 'bail' \| 'later'`                                                                                                                                                   | Names how a failure relates to the run's bail: `first` is the earliest failure, `bail` is a failure past the bail setting whose result arrived or whose case ended after the first cancel, and `later` is any other failure. |
-| `ProgressProject`        | interface | `{ name, planned, done, passed, failed, skipped, modules, collected }`                                                                                                           | Represents one project's tallies in a progress reading.                                                                                                                                                                      |
+| `ProgressProject`        | interface | `{ name, planned, done, passed, failed, skipped, pending, modules, collected }`                                                                                                  | Represents one project's tallies in a progress reading.                                                                                                                                                                      |
 | `ProgressCase`           | interface | `{ project, name, duration }`                                                                                                                                                    | Represents a case that started and has not reported a result.                                                                                                                                                                |
 | `ProgressFailure`        | interface | `{ project, module, name, time, relation, error }`                                                                                                                               | Represents one failed case, or one module that failed to collect, in a progress reading.                                                                                                                                     |
 | `ProgressCancel`         | interface | `{ reason, time }`                                                                                                                                                               | Represents the first cancel a run recorded.                                                                                                                                                                                  |
@@ -3281,7 +3281,9 @@ synchronous write per line, so a second process can read the file at any moment.
 and `case` lines only for the cases each module plans to run, so a name filter's removed cases
 never count, and it writes one `case` line per planned case even where a bail makes Vitest report a
 case twice. It records every `cancel` Vitest delivers, registering its listener once a module
-queues, because Vitest clears cancel listeners after `onTestRunStart`.
+queues, because Vitest clears cancel listeners after `onTestRunStart`. When one Vitest holds several
+instances, such as one from the configuration and one a plugin adds, only the first in
+`vitest.config.reporters` writes, so a run is never counted twice.
 
 This read summarizes the file once, from another process or the same one, and renders it.
 
@@ -3298,8 +3300,10 @@ console.log(renderProgress(runs))
 and writes nothing. It returns one run per writing process, each read from that process's last
 `init` line, and each run carries that line's `wall` time. The rendered text gives cases done
 against planned per project, with `+` on the total until every module is collected, the elapsed
-time, rate, and estimate, the running cases, the cancel, and each failure under its module and case
-with its first message line and location. A module that fails to collect, such as one that throws
+time, rate, and estimate, all counting only cases that passed, failed, or skipped. A case a bail
+cut off before it started reports `pending`, as Vitest's JSON report reads it, and its project line
+names it beside the other tallies. The rendered text also gives the running cases, the cancel, and
+each failure under its module and case with its first message line and location. A module that fails to collect, such as one that throws
 while it is imported, reads as a failure under its module alone, and as `FIRST` when its line comes
 before every other failure line. The earliest failure line reads `FIRST` even when Vitest wrote the
 cancel before its result. Only a failed case can trigger a bail, so under a bail the first failed

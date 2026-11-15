@@ -387,7 +387,7 @@ export interface ProgressProject {
 	readonly name: string
 	/** Counts the cases the project's collected modules plan to report. */
 	readonly planned: number
-	/** Counts the cases that reported a result. */
+	/** Counts the cases that reported a settled result: passed, failed, or skipped. */
 	readonly done: number
 	/** Counts the cases that passed. */
 	readonly passed: number
@@ -395,6 +395,11 @@ export interface ProgressProject {
 	readonly failed: number
 	/** Counts the planned cases that reported a skip at run time, a bail-cut case included. */
 	readonly skipped: number
+	/**
+	 * Counts the planned cases that reported a `pending` result, which Vitest gives a case the run
+	 * ended before it started, such as a case a bail cuts off.
+	 */
+	readonly pending: number
 	/** Counts the modules the run started for the project. */
 	readonly modules: number
 	/** Counts the modules Vitest has collected for the project. */
@@ -450,7 +455,7 @@ export interface ProgressRun {
 	readonly bail: number
 	/** Holds the milliseconds the run has taken, up to its end or to the reading. */
 	readonly elapsed: number
-	/** Counts the cases that reported a result, across every project. */
+	/** Counts the cases that reported a settled result, across every project. */
 	readonly done: number
 	/** Counts the cases the collected modules plan to report, across every project. */
 	readonly planned: number
@@ -459,7 +464,7 @@ export interface ProgressRun {
 	 * false otherwise.
 	 */
 	readonly exact: boolean
-	/** Holds the results per minute since the first case started, or `undefined` before one. */
+	/** Holds the settled results per minute since the first case started, or `undefined` before one. */
 	readonly rate: number | undefined
 	/**
 	 * Holds the estimated milliseconds left, or `undefined` once the run ended, before a rate exists,

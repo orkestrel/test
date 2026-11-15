@@ -18,6 +18,9 @@ import { extractProgressError, matchesPlannedCase, normalizeProgressPath } from 
  * Appends one JSON line per Vitest run event to the file `--outputFile.progress` names, so a live
  * run's progress and each failure's first error can be read before the run ends.
  *
+ * @remarks Only the first instance in `vitest.config.reporters` writes; a later instance in the same
+ * Vitest writes nothing, so a run is never counted twice.
+ *
  * @example
  * ```ts
  * import { defineConfig } from 'vitest/config'
@@ -52,6 +55,9 @@ export class ProgressReporter implements Reporter {
 					'ProgressReporter writes no file: pass --outputFile.progress=<file>, or set outputFile: { progress: <file> } in the test config',
 				)
 			}
+			// Every instance in one Vitest reads the same file from its config, so only the first writes.
+			const writer = vitest.config.reporters.find((entry) => entry instanceof ProgressReporter)
+			if (writer !== undefined && writer !== this) return
 			this.#vitest = vitest
 			this.#path = resolve(vitest.config.root, named)
 			mkdirSync(dirname(this.#path), { recursive: true })

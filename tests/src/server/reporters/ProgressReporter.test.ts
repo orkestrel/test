@@ -12,6 +12,7 @@ import {
 import {
 	PROGRESS_BROKEN_MODULES,
 	PROGRESS_MODULES,
+	PROGRESS_PENDING_MODULES,
 	recordProgressRun,
 } from '../../../setupServer.js'
 
@@ -107,6 +108,72 @@ describe('ProgressReporter', () => {
 			})
 			expect(JSON.parse(report ?? '')).toMatchObject({ numFailedTests: 1 })
 			expect(extractProgressEvents(progress ?? '').at(-1)).toMatchObject({ event: 'end' })
+		},
+	)
+
+	it(
+		'reads the cases a bail cuts off as the JSON report does, outside the done count',
+		{ timeout: 60_000 },
+		async () => {
+			const { progress, report } = await recordProgressRun({
+				reporters: ['json', new ProgressReporter()],
+				bail: 1,
+				modules: PROGRESS_PENDING_MODULES,
+			})
+			// Vitest's own report reads the case the bail stopped before it started as pending.
+			expect(JSON.parse(report ?? '')).toMatchObject({
+				numTotalTests: 6,
+				numPassedTests: 0,
+				numFailedTests: 1,
+				testResults: expect.arrayContaining([
+					expect.objectContaining({
+						assertionResults: expect.arrayContaining([
+							expect.objectContaining({ title: 'fails first', status: 'failed' }),
+							expect.objectContaining({ title: 'follows the failure', status: 'pending' }),
+						]),
+					}),
+					expect.objectContaining({
+						assertionResults: [
+							expect.objectContaining({ title: 'runs long', status: 'skipped' }),
+							expect.objectContaining({ title: 'follows', status: 'skipped' }),
+							expect.objectContaining({ title: 'trails', status: 'skipped' }),
+							expect.objectContaining({ title: 'kept by the filter', status: 'skipped' }),
+						],
+					}),
+				]),
+			})
+			const [run] = computeProgress(extractProgressEvents(progress ?? ''), Date.now())
+			expect(run).toMatchObject({ state: 'interrupted', done: 5, planned: 6 })
+			expect(run?.projects).toEqual([
+				expect.objectContaining({
+					done: 5,
+					planned: 6,
+					passed: 0,
+					failed: 1,
+					skipped: 4,
+					pending: 1,
+				}),
+			])
+			expect(renderProgress(run === undefined ? [] : [run])).toContain(
+				'5/6  passed 0 failed 1 skipped 4 pending 1',
+			)
+		},
+	)
+
+	it(
+		'writes one run when a second instance shares the Vitest that runs it',
+		{ timeout: 60_000 },
+		async () => {
+			const { progress, report } = await recordProgressRun({
+				reporters: ['json', new ProgressReporter(), new ProgressReporter()],
+			})
+			expect(JSON.parse(report ?? '')).toMatchObject({ numTotalTests: 5 })
+			const events = extractProgressEvents(progress ?? '')
+			expect(filterProgressEvents(events, 'init')).toHaveLength(1)
+			expect(filterProgressEvents(events, 'end')).toHaveLength(1)
+			expect(computeProgress(events, Date.now())).toEqual([
+				expect.objectContaining({ state: 'failed', done: 5, planned: 5 }),
+			])
 		},
 	)
 

@@ -1023,6 +1023,16 @@ export const PROGRESS_BAIL_MODULES: Readonly<Record<string, string>> = Object.fr
 })
 
 /**
+ * Holds the bail modules with a case after `fails first` in its own module. The worker cancels as
+ * soon as `fails first` fails, so that case never starts and Vitest reports it `pending`, while the
+ * `waits` suite's cases report `skipped`.
+ */
+export const PROGRESS_PENDING_MODULES: Readonly<Record<string, string>> = Object.freeze({
+	...PROGRESS_BAIL_MODULES,
+	'fails.test.js': `${PROGRESS_BAIL_MODULES['fails.test.js'] ?? ''}it('follows the failure', () => {})\n`,
+})
+
+/**
  * Holds a module that throws while it is imported, beside a case that waits until the progress file
  * holds that module's collection error and then fails, so the collection failure always comes first.
  */

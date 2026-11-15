@@ -213,16 +213,6 @@ export const FORMATS: ReadonlyArray<readonly [extension: string, format: Format]
 	Object.freeze<readonly [extension: string, format: Format]>(['cts', 'commonjs']),
 ])
 
-/** Lists every fence language this package's guides are allowed to use. */
-export const FENCE_LANGUAGES = Object.freeze(['bash', 'ts'])
-
-/** Maps each import specifier this package's own guides may resolve against. */
-export const MODULES: Readonly<Record<string, string>> = Object.freeze({
-	'@orkestrel/test': 'src/core',
-	'@orkestrel/test/server': 'src/server',
-	'@orkestrel/test/browser': 'src/browser',
-})
-
 /**
  * Lists the declarations deliberately kept out of the barrel, as `computeSymbolKey` strings.
  *

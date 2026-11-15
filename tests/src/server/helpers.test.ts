@@ -1762,6 +1762,11 @@ describe('normalizeProgressPath', () => {
 		expect(normalizeProgressPath(vite, root)).toBe('tests/a.test.ts')
 	})
 
+	it('keeps the drive a Vite /@fs/ path names without a root slash', () => {
+		expect(normalizeProgressPath('/@fs/C:/work/tests/a.test.ts', 'C:/work')).toBe('tests/a.test.ts')
+		expect(normalizeProgressPath('/@fs/c:/work/tests/a.test.ts', 'c:/work')).toBe('tests/a.test.ts')
+	})
+
 	it('returns a path outside the root unchanged', () => {
 		const outside = join(tmpdir(), 'elsewhere', 'b.ts')
 		expect(normalizeProgressPath(outside, root)).toBe(outside)
@@ -1927,6 +1932,7 @@ describe('computeProgressRun', () => {
 					passed: 0,
 					failed: 2,
 					skipped: 2,
+					pending: 0,
 					modules: 2,
 					collected: 2,
 				},
@@ -1934,6 +1940,38 @@ describe('computeProgressRun', () => {
 		})
 		// Four results since the first case started at 12.5 s, measured to the end at 54 s.
 		expect(run?.rate).toBeCloseTo((4 / 41_500) * 60_000, 6)
+	})
+
+	it('counts a case a bail cut off before it started as pending, outside done and the rate', () => {
+		const cut = PROGRESS_BAIL_EVENTS.map((event) =>
+			event.event === 'case' && event.state === 'skipped'
+				? { ...event, state: 'pending' as const }
+				: event,
+		)
+		const run = computeProgressRun(cut, 0)
+		expect(run).toMatchObject({
+			state: 'interrupted',
+			done: 2,
+			planned: 4,
+			projects: [{ planned: 4, done: 2, passed: 0, failed: 2, skipped: 0, pending: 2 }],
+		})
+		// Two settled results since the first case started at 12.5 s, measured to the end at 54 s.
+		expect(run?.rate).toBeCloseTo((2 / 41_500) * 60_000, 6)
+	})
+
+	it('estimates the time left from settled cases only while the run is live', () => {
+		const live = [
+			...PROGRESS_BAIL_EVENTS.slice(0, 6),
+			...PROGRESS_BAIL_EVENTS.slice(7).flatMap((event) =>
+				event.event === 'case'
+					? [{ ...event, state: event.state === 'skipped' ? ('pending' as const) : event.state }]
+					: [],
+			),
+		]
+		const run = computeProgressRun(live, PROGRESS_WALL + 54_000)
+		expect(run).toMatchObject({ state: 'live', done: 2, planned: 4, exact: true })
+		// Two cases settled at a rate of 2 per 41.5 s leave two planned cases, about 41.5 s.
+		expect(run?.remaining).toBeCloseTo(41_500, 6)
 	})
 
 	it('marks the causing failure FIRST when its result follows the first cancel', () => {
@@ -2247,6 +2285,18 @@ describe('renderProgress', () => {
 				'  reporter overhead 1.25 ms',
 			].join('\n'),
 		)
+	})
+
+	it('renders the cases a bail cut off before they started as pending, outside done', () => {
+		const cut = PROGRESS_BAIL_EVENTS.map((event) =>
+			event.event === 'case' && event.state === 'skipped'
+				? { ...event, state: 'pending' as const }
+				: event,
+		)
+		expect(renderProgress(computeProgress(cut, 0)).split('\n').slice(0, 2)).toEqual([
+			'run 7 interrupted bail=1: 2/4 cases, elapsed 0m54s, rate 2.9/min, ETA -',
+			'  unit  2/4  passed 0 failed 2 skipped 0 pending 2',
+		])
 	})
 
 	it('renders a live run with its open total, uncollected module, and running case', () => {

@@ -1005,7 +1005,11 @@ export async function chooseFiles(context: ChooserContext, request: ChooserReque
  * ```
  */
 export function normalizeProgressPath(file: string, root: string): string {
-	const path = relative(root, file.replace(/^\/@fs\//u, '')).replaceAll('\\', '/')
+	const named = file.startsWith('/@fs/') ? file.slice('/@fs/'.length) : file
+	// Vite's `fsPathFromId` restores the root slash a `/@fs/` prefix absorbs unless a volume opens the rest.
+	const absolute =
+		named === file || named.startsWith('/') || /^[a-z]:/iu.test(named) ? named : `/${named}`
+	const path = relative(root, absolute).replaceAll('\\', '/')
 	return path === '..' || path.startsWith('../') || isAbsolute(path) ? file : path
 }
 
@@ -1187,6 +1191,7 @@ export function computeProgressRun(
 	const specifications = filterProgressEvents(own, 'start').flatMap((start) => start.specifications)
 	const collections = filterProgressEvents(own, 'collected')
 	const cases = filterProgressEvents(own, 'case')
+	const settled = cases.filter((entry) => entry.state !== 'pending')
 	const cancel = filterProgressEvents(own, 'cancel').at(0)
 	const end = filterProgressEvents(own, 'end').at(0)
 	const clock = end?.time ?? now - init.wall + init.time
@@ -1203,12 +1208,13 @@ export function computeProgressRun(
 		return {
 			name,
 			planned: collected.reduce((total, entry) => total + entry.planned, 0),
-			done: results.length,
+			done: results.filter((entry) => entry.state !== 'pending').length,
 			passed: results.filter((entry) => entry.state === 'passed').length,
 			failed:
 				results.filter((entry) => entry.state === 'failed').length +
 				collected.filter((entry) => entry.errors.length > 0).length,
 			skipped: results.filter((entry) => entry.state === 'skipped').length,
+			pending: results.filter((entry) => entry.state === 'pending').length,
 			modules: specifications.filter((entry) => entry.project === name).length,
 			collected: collected.length,
 		}
@@ -1216,9 +1222,9 @@ export function computeProgressRun(
 	const planned = projects.reduce((total, project) => total + project.planned, 0)
 	const exact =
 		specifications.length > 0 && projects.every((project) => project.collected >= project.modules)
-	const first = cases.at(0)
+	const first = settled.at(0)
 	const span = first === undefined ? 0 : clock - (first.time - (first.duration ?? 0))
-	const rate = cases.length > 0 && span > 0 ? (cases.length / span) * 60_000 : undefined
+	const rate = settled.length > 0 && span > 0 ? (settled.length / span) * 60_000 : undefined
 	const finished = new Set(cases.map((entry) => entry.id))
 	const position = cancel === undefined ? -1 : own.indexOf(cancel)
 	const trigger = own.find((event) => event.event === 'case' && event.state === 'failed')
@@ -1262,13 +1268,13 @@ export function computeProgressRun(
 		state: end?.reason ?? 'live',
 		bail: init.bail,
 		elapsed: clock,
-		done: cases.length,
+		done: settled.length,
 		planned,
 		exact,
 		rate,
 		remaining:
 			end === undefined && exact && rate !== undefined
-				? Math.max(0, ((planned - cases.length) / rate) * 60_000)
+				? Math.max(0, ((planned - settled.length) / rate) * 60_000)
 				: undefined,
 		projects,
 		running:
@@ -1390,7 +1396,7 @@ export function renderProgress(runs: readonly ProgressRun[]): string {
 				`run ${run.pid} ${run.state} ${run.bail === 0 ? 'full' : `bail=${run.bail}`}: ${run.done}/${run.planned}${run.exact ? '' : '+'} cases, elapsed ${renderDuration(run.elapsed)}, rate ${run.rate === undefined ? '-' : `${run.rate.toFixed(1)}/min`}, ETA ${run.remaining === undefined ? '-' : renderDuration(run.remaining)}`,
 				...run.projects.map(
 					(project) =>
-						`  ${project.name.padEnd(width)}  ${project.done}/${project.planned}  passed ${project.passed} failed ${project.failed} skipped ${project.skipped}${project.collected < project.modules ? `  (${project.collected}/${project.modules} modules collected)` : ''}`,
+						`  ${project.name.padEnd(width)}  ${project.done}/${project.planned}  passed ${project.passed} failed ${project.failed} skipped ${project.skipped}${project.pending > 0 ? ` pending ${project.pending}` : ''}${project.collected < project.modules ? `  (${project.collected}/${project.modules} modules collected)` : ''}`,
 				),
 				...run.running.map(
 					(entry) =>

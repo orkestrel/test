@@ -1,44 +1,56 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
 // this repo's own `guides/README.md` manifest. The constants this file reads are this
 // package's own, as is the executed section that closes the file. Node runs this file
-// with type stripping and no bundler, so it imports the setup module by its `.ts` path.
+// with type stripping and no bundler, where `@orkestrel/test/server` names the build, so
+// Vite loads the inventory reader from source and the setup module loads in the callback.
 
 import type { Duplex } from 'node:stream'
+import type * as Server from '@orkestrel/test/server'
+import type { GuideScan, LoaderEvents, Schema, JSONCopyFixture } from './setup.js'
 import { GuideCommand } from '@orkestrel/guide/server'
-import { readInventory } from '@orkestrel/test/server'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { runnerImport } from 'vite'
 import { createVitest } from 'vitest/node'
-import type { GuideScan, LoaderEvents, Schema, JSONCopyFixture } from './setup.ts'
-import {
-	advanceGuideScan,
-	carriesMarker,
-	FENCE_LANGUAGES,
-	INTERNAL,
-	MODULES,
-	normalizeComments,
-	parseSchema,
-	renderKeys,
-	ScriptedLoader,
-	serializeSchema,
-	TestCounter,
-	TestValue,
-} from './setup.ts'
+import tsconfig from '../tsconfig.json' with { type: 'json' }
 
 /** The fence language whose blocks count as worked examples. */
 const EXAMPLE_LANGUAGE = 'ts'
 /** The one guide this package sources, whose tagline the README pitch equals. */
 const GUIDE_SPEC = 'guides/test.md'
 
+const {
+	module: { readInventory: reader },
+} = await runnerImport<typeof Server>('@orkestrel/test/server', {
+	root: fileURLToPath(new URL('../', import.meta.url)),
+	resolve: {
+		alias: Object.fromEntries(
+			Object.entries(tsconfig.compilerOptions.paths).flatMap(([key, values]) =>
+				values
+					.slice(0, 1)
+					.map((path): [string, string] => [
+						key,
+						fileURLToPath(new URL(`../${path}`, import.meta.url)),
+					]),
+			),
+		),
+	},
+})
+
 await new GuideCommand({
 	root: new URL('../', import.meta.url),
 	patterns: ['src/**/*.ts', 'tests/**/*.ts', 'guides/*.md', '*.md'],
-	modules: MODULES,
-	languages: FENCE_LANGUAGES,
+	modules: {
+		'@orkestrel/test': 'src/core',
+		'@orkestrel/test/server': 'src/server',
+		'@orkestrel/test/browser': 'src/browser',
+	},
+	languages: ['bash', 'ts'],
 	language: EXAMPLE_LANGUAGE,
-	reader: readInventory,
+	reader,
 	runner: createVitest,
 }).execute(async ({ files, report, rows }) => {
 	const { computeSymbolKey, findMissing, findMissingSymbols } = await import('@orkestrel/guide')
@@ -72,13 +84,28 @@ await new GuideCommand({
 		createLoopback,
 		createScratch,
 		destroyScratch,
+		readInventory,
 		requestUpgrade,
 		resolveContained,
 		supportsDirectoryLinks,
 		supportsFileLinks,
 	} = await import('@src/server')
-	const { createAsyncSource, createStreamSource, isSerializableRecord, ROUTED_FENCES } =
-		await import('./setup.js')
+	const {
+		advanceGuideScan,
+		carriesMarker,
+		createAsyncSource,
+		createStreamSource,
+		INTERNAL,
+		isSerializableRecord,
+		normalizeComments,
+		parseSchema,
+		renderKeys,
+		ROUTED_FENCES,
+		ScriptedLoader,
+		serializeSchema,
+		TestCounter,
+		TestValue,
+	} = await import('./setup.js')
 	const { afterEach, describe, expect, it } = await import('vitest')
 
 	it('manifest lists the package guide', () => {
