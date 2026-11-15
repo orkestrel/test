@@ -6,6 +6,8 @@ import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../../setup.js'
 import {
 	applyDarkTheme,
+	BANDS_MARKUP,
+	BANDS_SHEET,
 	buildFixture,
 	buildStylesheet,
 	resetFixtures,
@@ -345,7 +347,9 @@ describe('createPortfolio', () => {
 			enabled: true,
 		})
 		const surface = await whole.place('start-empty')
-		const element = await part.place('start-empty', requireValue(container.firstElementChild))
+		const element = await part.place('start-empty', {
+			element: requireValue(container.firstElementChild),
+		})
 		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
 		expect(rewriteWindowsAbsolutePath(requireValue(element))).toBe(
 			rewriteWindowsAbsolutePath(
@@ -355,6 +359,45 @@ describe('createPortfolio', () => {
 		const shot = await commands.readFile(requireValue(element), 'base64')
 		expect(shot.length).toBeGreaterThan(0)
 		expect(shot).not.toBe(await commands.readFile(requireValue(surface), 'base64'))
+	})
+
+	it('places the viewport at the scroll the journey reached, beside a placement of the page', async () => {
+		buildStylesheet(BANDS_SHEET)
+		buildFixture(BANDS_MARKUP)
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: `${DIRECTORY}/visible`,
+			enabled: true,
+		})
+		await page.viewport(390, 844)
+		window.scrollTo({ top: 600, behavior: 'instant' })
+		const visible = await readFrame(
+			requireValue(await portfolio.place('start-empty', { visible: true })),
+		)
+		const whole = await readFrame(requireValue(await portfolio.place('answer-ideal')))
+		// Rows 600 to 1443: the yellow band ends the viewport; the page frame ends on purple.
+		expect(visible).toStrictEqual({ width: 390, height: 844, floor: 'rgb(255, 255, 0)' })
+		expect(whole).toStrictEqual({ width: 390, height: 2000, floor: 'rgb(128, 0, 128)' })
+		expect(window.scrollY).toBe(600)
+		expect(portfolio.placements).toStrictEqual(['start-empty', 'answer-ideal'])
+	})
+
+	it('refuses a visible placement in an unrolled portfolio, and records no placement', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			enabled: true,
+			unrolled: true,
+		})
+		await expect(portfolio.place('start-empty', { visible: true })).rejects.toThrow(
+			`Capture frame at ${DIRECTORY}/start-empty--dark-390.png is visible, so it takes neither an element nor unrolled`,
+		)
+		expect(portfolio.observed).toStrictEqual([])
+		expect(portfolio.paths).toStrictEqual([])
 	})
 
 	// guides/test.md → Patterns → "Place a capture portfolio". A browser fence carries in this

@@ -25,7 +25,9 @@ import { captureFrame, expandCaptures } from './helpers.js'
  *
  * An enabled `place` writes through `captureFrame`, so a placed state carries that helper's staged
  * pane and its byte readback: a path is recorded only after the file on disk has been proved to hold
- * this run's own frame. The portfolio's `unrolled` option reaches every frame `place` writes.
+ * this run's own frame. The portfolio's `unrolled` option reaches every frame `place` writes. A
+ * placement's `visible` option shoots the viewport at the scroll the journey reached, and an
+ * unrolled portfolio refuses it through `captureFrame`.
  *
  * @example
  * ```ts
@@ -67,7 +69,7 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 		get paths() {
 			return [...paths]
 		},
-		async place(state, element) {
+		async place(state, placement) {
 			if (!registry.includes(state)) {
 				throw new Error(`Capture state "${state}" is not registered`)
 			}
@@ -84,7 +86,8 @@ export function createPortfolio(options: PortfolioOptions): PortfolioInterface {
 				path: `${options.directory}/${file}`,
 				width: selected.width,
 				height: selected.height,
-				element,
+				element: placement?.element,
+				visible: placement?.visible,
 				unrolled: options.unrolled,
 			})
 			observed.push(state)

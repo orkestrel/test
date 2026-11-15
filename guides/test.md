@@ -308,7 +308,8 @@ they name no target either, and neither does `stepFocus`, which takes a limit an
 | `RGBA`                | type      | `readonly [red: number, green: number, blue: number, alpha: number]`            | Represents one rendered color as straight sRGB channels and its alpha.                                                                          |
 | `ContrastOptions`     | interface | `{ floor?, opacity? }`                                                          | Configures one color contrast reading: the surface the backdrop walk ends on, and the opacity the painted color is shown at.                    |
 | `ElementOptions`      | interface | `{ classes?, text?, attributes? }`                                              | Configures one built element: its class list, its text, and its attributes.                                                                     |
-| `FrameOptions`        | interface | `{ path, width, height, element?, unrolled? }`                                  | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
+| `FrameOptions`        | interface | `{ path, width, height, element?, unrolled?, visible? }`                        | Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots.                                             |
+| `PlacementOptions`    | type      | `Pick<FrameOptions, 'element' \| 'visible'>`                                    | Configures one placement: the element it shoots, or the viewport at the current scroll.                                                         |
 | `FrameOffset`         | interface | `{ top, left }`                                                                 | Represents how far an element frame moves the tester frame from the runner window's origin for the shot, in CSS pixels.                         |
 | `FrameResult`         | interface | `{ width, height, floor }`                                                      | Represents one written frame read back from the file a capture produced: its size in device pixels, and the single color its bottom row paints. |
 | `CaptureVariant`      | interface | `{ apply? }`                                                                    | Adds to a journey variant the document change a capture run applies before resizing.                                                            |
@@ -923,6 +924,18 @@ naming the regions. A `:modal` dialog or a `:popover-open` element under a trans
 counted as a row, though the top layer lays it out. A region inside a closed shadow root is
 unreachable, so its rows stay hidden without a refusal.
 
+To shoot what a person sees at the scroll a journey reached, set the `visible` option. The capture stages the
+pane at the declared viewport alone, measures no height, and stages no taller pane, so a mark the
+scroll drives, such as a contents entry naming the section in view, still names what the viewport
+shows. It shoots a transparent fixed box appended to the root element and removes the box on every
+path. A tester that is not at the declared viewport is resized to it first, and the frame then
+holds the scroll the page keeps at that size. A visible frame takes neither the `element` option nor
+an `unrolled: true` setting, and refuses both before it stages anything with
+`Capture frame at <path> is visible, so it takes neither an element nor unrolled`. A root element
+that becomes the box's containing block, through a transform or a paint containment, refuses the
+shot with
+`Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`.
+
 A region that still hides rows after the settling refuses the capture with
 `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled`.
 The refusal names every such region, and the cause and the correction come from what was
@@ -1009,7 +1022,9 @@ empty, `.`, `..`, or carries a slash. An enabled `place` applies the variant and
 `<directory>/<state>--<variant>.png`, or `<directory>/<scope>/<state>--<variant>.png`, through
 `captureFrame`, so it stages the pane at the variant's size, covers the whole document, verifies the
 written bytes, and records only a path that read back as this run's own frame. A portfolio created
-with `unrolled` passes it to every frame `place` writes. The tester comes back
+with `unrolled` passes it to every frame `place` writes. A placement takes a `PlacementOptions` value:
+its `element` option shoots one element, and its `visible` option shoots the viewport at the scroll
+the journey reached, which an unrolled portfolio refuses. The tester comes back
 at the viewport it had before the placement, so a journey that places a state carries on at its own
 size rather than at the variant's. `observed`, `placements`, and `paths` hand out snapshots, so a list read
 before a placement stays what it was.
@@ -1508,6 +1523,8 @@ absent, present-but-gated, and ambiguous are different findings about an interfa
 | `Tester pane rendered <w>x<h> for a <w>x<h> viewport`                                                                                                                      | `stagePane`                                                     |
 | `Capture frame at <path> never settled after <n> restagings: <h> over a <h> pane[; scroll regions still hiding rows: <region> hides <n> px, …]`                            | `captureFrame`                                                  |
 | `Capture frame at <path> leaves rows hidden in scroll regions: <region> <cause> and hides <n> px, so <correction>. Shoot the frame without unrolled to keep them scrolled` | `captureFrame`                                                  |
+| `Capture frame at <path> is visible, so it takes neither an element nor unrolled`                                                                                          | `captureFrame`                                                  |
+| `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`                             | `captureFrame`                                                  |
 | `Capture frame was written to <path> where <path> was asked for`                                                                                                           | `captureFrame`, `verifyFrame`                                   |
 | `Capture frame at <path> is not the one this run shot`                                                                                                                     | `captureFrame`, `verifyFrame`                                   |
 | `Capture path must be absolute: <path>`                                                                                                                                    | `readCapture`                                                   |
@@ -4264,7 +4281,10 @@ Each entry names the contracts its file proves. The test names carry the cases.
   against constructed markup. The `recordConsole` proofs cover its line format, forwarding, and recording before forwarding. The touch proofs cover a pointer-dependent target beside a sibling,
   a target moving across painted frames before settling, a supplied stability budget that refuses
   the tap, and both orders of media and touch teardown. The pointer proof restores the first coarse
-  reading after fine then coarse staging. The file-drag proofs reach a target under a smooth root
+  reading after fine then coarse staging. Every touch and pointer proof that asserts a fine pointer
+  after touch emulation ends first turns touch emulation on and off, and skips with that mechanism
+  named where the browser keeps `(pointer: none)` afterward, as Chromium build 1243 does. The
+  file-drag proofs reach a target under a smooth root
   and refuse a file name without scrolling or writing any file in the batch. The `releaseTouch`
   rethrow of a non-idle protocol error is covered by review: its cancellation parameters are fixed,
   and no controllable non-idle refusal was found through the browser provider without replacing
@@ -4437,7 +4457,13 @@ Each entry names the contracts its file proves. The test names carry the cases.
   missing paths. `captureFrame` takes a real file written, read back, and matched, with a planted file as the
   comparison's negative control, one element shot rather than the page, and a pane pinned to the
   wrong size by a rule of higher specificity, which is the refusal that also proves the release runs
-  on the failing path. It also takes a document taller than the pane, whose frame equals the
+  on the failing path. A visible frame of five 400-row bands, scrolled to row 600 with the
+  viewport prepared and with it resized, holds rows 600 to 999, green at the top and blue on the
+  floor, with no resize past the starting height and the scroll kept; the plain frame of the same
+  page is its control, restaged to 2000 rows and ending on purple. A visible frame refuses an
+  element and an unrolled frame before it stages, and a root element under a paint containment
+  refuses the cover with the pane and the scroll handed back. It also takes a document taller than
+  the pane, whose frame equals the
   fixture's own declared 1600 rows and ends on the background the document declares rather than on
   the runner's canvas, and a document shorter than the pane, whose frame stays at the pane's height
   on that same floor. The equality is the control that an overshoot adds no rows: a frame taller
@@ -4578,8 +4604,11 @@ Each entry names the contracts its file proves. The test names carry the cases.
   is not one path segment; an enabled run applies
   the variant, resizes the viewport, writes a real file through the provider, records it, and hands
   out snapshots rather than its own lists; it refuses an unregistered state and a second placement of
-  one state; and a placement handed an element writes a frame that is not the whole page's and leaves
-  the staged pane released. `createJournal` takes a step recorded only while it is started, every
+  one state; a placement handed an element writes a frame that is not the whole page's and leaves
+  the staged pane released; a visible placement of five 400-row bands scrolled to row 600 writes the
+  844-row viewport ending on yellow beside a placement of the page that writes 2000 rows ending on
+  purple, with the scroll kept; and an unrolled portfolio refuses a visible placement and records
+  nothing. `createJournal` takes a step recorded only while it is started, every
   console channel forwarded to the recorder that was there, a call's arguments joined into a line,
   an uncaught error and an unhandled rejection recorded and then ignored after the stop, the
   channels handed back by identity with a second stop proven a no-op against a replacement, a restart

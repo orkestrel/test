@@ -1,8 +1,15 @@
 import type { CaptureVariant } from '@src/browser'
 import type { StateScenario } from '@src/core'
-import { requireValue } from '@src/core'
+import { requireValue, waitForCondition } from '@src/core'
 import { TestValue } from './setup.js'
-import { clickAccessible, clickDisclosure, readStates, render } from '@src/browser'
+import {
+	clickAccessible,
+	clickDisclosure,
+	readStates,
+	render,
+	sendProtocol,
+	waitForStability,
+} from '@src/browser'
 
 /** Lists native file-input arrangements that a journey must refuse before activation. */
 export const FILE_REFUSALS = Object.freeze([
@@ -193,6 +200,21 @@ export const FIXED_CASES: ReadonlyArray<{ readonly style: string; readonly conta
 
 /** Holds the markup of a viewport-height shell whose main column lays out twenty rows. */
 export const SHELL_MARKUP = `<div class="shell"><header class="header">Header</header><main class="main">${'<div class="row"></div>'.repeat(20)}</main></div>`
+
+/** Holds the sheet the banded document needs: no body margin, and bands 400 rows tall. */
+export const BANDS_SHEET = 'body { margin: 0 } .band { height: 400px }'
+
+/**
+ * Holds a document of five 400-row bands, red, green, blue, yellow, and purple from the top, so the
+ * colors a frame's first and last rows paint name the scroll the frame was shot at.
+ */
+export const BANDS_MARKUP = [
+	'<div class="band" style="background: rgb(255, 0, 0)"></div>',
+	'<div class="band" style="background: rgb(0, 128, 0)"></div>',
+	'<div class="band" style="background: rgb(0, 0, 255)"></div>',
+	'<div class="band" style="background: rgb(255, 255, 0)"></div>',
+	'<div class="band" style="background: rgb(128, 0, 128)"></div>',
+].join('')
 
 /** Lists the window size each capture variant renders at, keyed by its own descriptive name. */
 export const VARIANTS: readonly CaptureVariant[] = Object.freeze([
@@ -550,4 +572,86 @@ export const MIXED_SCENARIOS: ReadonlyArray<
 
 export function applyDarkTheme(): void {
 	document.documentElement.setAttribute('data-theme', 'dark')
+}
+
+/** Holds the reason a pointer-media proof is skipped on a browser that keeps no pointer after touch. */
+export const POINTER_RESTORATION =
+	'Emulation.setTouchEmulationEnabled with enabled false leaves (pointer: none) matching rather than (pointer: fine), so no fine pointer returns for this proof to assert'
+
+/**
+ * Infers whether the browser restored a fine pointer from the pointer value it reads after touch
+ * emulation ends.
+ *
+ * @param pointer - The `pointer` media value that matches, or `undefined` where none matches.
+ * @returns True for `fine`; false for `none`.
+ * @throws Thrown for any other reading, because a browser that ends touch emulation reads either.
+ * @example
+ * ```ts
+ * inferPointerRestoration('none') // false
+ * ```
+ */
+export function inferPointerRestoration(pointer: string | undefined): boolean {
+	if (pointer === 'fine') return true
+	if (pointer === 'none') return false
+	throw new Error(
+		`Pointer media reads ${pointer ?? 'no pointer value'} after touch emulation ends, where fine or none was expected`,
+	)
+}
+
+/**
+ * Checks whether the browser restores a fine pointer after touch emulation ends, by turning touch
+ * emulation on and off again.
+ *
+ * @returns True where `(pointer: fine)` matches again; false where `(pointer: none)` holds.
+ * @throws Thrown when the provider exposes no DevTools session, when touch emulation never reads
+ * coarse or never ends, and when the reading after it ends is neither fine nor none.
+ * @remarks Leaves touch emulation off. The reading is taken after it holds across painted frames.
+ * @example
+ * ```ts
+ * const restored = await supportsPointerRestoration()
+ * ```
+ */
+export async function supportsPointerRestoration(): Promise<boolean> {
+	await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+	await waitForCondition(
+		'touch emulation reads coarse',
+		() => matchMedia('(pointer: coarse)').matches,
+	)
+	await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+	await waitForCondition('touch emulation ends', () => !matchMedia('(pointer: coarse)').matches)
+	await waitForStability('pointer media after touch emulation ends', () =>
+		String(readPointerMedia()),
+	)
+	return inferPointerRestoration(readPointerMedia())
+}
+
+/**
+ * Reads which `pointer` media value the tester matches.
+ *
+ * @returns `fine`, `coarse`, or `none`, or `undefined` where none of them matches.
+ * @example
+ * ```ts
+ * readPointerMedia() // 'fine'
+ * ```
+ */
+export function readPointerMedia(): string | undefined {
+	return ['fine', 'coarse', 'none'].find((value) => matchMedia(`(pointer: ${value})`).matches)
+}
+
+/**
+ * Skips the calling case, naming {@link POINTER_RESTORATION}, where the browser keeps no pointer
+ * after touch emulation ends, as {@link supportsPointerRestoration} reads it.
+ *
+ * @param context - The calling case's context, whose `skip` carries the reason.
+ * @example
+ * ```ts
+ * it('restores a fine pointer', async (context) => {
+ * 	await requirePointerRestoration(context)
+ * })
+ * ```
+ */
+export async function requirePointerRestoration(context: {
+	readonly skip: (condition: boolean, note?: string) => void
+}): Promise<void> {
+	context.skip(!(await supportsPointerRestoration()), POINTER_RESTORATION)
 }

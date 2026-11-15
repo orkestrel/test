@@ -48,6 +48,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../../setup.js'
 import {
+	BANDS_MARKUP,
+	BANDS_SHEET,
 	buildFixture,
 	buildStylesheet,
 	CLIP_CASES,
@@ -55,6 +57,7 @@ import {
 	CLIP_MARGIN_CASES,
 	FIXED_CASES,
 	PANES_SHEET,
+	requirePointerRestoration,
 	resetFixtures,
 	SHADOW_PANES,
 	SHELL_MARKUP,
@@ -1198,6 +1201,114 @@ describe('captureFrame', () => {
 		const result = await readFrame(written)
 		expect([result.width, result.height]).toStrictEqual([100, 85])
 		expect(window.scrollY).toBe(200)
+	})
+
+	it.each([true, false])(
+		'shoots the declared viewport at the current scroll and stages no taller pane, prepared: %s',
+		async (prepared) => {
+			buildStylesheet(BANDS_SHEET)
+			buildFixture(BANDS_MARKUP)
+			await page.viewport(390, prepared ? 400 : 500)
+			window.scrollTo({ top: 600, behavior: 'instant' })
+			const heights = createRecorder<[height: number]>()
+			const controller = new AbortController()
+			window.addEventListener('resize', () => heights.handler(window.innerHeight), {
+				signal: controller.signal,
+			})
+			try {
+				const written = await captureFrame({
+					path: `${FRAMES}/visible-${String(prepared)}.png`,
+					width: 390,
+					height: 400,
+					visible: true,
+				})
+				await waitForFrame()
+				// Rows 600 to 999 of the document: the green band's lower half over the blue band's upper.
+				expect(await readFrame(written)).toStrictEqual({
+					width: 390,
+					height: 400,
+					floor: 'rgb(0, 0, 255)',
+				})
+				const shot = await paintImage(await commands.readFile(written, 'base64'))
+				expect([...requireValue(shot).getImageData(5, 0, 1, 1).data]).toStrictEqual([
+					0, 128, 0, 255,
+				])
+				// The resize this case's own viewport request fires can land after the listener is added.
+				expect(Math.max(0, ...heights.calls.map(([height]) => height))).toBeLessThanOrEqual(
+					prepared ? 400 : 500,
+				)
+				expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([
+					390,
+					prepared ? 400 : 500,
+					600,
+				])
+				expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
+
+				// Control: the plain frame restages a pane as tall as the document and shoots it from the
+				// top, so it holds every band rather than the rows the scroll shows.
+				const restaged = await captureFrame({
+					path: `${FRAMES}/visible-control-${String(prepared)}.png`,
+					width: 390,
+					height: 400,
+				})
+				await waitForFrame()
+				expect(await readFrame(restaged)).toStrictEqual({
+					width: 390,
+					height: 2000,
+					floor: 'rgb(128, 0, 128)',
+				})
+				expect(heights.calls.map(([height]) => height)).toContain(2000)
+				expect(window.scrollY).toBe(600)
+			} finally {
+				controller.abort()
+			}
+		},
+	)
+
+	it('refuses a visible frame that also names an element or unrolled, before it stages', async () => {
+		const container = buildFixture('<div style="height: 40px">Subject</div>')
+		const pane = requireValue(window.frameElement?.parentElement)
+		const before = [window.innerWidth, window.innerHeight]
+		const path = `${FRAMES}/visible-refused.png`
+		const refusal = `Capture frame at ${path} is visible, so it takes neither an element nor unrolled`
+		await expect(
+			captureFrame({
+				path,
+				width: 390,
+				height: 400,
+				visible: true,
+				element: requireValue(container.firstElementChild),
+			}),
+		).rejects.toThrow(refusal)
+		await expect(
+			captureFrame({ path, width: 390, height: 400, visible: true, unrolled: true }),
+		).rejects.toThrow(refusal)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
+		// Control: `visible` with `unrolled` set to false writes the frame.
+		const written = await captureFrame({
+			path,
+			width: 390,
+			height: 400,
+			visible: true,
+			unrolled: false,
+		})
+		expect((await readFrame(written)).height).toBe(400)
+	})
+
+	it('refuses a visible frame whose root element contains its fixed cover, and hands the scroll back', async () => {
+		buildStylesheet(`${BANDS_SHEET} html { contain: paint }`)
+		buildFixture(BANDS_MARKUP)
+		await page.viewport(390, 400)
+		window.scrollTo({ top: 600, behavior: 'instant' })
+		const pane = requireValue(window.frameElement?.parentElement)
+		const path = `${FRAMES}/visible-contained.png`
+		await expect(captureFrame({ path, width: 390, height: 400, visible: true })).rejects.toThrow(
+			`Capture frame at ${path} cannot cover the viewport: a fixed box on the root element lays out at 390x2000 from (0, -600) in a 390x400 viewport`,
+		)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([390, 400, 600])
+		expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
 	})
 
 	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
@@ -2579,7 +2690,8 @@ describe('readPixels', () => {
 })
 
 describe('pointer media', () => {
-	it('stages coarse and fine pointers with their hover and any-pointer readings', async () => {
+	it('stages coarse and fine pointers with their hover and any-pointer readings', async (context) => {
+		await requirePointerRestoration(context)
 		await browser.stageMedia({ pointer: 'coarse' })
 		expect(matchMedia('(pointer: coarse)').matches).toBe(true)
 		expect(matchMedia('(any-pointer: coarse)').matches).toBe(true)
@@ -2594,7 +2706,8 @@ describe('pointer media', () => {
 		expect(matchMedia('(pointer: coarse)').matches).toBe(false)
 	})
 
-	it('restores the first coarse reading after fine then coarse staging', async () => {
+	it('restores the first coarse reading after fine then coarse staging', async (context) => {
+		await requirePointerRestoration(context)
 		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
 		await waitForCondition(
 			'the provider pointer is coarse',
@@ -2612,7 +2725,8 @@ describe('pointer media', () => {
 		}
 	})
 
-	it('restores a pre-call fine pointer and appends its bit to an earlier motion stage', async () => {
+	it('restores a pre-call fine pointer and appends its bit to an earlier motion stage', async (context) => {
+		await requirePointerRestoration(context)
 		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
 		await stageMedia({ motion: false })
 		const marker = document.documentElement.getAttribute(MEDIA_STAGE)

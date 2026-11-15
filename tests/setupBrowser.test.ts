@@ -1,5 +1,17 @@
+import { sendProtocol } from '@src/browser'
+import { createRecorder, waitForCondition } from '@src/core'
 import { describe, expect, it } from 'vitest'
-import { buildFileFixture, buildFixture, buildStylesheet, resetFixtures } from './setupBrowser.js'
+import {
+	buildFileFixture,
+	buildFixture,
+	buildStylesheet,
+	inferPointerRestoration,
+	POINTER_RESTORATION,
+	readPointerMedia,
+	requirePointerRestoration,
+	resetFixtures,
+	supportsPointerRestoration,
+} from './setupBrowser.js'
 
 describe('buildFileFixture', () => {
 	it('builds two labeled native inputs and removes both with fixture cleanup', () => {
@@ -57,5 +69,59 @@ describe('buildStylesheet', () => {
 		const sheet = buildStylesheet('.badge { color: blue }')
 		resetFixtures()
 		expect(document.head.contains(sheet)).toBe(false)
+	})
+})
+
+describe('inferPointerRestoration', () => {
+	it('reads a fine pointer as restored and a pointer of none as kept', () => {
+		expect(inferPointerRestoration('fine')).toBe(true)
+		expect(inferPointerRestoration('none')).toBe(false)
+	})
+
+	it('refuses a coarse reading and a reading that matches no pointer value', () => {
+		expect(() => inferPointerRestoration('coarse')).toThrow(
+			'Pointer media reads coarse after touch emulation ends, where fine or none was expected',
+		)
+		expect(() => inferPointerRestoration(undefined)).toThrow(
+			'Pointer media reads no pointer value after touch emulation ends, where fine or none was expected',
+		)
+	})
+})
+
+describe('readPointerMedia', () => {
+	it('reads coarse under touch emulation and the one value that matches after it ends', async () => {
+		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+		try {
+			await waitForCondition(
+				'touch emulation reads coarse',
+				() => matchMedia('(pointer: coarse)').matches,
+			)
+			expect(readPointerMedia()).toBe('coarse')
+		} finally {
+			await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
+		}
+		await waitForCondition('touch emulation ends', () => !matchMedia('(pointer: coarse)').matches)
+		const pointer = readPointerMedia()
+		expect(['fine', 'none']).toContain(pointer)
+		expect(matchMedia(`(pointer: ${String(pointer)})`).matches).toBe(true)
+	})
+})
+
+describe('supportsPointerRestoration', () => {
+	it('answers with the pointer the browser reads after touch emulation ends, and leaves it off', async () => {
+		const restored = await supportsPointerRestoration()
+		expect(matchMedia('(pointer: fine)').matches).toBe(restored)
+		expect(matchMedia('(pointer: none)').matches).toBe(!restored)
+		expect(navigator.maxTouchPoints).toBe(0)
+	})
+})
+
+describe('requirePointerRestoration', () => {
+	it('skips with the named mechanism exactly where no fine pointer returns', async () => {
+		const skips = createRecorder<[condition: boolean, note?: string]>()
+		await requirePointerRestoration({ skip: skips.handler })
+		expect(skips.calls).toStrictEqual([
+			[!matchMedia('(pointer: fine)').matches, POINTER_RESTORATION],
+		])
 	})
 })

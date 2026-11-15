@@ -1109,8 +1109,9 @@ export async function releaseMedia(): Promise<void> {
  * @returns The absolute path of the written frame, after it has been read back and matched.
  * @throws Thrown when the pane cannot be staged, when the document's height or an element frame's
  * element height never settles under {@link CAPTURE_STAGE_LIMIT} restagings, when an unrolled frame
- * leaves rows hidden in a scroll region, when the provider wrote the frame somewhere else, and when
- * the bytes on disk are not the ones this shot produced.
+ * leaves rows hidden in a scroll region, when a visible frame names an element or an unrolled frame
+ * or cannot cover the viewport, when the provider wrote the frame somewhere else, and when the bytes
+ * on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
@@ -1226,6 +1227,18 @@ export async function releaseMedia(): Promise<void> {
  * transformed ancestor is counted as a row, though the top layer lays it out. A region inside a
  * closed shadow root is unreachable, so its rows stay hidden without a refusal.
  *
+ * Set the `visible` option to shoot what the tester shows: the declared viewport at the scroll the
+ * page holds. The pane is staged at the declared viewport alone, no height is measured, and no
+ * taller pane is staged, so a scroll-driven mark keeps naming what the viewport shows. The shot is
+ * taken of a transparent fixed box appended to the root element and removed on every path; the
+ * box sends no pointer input and receives none. A tester that is not at the declared viewport is
+ * resized to it first, and the frame then holds the scroll the page keeps at that size. A visible
+ * frame refuses an `element` and `unrolled: true` before it stages anything, with
+ * `Capture frame at <path> is visible, so it takes neither an element nor unrolled`. A root element
+ * that becomes the box's containing block, through a transform or a paint containment, refuses the
+ * shot with
+ * `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`.
+ *
  * @example
  * ```ts
  * await captureFrame({ path: '../../tmp/capture/start.png', width: 390, height: 844 })
@@ -1233,6 +1246,11 @@ export async function releaseMedia(): Promise<void> {
  */
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	const element = options.element
+	if (options.visible === true && (element !== undefined || options.unrolled === true)) {
+		throw new Error(
+			`Capture frame at ${options.path} is visible, so it takes neither an element nor unrolled`,
+		)
+	}
 	const scroll = { left: window.scrollX, top: window.scrollY }
 	const placements = collectScrollContainers().map((container) => ({
 		container,
@@ -1240,7 +1258,26 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		top: container.scrollTop,
 	}))
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
+	const cover = options.visible === true ? document.createElement('div') : undefined
 	try {
+		if (cover !== undefined) {
+			await stagePane(options.width, options.height)
+			cover.setAttribute('aria-hidden', 'true')
+			cover.style.cssText = 'position:fixed;inset:0;opacity:0;pointer-events:none'
+			// The root element, not the body, holds the cover, so a transformed or contained body
+			// cannot become the cover's containing block.
+			document.documentElement.append(cover)
+			const box = cover.getBoundingClientRect()
+			const { clientWidth, clientHeight } = document.documentElement
+			if (box.x !== 0 || box.y !== 0 || box.width !== clientWidth || box.height !== clientHeight) {
+				throw new Error(
+					`Capture frame at ${options.path} cannot cover the viewport: a fixed box on the root element lays out at ${String(box.width)}x${String(box.height)} from (${String(box.x)}, ${String(box.y)}) in a ${String(clientWidth)}x${String(clientHeight)} viewport`,
+				)
+			}
+			const shot = await takeFrameShot(options, cover)
+			await verifyFrame(shot, options.path, readCaptureReader())
+			return shot.path
+		}
 		if (!prepared) await stagePane(options.width, options.height)
 		const declared = new Map(
 			(options.unrolled === true ? collectUnrolledRegions(element) : []).map(
@@ -1273,6 +1310,7 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
+		cover?.remove()
 		try {
 			await releasePane()
 		} finally {

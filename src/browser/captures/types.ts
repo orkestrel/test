@@ -26,7 +26,15 @@ export interface FrameOptions {
 	 * omitted, the frame ends where the document's own content ends.
 	 */
 	readonly unrolled?: boolean | undefined
+	/**
+	 * If `true`, the frame shoots the declared viewport at the tester's current scroll and stages no
+	 * taller pane; if `false` or omitted, the frame covers the document or the element.
+	 */
+	readonly visible?: boolean | undefined
 }
+
+/** Configures one placement: the element it shoots, or the viewport at the current scroll. */
+export type PlacementOptions = Pick<FrameOptions, 'element' | 'visible'>
 
 /**
  * Represents how far an element frame moves the tester frame from the runner window's origin for the
@@ -144,13 +152,14 @@ export interface PortfolioInterface {
 	 * screenshot.
 	 *
 	 * @param state - The state name from the registry.
-	 * @param element - The element to shoot. Omit it to shoot the whole page.
+	 * @param placement - The element to shoot, or `visible` to shoot the viewport at the current
+	 * scroll. Omit it to shoot the whole page.
 	 * @returns The written path, or `undefined` when the portfolio is not enabled or the state is not
 	 * the one `state` projects.
 	 * @throws When the state is not registered, has already been placed, or the written frame does
 	 * not read back as the bytes this shot produced.
 	 */
-	place(state: string, element?: Element): Promise<string | undefined>
+	place(state: string, placement?: PlacementOptions): Promise<string | undefined>
 }
 
 /**
