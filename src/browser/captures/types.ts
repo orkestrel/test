@@ -81,6 +81,15 @@ export interface CaptureVariant extends JourneyVariant {
 }
 
 /**
+ * Names the scope directory one capture state is written under, one path segment.
+ *
+ * @remarks
+ * A portfolio calls it with each registered state, so it must return the same scope for a state on
+ * every call.
+ */
+export type ScopeHandler = (state: string) => string
+
+/**
  * Configures a capture portfolio: the state registry, the variant matrix, this run's variant, where
  * it writes, and whether it writes at all.
  */
@@ -90,12 +99,22 @@ export interface PortfolioOptions {
 	 * this list, so the registry and the disk cannot drift apart.
 	 */
 	readonly states: readonly string[]
+	/**
+	 * Holds the one state this run writes. Omit it to write every state. `place` accepts each other
+	 * registered state unwritten. Creation throws when the registry does not carry it.
+	 */
+	readonly state?: string
 	/** Lists every variant the portfolio can be rendered in. One run renders exactly one of them. */
 	readonly variants: readonly CaptureVariant[]
 	/** Holds the name of the variant this run renders. Creation throws when no variant carries it. */
 	readonly variant: string
 	/** Holds the directory each written file is placed in, relative to the calling test file. */
 	readonly directory: string
+	/**
+	 * Names the scope directory each state is written under, inside `directory`. Omit it to write
+	 * every state into `directory` itself.
+	 */
+	readonly scope?: ScopeHandler
 	/**
 	 * Determines whether this run writes files. An ordinary run leaves it unset, so `place` resizes
 	 * nothing, writes nothing, and records nothing.
@@ -112,7 +131,9 @@ export interface PortfolioOptions {
 export interface PortfolioInterface {
 	/** Holds the name of the variant this run renders. */
 	readonly variant: string
-	/** Lists every state placed so far, in placement order. */
+	/** Lists every state `place` accepted so far, written or not, in placement order. */
+	readonly observed: readonly string[]
+	/** Lists every state written so far, in placement order. */
 	readonly placements: readonly string[]
 	/** Lists every path written so far, in write order. */
 	readonly paths: readonly string[]
@@ -124,7 +145,8 @@ export interface PortfolioInterface {
 	 *
 	 * @param state - The state name from the registry.
 	 * @param element - The element to shoot. Omit it to shoot the whole page.
-	 * @returns The written path, or `undefined` when the portfolio is not enabled.
+	 * @returns The written path, or `undefined` when the portfolio is not enabled or the state is not
+	 * the one `state` projects.
 	 * @throws When the state is not registered, has already been placed, or the written frame does
 	 * not read back as the bytes this shot produced.
 	 */

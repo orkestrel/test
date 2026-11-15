@@ -18,10 +18,12 @@ import {
 	measureRegion,
 	MEDIA_STAGE,
 	paintImage,
+	readClipBound,
 	readClipEdge,
 	readClipMargin,
 	readCaptureReader,
 	readClippedBlock,
+	readFlatParent,
 	readFrame,
 	readFrameHeight,
 	readPixels,
@@ -210,6 +212,280 @@ describe('collectClippingAncestors', () => {
 		expect(() => collectClippingAncestors(span)).toThrow(
 			'The element is not connected to a document, so it has no clipping ancestors to read',
 		)
+	})
+})
+
+describe('readFlatParent', () => {
+	it('steps to the assigned slot, else the parent element, else the shadow host, else nothing', () => {
+		const root = buildFixture(
+			'<div data-open><span data-slotted></span></div><div data-closed><span data-hidden></span></div>',
+		)
+		const open = requireValue(root.querySelector('[data-open]'))
+		const closed = requireValue(root.querySelector('[data-closed]'))
+		const slot = document.createElement('slot')
+		open.attachShadow({ mode: 'open' }).append(slot)
+		closed.attachShadow({ mode: 'closed' }).append(document.createElement('slot'))
+		expect(readFlatParent(requireValue(root.querySelector('[data-slotted]')))).toBe(slot)
+		expect(readFlatParent(slot)).toBe(open)
+		// A closed root reports no slot, so its slotted child steps to its light parent.
+		expect(readFlatParent(requireValue(root.querySelector('[data-hidden]')))).toBe(closed)
+		expect(readFlatParent(document.body)).toBe(document.documentElement)
+		expect(readFlatParent(document.documentElement)).toBeUndefined()
+	})
+})
+
+describe('readClipBound', () => {
+	it('reads the lowest clip edge between an element and a region, the region itself not counted', () => {
+		const root = buildFixture(
+			'<div data-outer style="overflow: hidden; height: 300px">' +
+				'<div data-inner style="overflow: clip; height: 200px">' +
+				'<div data-open><div data-leaf style="height: 900px"></div></div></div></div>',
+		)
+		const leaf = requireValue(root.querySelector('[data-leaf]'))
+		const inner = requireValue(root.querySelector('[data-inner]'))
+		const outer = requireValue(root.querySelector('[data-outer]'))
+		const top = outer.getBoundingClientRect().top + window.scrollY
+		expect(readClipBound(leaf, document.body)).toBe(top + 200)
+		expect(readClipBound(leaf, inner)).toBe(Number.POSITIVE_INFINITY)
+		expect(readClipBound(inner, document.body)).toBe(top + 300)
+		expect(readClipBound(outer, document.body)).toBe(Number.POSITIVE_INFINITY)
+		// The region is no ancestor of an element beside it.
+		expect(readClipBound(outer, inner)).toBeUndefined()
+	})
+
+	it('records the bound each ancestor hands down in the memo it shares', () => {
+		const root = buildFixture(
+			'<div data-frame style="overflow: hidden; height: 100px"><div data-open>' +
+				'<div data-first></div><div data-second></div></div></div>',
+		)
+		const frame = requireValue(root.querySelector('[data-frame]'))
+		const open = requireValue(root.querySelector('[data-open]'))
+		const edge = frame.getBoundingClientRect().top + window.scrollY + 100
+		const bounds = new Map<Element, number | undefined>()
+		expect(readClipBound(requireValue(root.querySelector('[data-first]')), root, bounds)).toBe(edge)
+		expect([...bounds]).toStrictEqual([
+			[frame, edge],
+			[open, edge],
+		])
+		// A bound the memo already holds is read from it rather than from the page.
+		bounds.set(open, 7)
+		expect(readClipBound(requireValue(root.querySelector('[data-second]')), root, bounds)).toBe(7)
+	})
+
+	it('refuses a disconnected element, as the clipping ancestors refuse it', () => {
+		const span = build('span')
+		build('div', { attributes: { style: 'overflow: hidden' } }).append(span)
+		expect(() => readClipBound(span, document.body)).toThrow(
+			'The element is not connected to a document, so it has no clipping ancestors to read',
+		)
+	})
+})
+
+describe('content measurement over generated trees', () => {
+	// Each seed builds one tree of styled boxes, broad on even seeds and deep on odd ones, with open
+	// and closed shadow wrappers, shadow-tree children, slot elements, scrolled regions, and a
+	// scrolled window. The reference transcribes the per-element climb the shipped measurement took
+	// before it read its clip bounds through one memo: every element climbs its whole clipping
+	// ancestry, and every frame on that climb is read again for each element under it.
+	it('reads every tree and every region in it as the per-element climb reads them', () => {
+		const styles = [...CLIP_CASES, ...CLIP_EDGE_CASES, ...CLIP_MARGIN_CASES, ...FIXED_CASES].map(
+			({ style }) => style,
+		)
+		const sizes = [
+			'',
+			'height: 0',
+			'height: 12px',
+			'height: 45px',
+			'height: 130px',
+			'height: 100vh',
+			'height: 40px; padding-bottom: 6px',
+			'height: 30px; border-bottom: 3px solid',
+		]
+		const margins = ['', 'margin-bottom: 9px', 'margin-bottom: 31px', 'margin-top: 14px']
+		const places = [
+			'',
+			'',
+			'',
+			'position: relative',
+			'position: absolute; top: 25px',
+			'position: fixed; bottom: 0',
+			'position: absolute; bottom: -40px',
+		]
+		const readings = Array.from({ length: 24 }, (_tree, seed) => {
+			const plans = Array.from({ length: 48 }, (_, index) => {
+				const mixed = Math.imul(seed * 7919 + index * 31 + 1, 0x9e3779b1)
+				const spread = Math.imul(mixed ^ (mixed >>> 15), 0x85ebca6b)
+				const hash = (spread ^ (spread >>> 13)) >>> 0
+				return {
+					parent:
+						index === 0
+							? undefined
+							: seed % 2 === 0
+								? hash % index
+								: index - 1 - (hash % Math.min(index, 3)),
+					style: [
+						styles[hash % styles.length],
+						sizes[(hash >>> 5) % sizes.length],
+						margins[(hash >>> 9) % margins.length],
+						places[(hash >>> 12) % places.length],
+					].join('; '),
+					host: (hash >>> 16) % 8,
+					placement: (hash >>> 19) % 8,
+					wrapper: styles[(hash >>> 22) % styles.length] ?? '',
+					scroll: (hash >>> 26) % 40,
+				}
+			})
+			const container = buildFixture('')
+			const nodes = plans.map(({ placement }) =>
+				document.createElement(placement === 2 ? 'slot' : 'div'),
+			)
+			for (const [index, node] of nodes.entries()) {
+				const plan = requireValue(plans[index])
+				node.style.cssText = plan.style
+				const parent = plan.parent === undefined ? container : requireValue(nodes[plan.parent])
+				const shadow = parent.shadowRoot?.firstElementChild
+				if (plan.placement < 2 && shadow !== undefined && shadow !== null) shadow.append(node)
+				else parent.append(node)
+				if (plan.host < 2 && node.localName === 'div') {
+					const root = node.attachShadow({ mode: plan.host === 0 ? 'open' : 'closed' })
+					root.innerHTML = `<div style="${plan.wrapper}"><slot></slot></div>`
+				}
+			}
+			for (const [index, node] of nodes.entries()) {
+				node.scrollTop = requireValue(plans[index]).scroll
+			}
+			window.scrollTo({ left: 0, top: (seed * 37) % 160, behavior: 'instant' })
+			const regions = [
+				...nodes.filter((_node, index) => index % 3 === 0),
+				...nodes.flatMap((node) => {
+					const wrapper = node.shadowRoot?.firstElementChild
+					return wrapper === undefined || wrapper === null ? [] : [wrapper]
+				}),
+			]
+			const pads =
+				readPixels(document.body, 'padding-bottom') +
+				readPixels(document.body, 'margin-bottom') +
+				readPixels(document.documentElement, 'padding-bottom') +
+				readPixels(document.documentElement, 'margin-bottom')
+			const reading = {
+				seed,
+				scrolled: window.scrollY > 0 && regions.some((region) => region.scrollTop > 0),
+				content: measureContent(),
+				reference: Math.ceil(
+					Array.from(document.body.querySelectorAll('*')).reduce((greatest, element) => {
+						const bottom = Math.min(
+							element.getBoundingClientRect().bottom +
+								window.scrollY +
+								readPixels(element, 'margin-bottom'),
+							...collectClippingAncestors(element)
+								.filter((frame) => frame !== document.body && frame !== document.documentElement)
+								.flatMap((frame) => {
+									const limit = readClipEdge(frame)
+									return limit === undefined ? [] : [limit]
+								}),
+						)
+						return bottom > greatest ? bottom : greatest
+					}, 0) + pads,
+				),
+				uncapped: Math.ceil(
+					Array.from(document.body.querySelectorAll('*')).reduce(
+						(greatest, element) =>
+							Math.max(
+								greatest,
+								element.getBoundingClientRect().bottom +
+									window.scrollY +
+									readPixels(element, 'margin-bottom'),
+							),
+						0,
+					) + pads,
+				),
+				regions: regions.map((region) => {
+					const origin = region.getBoundingClientRect().top + region.clientTop - region.scrollTop
+					const rows = collectRegionRows(region)
+					return {
+						reading: measureRegion(region),
+						reference: Math.ceil(
+							rows.reduce(
+								(greatest, element) => {
+									const frames = collectClippingAncestors(element)
+									const bottom = Math.min(
+										element.getBoundingClientRect().bottom + readPixels(element, 'margin-bottom'),
+										...frames.slice(0, Math.max(0, frames.indexOf(region))).flatMap((frame) => {
+											const limit = readClipEdge(frame)
+											return limit === undefined ? [] : [limit - window.scrollY]
+										}),
+									)
+									return bottom > greatest ? bottom : greatest
+								},
+								origin + readPixels(region, 'padding-top'),
+							) -
+								origin +
+								readPixels(region, 'padding-bottom'),
+						),
+						uncapped: Math.ceil(
+							rows.reduce(
+								(greatest, element) =>
+									Math.max(
+										greatest,
+										element.getBoundingClientRect().bottom + readPixels(element, 'margin-bottom'),
+									),
+								origin + readPixels(region, 'padding-top'),
+							) -
+								origin +
+								readPixels(region, 'padding-bottom'),
+						),
+					}
+				}),
+			}
+			window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
+			container.remove()
+			return reading
+		})
+		expect(readings.map(({ seed, content }) => ({ seed, content }))).toStrictEqual(
+			readings.map(({ seed, reference }) => ({ seed, content: reference })),
+		)
+		expect(
+			readings.map(({ seed, regions }) => ({
+				seed,
+				regions: regions.map((region) => region.reading),
+			})),
+		).toStrictEqual(
+			readings.map(({ seed, regions }) => ({
+				seed,
+				regions: regions.map((region) => region.reference),
+			})),
+		)
+		// The population reaches the caps: a reading that ignored every clip edge would differ on some
+		// tree and on some region, so the equality above is not met by trees whose frames cap nothing.
+		expect(readings.filter(({ content, uncapped }) => content !== uncapped).length).toBeGreaterThan(
+			0,
+		)
+		expect(
+			readings
+				.flatMap(({ regions }) => regions)
+				.filter(({ reading, uncapped }) => reading !== uncapped).length,
+		).toBeGreaterThan(0)
+		// The population reaches a scrolled window beside a scrolled region.
+		expect(readings.filter(({ scrolled }) => scrolled).length).toBeGreaterThan(0)
+	})
+
+	it('moves one reading when one box changes, so a reading taken before the change no longer matches', () => {
+		const container = buildFixture(
+			'<div style="overflow: hidden; height: 120px"><div style="height: 400px"></div></div>',
+		)
+		const before = measureContent()
+		const region = requireValue(container.firstElementChild)
+		const rows = measureRegion(region)
+		requireValue(region.firstElementChild).setAttribute(
+			'style',
+			'height: 400px; margin-bottom: 13px',
+		)
+		expect(measureContent()).toBe(before)
+		expect(measureRegion(region)).not.toBe(rows)
+		expect(measureRegion(region)).toBe(rows + 13)
+		region.setAttribute('style', 'overflow: hidden; height: 150px')
+		expect(measureContent()).not.toBe(before)
+		expect(measureContent()).toBe(before + 30)
 	})
 })
 
@@ -2115,6 +2391,18 @@ describe('computeOffset', () => {
 })
 
 describe('verifyFrame', () => {
+	it('refuses a written path that ends in the requested path without a segment boundary', async () => {
+		const shot = await page.screenshot({ path: `${FRAMES}/boundary.png`, base64: true })
+		// `rame/boundary.png` is a suffix of the written `…/frame/boundary.png` text, but no
+		// directory of the written path is named `rame`.
+		await expect(verifyFrame(shot, 'rame/boundary.png')).rejects.toThrow(
+			`Capture frame was written to ${shot.path} where rame/boundary.png was asked for`,
+		)
+		await expect(verifyFrame(shot, 'frame/boundary.png')).resolves.toBeUndefined()
+		await expect(verifyFrame(shot, shot.path)).resolves.toBeUndefined()
+		await commands.removeFile(shot.path)
+	})
+
 	it('propagates a digest read failure even while the base64 fallback would succeed', async () => {
 		const path = `${FRAMES}/read-failure.png`
 		const missing = `${server.config.root}/tmp/capture/frame/missing-digest.png`
@@ -2694,5 +2982,43 @@ describe('expandCaptures', () => {
 	it('expands an empty registry and an empty variant matrix to no files', () => {
 		expect(expandCaptures([], VARIANTS)).toStrictEqual([])
 		expect(expandCaptures(['start'], [])).toStrictEqual([])
+	})
+
+	it('puts each file under the scope its state names, in registry order', () => {
+		const scopes = new Map([
+			['start', 'pages'],
+			['answer', 'shell'],
+			['finish', 'pages'],
+		])
+		const called = createRecorder<[state: string]>()
+		expect(
+			expandCaptures(['start', 'answer', 'finish'], VARIANTS, (state) => {
+				called.handler(state)
+				return requireValue(scopes.get(state))
+			}),
+		).toStrictEqual([
+			'pages/start--light-1440.png',
+			'pages/start--dark-390.png',
+			'shell/answer--light-1440.png',
+			'shell/answer--dark-390.png',
+			'pages/finish--light-1440.png',
+			'pages/finish--dark-390.png',
+		])
+		expect(called.calls).toStrictEqual([['start'], ['answer'], ['finish']])
+	})
+
+	it.each(['', '.', '..', 'pages/start', 'pages\\start'])(
+		'refuses a scope that is not one path segment: %j',
+		(scope) => {
+			expect(() => expandCaptures(['start'], VARIANTS, () => scope)).toThrow(
+				`Capture scope ${JSON.stringify(scope)} of state "start" is not one path segment`,
+			)
+		},
+	)
+
+	it('accepts a scope segment that opens with a dot', () => {
+		expect(expandCaptures(['start'], VARIANTS.slice(0, 1), () => '.pages')).toStrictEqual([
+			'.pages/start--light-1440.png',
+		])
 	})
 })

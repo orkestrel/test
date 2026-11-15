@@ -7,6 +7,7 @@ import type {
 	FrameResult,
 	FrameShot,
 	MediaOptions,
+	ScopeHandler,
 	StabilityOptions,
 } from './types.js'
 import { readProperty, waitForCondition } from '@src/core'
@@ -190,14 +191,84 @@ export function collectClippingAncestors(element: Element): readonly Element[] {
 			'The element is not connected to a document, so it has no clipping ancestors to read',
 		)
 	}
+	const parent = readFlatParent(element)
+	if (parent === undefined) return []
+	return [...(clipsOverflow(parent) ? [parent] : []), ...collectClippingAncestors(parent)]
+}
+
+/**
+ * Reads an element's parent in the flat tree, the tree a browser paints.
+ *
+ * @param element - The element to step up from.
+ * @returns The slot the element is assigned to, else its parent element, else the host of the
+ * shadow root it stands in, and `undefined` for an element with none of the three.
+ *
+ * @remarks
+ * The `assignedSlot` property reports no slot of a closed shadow root, so a child assigned into one
+ * steps to its light parent instead.
+ *
+ * @example
+ * ```ts
+ * readFlatParent(slotted) // the slot it is assigned to, inside its parent's open shadow root
+ * ```
+ */
+export function readFlatParent(element: Element): Element | undefined {
 	const realm = element.ownerDocument.defaultView
 	const scope = element.getRootNode()
-	const parent =
+	return (
 		element.assignedSlot ??
 		element.parentElement ??
-		(realm !== null && scope instanceof realm.ShadowRoot ? scope.host : null)
-	if (parent === null) return []
-	return [...(clipsOverflow(parent) ? [parent] : []), ...collectClippingAncestors(parent)]
+		(realm !== null && scope instanceof realm.ShadowRoot ? scope.host : undefined)
+	)
+}
+
+/**
+ * Reads the lowest clip edge the clipping ancestors between an element and a region put on it.
+ *
+ * @param element - The element to read.
+ * @param region - The flat-tree ancestor the climb stops at, itself not counted.
+ * @param bounds - The memo one measurement shares across its elements, keyed by ancestor. Default:
+ * a fresh memo.
+ * @returns The lowest edge, in document coordinates, that the {@link readClipEdge} helper measures
+ * on a clipping ancestor strictly between the element and the region; `Infinity` where none of them
+ * clips; and `undefined` where the region is no flat-tree ancestor of the element.
+ * @throws Thrown when the element is not connected to a document, as the
+ * {@link collectClippingAncestors} helper throws.
+ *
+ * @remarks
+ * The climb takes the steps the {@link readFlatParent} helper reads, as the
+ * {@link collectClippingAncestors} helper does. Each ancestor's entry in `bounds` holds the bound it
+ * hands down: its own clip edge and every bound above it, up to the region. A measurement that
+ * reads every element of a subtree through one memo therefore reads each ancestor's style once,
+ * rather than once for every element under it.
+ *
+ * @example
+ * ```ts
+ * const bounds = new Map<Element, number | undefined>()
+ * readClipBound(row, document.body, bounds) // the edge of the nearest hidden frame around the row
+ * ```
+ */
+export function readClipBound(
+	element: Element,
+	region: Element,
+	bounds: Map<Element, number | undefined> = new Map(),
+): number | undefined {
+	if (!element.isConnected) {
+		throw new Error(
+			'The element is not connected to a document, so it has no clipping ancestors to read',
+		)
+	}
+	const parent = readFlatParent(element)
+	if (parent === undefined) return undefined
+	if (parent === region) return Number.POSITIVE_INFINITY
+	if (bounds.has(parent)) return bounds.get(parent)
+	const above = readClipBound(parent, region, bounds)
+	const bound =
+		above === undefined
+			? undefined
+			: Math.min(readClipEdge(parent) ?? Number.POSITIVE_INFINITY, above)
+	bounds.set(parent, bound)
+	return bound
 }
 
 /**
@@ -473,16 +544,15 @@ export function collectRegionRows(region: Element): readonly Element[] {
  */
 export function measureRegion(region: Element): number {
 	const origin = region.getBoundingClientRect().top + region.clientTop - region.scrollTop
+	const bounds = new Map<Element, number | undefined>()
+	// A region that clips nothing is no clipping ancestor of its rows, so no frame below it caps one.
+	const bounded = clipsOverflow(region)
 	const edge = collectRegionRows(region).reduce(
 		(greatest, element) => {
-			const frames = collectClippingAncestors(element)
-			const limits = frames.slice(0, Math.max(0, frames.indexOf(region))).flatMap((frame) => {
-				const limit = readClipEdge(frame)
-				return limit === undefined ? [] : [limit - window.scrollY]
-			})
+			const limit = bounded ? readClipBound(element, region, bounds) : undefined
 			const bottom = Math.min(
 				element.getBoundingClientRect().bottom + readPixels(element, 'margin-bottom'),
-				...limits,
+				(limit ?? Number.POSITIVE_INFINITY) - window.scrollY,
 			)
 			return bottom > greatest ? bottom : greatest
 		},
@@ -565,7 +635,7 @@ export function renderLabel(element: Element): string {
  *
  * Each element contributes its client rectangle's bottom edge in document coordinates plus its own
  * bottom margin, which sits outside that rectangle, and the largest contribution wins. An ancestor
- * that clips its overflow, which the {@link collectClippingAncestors} helper finds through the flat
+ * that clips its overflow, which the {@link readClipBound} helper finds through the flat
  * tree and so reaches a shadow wrapper around a slot, caps the contribution at that ancestor's clip
  * edge, which the {@link readClipEdge} helper measures, because the rows a descendant lays out past a clipping
  * frame are cut, scrolled, or discarded rather than added to the document: a viewport-height
@@ -590,19 +660,14 @@ export function renderLabel(element: Element): string {
  * ```
  */
 export function measureContent(): number {
+	const bounds = new Map<Element, number | undefined>()
 	const elements = Array.from(document.body.querySelectorAll('*'))
 	const edge = elements.reduce((greatest, element) => {
-		const limits = collectClippingAncestors(element)
-			.filter((frame) => frame !== document.body && frame !== document.documentElement)
-			.flatMap((frame) => {
-				const limit = readClipEdge(frame)
-				return limit === undefined ? [] : [limit]
-			})
 		const bottom = Math.min(
 			element.getBoundingClientRect().bottom +
 				window.scrollY +
 				readPixels(element, 'margin-bottom'),
-			...limits,
+			readClipBound(element, document.body, bounds) ?? Number.POSITIVE_INFINITY,
 		)
 		return bottom > greatest ? bottom : greatest
 	}, 0)
@@ -1263,7 +1328,9 @@ export async function verifyFrame(
 		if (segment === '..') segments.pop()
 		else segments.push(segment)
 	}
-	if (!shot.path.replaceAll('\\', '/').endsWith(segments.join('/'))) {
+	const destination = shot.path.replaceAll('\\', '/')
+	const requested = segments.join('/')
+	if (destination !== requested && !destination.endsWith(`/${requested}`)) {
 		throw new Error(`Capture frame was written to ${shot.path} where ${path} was asked for`)
 	}
 	const expected =
@@ -1437,12 +1504,16 @@ export async function readShotPixel(element: Element, x: number, y: number): Pro
  *
  * @param states - The registered state names.
  * @param variants - The variants the portfolio is rendered in.
- * @returns One `<state>--<variant>.png` name per pair, each state's variants together, in registry
- * order.
+ * @param scope - The handler naming each state's scope directory. Omit it to name no directory.
+ * @returns One `<state>--<variant>.png` name per pair, each under `<scope>/` where `scope` is given,
+ * each state's variants together, in registry order.
+ * @throws Thrown when `scope` names a scope that is empty, `.`, `..`, or carries a slash or a
+ * backslash, because a scope is one path segment.
  *
  * @remarks
  * The expansion is the portfolio's own definition of complete, so a duplicate in it is a registry
- * defect a proof reads directly rather than a collision discovered on disk.
+ * defect a proof reads directly rather than a collision discovered on disk. The handler is called
+ * once per state.
  *
  * @example
  * ```ts
@@ -1453,12 +1524,21 @@ export async function readShotPixel(element: Element, x: number, y: number): Pro
 export function expandCaptures(
 	states: readonly string[],
 	variants: readonly CaptureVariant[],
+	scope?: ScopeHandler,
 ): readonly string[] {
-	const files: string[] = []
-	for (const state of states) {
-		for (const variant of variants) files.push(`${state}--${variant.name}.png`)
-	}
-	return files
+	return states.flatMap((state) => {
+		const directory = scope?.(state)
+		if (
+			directory !== undefined &&
+			(directory === '' || directory === '.' || directory === '..' || /[/\\]/u.test(directory))
+		) {
+			throw new Error(
+				`Capture scope ${JSON.stringify(directory)} of state "${state}" is not one path segment`,
+			)
+		}
+		const prefix = directory === undefined ? '' : `${directory}/`
+		return variants.map((variant) => `${prefix}${state}--${variant.name}.png`)
+	})
 }
 /**
  * Restages a capture until its content extent equals the pane height.
