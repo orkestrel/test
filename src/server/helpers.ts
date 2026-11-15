@@ -40,7 +40,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
-import { isNumber, isObject, isString } from '@orkestrel/contract'
+import { attempt, isNumber, isObject, isString } from '@orkestrel/contract'
 import { checkBounds, decodeJSONLines, waitForDelay, waitForEvent } from '@src/core'
 import {
 	PROGRESS_LABELS,
@@ -431,11 +431,11 @@ export function readInventory(
 }
 
 /**
- * Reports whether a process id names a live process.
+ * Reports whether a process id names a live process, reading each of its threads on Linux.
  *
  * @param pid - The process id to read.
- * @returns True if a process holds that id at the moment of the call; false otherwise, including a
- * pid the host refuses.
+ * @returns True if a process holds that id at the moment of the call and, on Linux, one of its
+ * threads has not exited; false otherwise, including a pid the host refuses.
  * @throws Nothing. Every host refusal reads as false.
  * @remarks This is an instantaneous observation rather than a claim of ownership. A host reuses a
  * process id after the process holding it exits, so a true answer says some process holds that id at the time of the check
@@ -444,8 +444,14 @@ export function readInventory(
  * false here. A pid of `0` names the caller's own process group on POSIX and the system idle process
  * on Windows, so it reads as true on both without naming a process anyone started.
  *
- * A Linux zombie — a process that has exited and whose parent has not reaped it — still accepts
- * signal `0`, so its `/proc` status is read and a `Z` state reads as false.
+ * A signal reaches a Linux process that has exited but whose parent has not reaped it, so on Linux
+ * the answer also reads `/proc/<pid>/task`. The process has ended only when two readings taken one
+ * after the other list the same threads and every thread in both reads `Z` (exited) or `X` (dead).
+ * The leader thread's own state decides nothing: a process whose main thread has exited reads `Z`
+ * for its leader while another thread still runs, as a Node process does for milliseconds while its
+ * worker threads stop during exit, and it reads as true. A thread whose `stat` cannot be read has
+ * gone and counts as exited, and a process whose `task` directory cannot be listed reads as false.
+ * The thread table is Linux's layout, so every other host keeps the signal answer.
  *
  * @example
  * ```ts
@@ -461,16 +467,32 @@ export function isRunning(pid: number): boolean {
 	} catch {
 		return false
 	}
-	if (process.platform !== 'linux') return true
+	if (process.platform !== 'linux' || pid === 0) return true
 
-	// The zombie refinement is unproven on a host that carries no `/proc`; a Linux gate drives it.
-	try {
-		const status = readFileSync(`/proc/${String(pid)}/stat`, 'utf8')
-		const boundary = status.lastIndexOf(') ')
-		return boundary < 0 || status.slice(boundary + 2, boundary + 3) !== 'Z'
-	} catch {
-		return false
-	}
+	// The second reading catches a thread started during the first; no test can time that start.
+	const directory = join('/proc', String(pid), 'task')
+	const [first, second] = Array.from({ length: 2 }, () => {
+		const listing = attempt(() => readdirSync(directory))
+		return listing.success
+			? listing.value.flatMap((thread) => {
+					const status = attempt(() => readFileSync(join(directory, thread, 'stat'), 'utf8'))
+					if (!status.success) return []
+					const boundary = status.value.lastIndexOf(') ')
+					const state = boundary < 0 ? '' : status.value.slice(boundary + 2, boundary + 3)
+					return [{ thread, state }]
+				})
+			: undefined
+	})
+	if (first === undefined || second === undefined) return false
+	const [listed, relisted] = [first, second].map((reading) =>
+		reading
+			.map(({ thread }) => thread)
+			.toSorted()
+			.join(' '),
+	)
+	return (
+		listed !== relisted || [...first, ...second].some(({ state }) => state !== 'Z' && state !== 'X')
+	)
 }
 
 /**

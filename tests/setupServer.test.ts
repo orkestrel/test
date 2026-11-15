@@ -1,4 +1,7 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import {
+	existsSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -18,10 +21,12 @@ import {
 	readChooserListeners,
 	DIRECTORY_LINKS,
 	FILE_LINKS,
+	matchesExitWindow,
 	POSIX_MODE,
 	RAW_BYTE_NAMES,
+	scanThreadStates,
 } from './setupServer.js'
-import { createRecorder } from '@src/core'
+import { createRecorder, requireValue } from '@src/core'
 
 describe('createChooserFixture', () => {
 	it('provides a real tester frame with a unique input selector and a duplicate control', async () => {
@@ -135,5 +140,38 @@ describe('RAW_BYTE_NAMES', () => {
 		} finally {
 			rmSync(directory, { force: true, recursive: true })
 		}
+	})
+})
+
+describe('scanThreadStates', () => {
+	it('lists the threads of a process only where the host publishes its thread table', () => {
+		expect(scanThreadStates(process.pid) !== undefined).toBe(existsSync('/proc/self/task'))
+	})
+
+	it.runIf(existsSync('/proc/self/task'))(
+		'reads the leader of this process as live and a reaped child as unlisted',
+		async () => {
+			const states = requireValue(scanThreadStates(process.pid), 'this process listed no thread')
+			expect(Object.keys(states)).toContain(String(process.pid))
+			expect(Object.values(states).every((state) => /^[A-Za-z]$/u.test(state))).toBe(true)
+			expect(['Z', 'X']).not.toContain(states[String(process.pid)])
+
+			const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+			const pid = requireValue(child.pid, 'the spawned child reported no process id')
+			await once(child, 'exit')
+			expect(scanThreadStates(pid)).toBeUndefined()
+		},
+	)
+})
+
+describe('matchesExitWindow', () => {
+	it('matches an exited leader beside a live thread and nothing else', () => {
+		expect(matchesExitWindow(4100, { '4100': 'Z', '4101': 'R' })).toBe(true)
+		expect(matchesExitWindow(4100, { '4100': 'Z', '4101': 'S', '4102': 'Z' })).toBe(true)
+		expect(matchesExitWindow(4100, { '4100': 'Z', '4101': 'Z', '4102': 'X' })).toBe(false)
+		expect(matchesExitWindow(4100, { '4100': 'S', '4101': 'R' })).toBe(false)
+		expect(matchesExitWindow(4100, { '4101': 'R' })).toBe(false)
+		expect(matchesExitWindow(4100, {})).toBe(false)
+		expect(matchesExitWindow(4100, undefined)).toBe(false)
 	})
 })

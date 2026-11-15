@@ -34,11 +34,13 @@ import { createServer as createHTTPServer } from 'node:http'
 import { connect, createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 import {
 	captureError,
 	createRecorder,
 	requireValue,
+	retryUntil,
 	TIMER_LEAD,
 	waitForCondition,
 	waitForDelay,
@@ -85,7 +87,11 @@ import {
 	FILE_LINKS,
 	FOREIGN_ROOT_PATHS,
 	HOST_PROBES,
+	matchesExitWindow,
 	readChooserListeners,
+	scanThreadStates,
+	THREAD_EXIT_SOURCE,
+	ZOMBIE_SOURCE,
 } from '../../setupServer.js'
 
 describe('loop clock', () => {
@@ -981,6 +987,82 @@ describe('isRunning', () => {
 		// is the same on every host, and a total reader answers false instead of raising it.
 		expect(isRunning(2 ** 31)).toBe(false)
 	})
+
+	it('reports pid 0, which names the caller process group on POSIX and the idle process on Windows', () => {
+		expect(() => process.kill(0, 0)).not.toThrow()
+		expect(isRunning(0)).toBe(true)
+	})
+
+	// Only a host that publishes each thread's state under `/proc/<pid>/task` can show these states.
+	it.runIf(scanThreadStates(process.pid) !== undefined)(
+		'reports a process whose leader thread has exited while another of its threads runs',
+		{ timeout: 60_000 },
+		async () => {
+			// A thread only moves from live to exited, so one live before and after the call was live during it.
+			const reading = await retryUntil(
+				'a child exit read inside its leader-exited window',
+				async () => {
+					const child = spawn(process.execPath, ['-e', THREAD_EXIT_SOURCE], {
+						stdio: ['pipe', 'pipe', 'ignore'],
+					})
+					const pid = requireValue(child.pid, 'the spawned child reported no process id')
+					const exited = once(child, 'exit')
+					try {
+						const [line]: unknown[] = await once(createInterface({ input: child.stdout }), 'line')
+						expect(line).toBe('ready')
+						child.stdin.end()
+						const window = await retryUntil(
+							'the exiting child read inside its window or ended',
+							() => {
+								const before = scanThreadStates(pid)
+								const answer = isRunning(pid)
+								return { before, answer, after: scanThreadStates(pid) }
+							},
+							({ before, after }) =>
+								(matchesExitWindow(pid, before) && matchesExitWindow(pid, after)) ||
+								before === undefined ||
+								Object.values(before).every((state) => state === 'Z' || state === 'X'),
+							{ budget: 10_000, interval: 0 },
+						)
+						return { pid, ...window }
+					} finally {
+						child.kill('SIGKILL')
+						await exited
+					}
+				},
+				({ pid, before, after }) => matchesExitWindow(pid, before) && matchesExitWindow(pid, after),
+				{ attempts: 20, budget: 50_000, interval: 0 },
+			)
+
+			expect(reading.answer).toBe(true)
+		},
+	)
+
+	it.runIf(scanThreadStates(process.pid) !== undefined)(
+		'reports an unreaped zombie whose every thread has exited',
+		async () => {
+			const parent = spawn(process.execPath, ['-e', ZOMBIE_SOURCE], {
+				stdio: ['ignore', 'pipe', 'ignore'],
+			})
+			const exited = once(parent, 'exit')
+			try {
+				const [line]: unknown[] = await once(createInterface({ input: parent.stdout }), 'line')
+				const pid = Number(line)
+				await waitForCondition(
+					'the unreaped child to read Z',
+					() => scanThreadStates(pid)?.[String(pid)] === 'Z',
+					{ budget: 10_000 },
+				)
+
+				// A zombie still accepts signal 0, so only the table reading can report it exited.
+				expect(() => process.kill(pid, 0)).not.toThrow()
+				expect(isRunning(pid)).toBe(false)
+			} finally {
+				parent.kill('SIGKILL')
+				await exited
+			}
+		},
+	)
 })
 
 describe('waitForSocketClose', () => {
