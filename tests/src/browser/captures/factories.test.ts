@@ -69,8 +69,127 @@ describe('createPortfolio', () => {
 		})
 		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
 		expect(applied.count).toBe(0)
+		expect(portfolio.observed).toStrictEqual(['start-empty'])
 		expect(portfolio.placements).toStrictEqual([])
 		expect(portfolio.paths).toStrictEqual([])
+	})
+
+	it('lists every state a disabled run accepts, in placement order, while placements stay empty', async () => {
+		const portfolio = createPortfolio({
+			states: STATES,
+			state: 'answer-ideal',
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			scope: (state) => state.slice(0, state.indexOf('-')),
+		})
+		const before = portfolio.observed
+		await expect(portfolio.place('answer-ideal')).resolves.toBeUndefined()
+		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
+		await expect(portfolio.place('start-empty')).rejects.toThrow(
+			'Capture state "start-empty" is already placed',
+		)
+		expect(portfolio.observed).toStrictEqual(['answer-ideal', 'start-empty'])
+		expect(portfolio.placements).toStrictEqual([])
+		expect(portfolio.paths).toStrictEqual([])
+		// The reader hands out a snapshot, so a list read before a placement stays what it was.
+		expect(before).toStrictEqual([])
+	})
+
+	it('refuses a projected state the registry does not carry at creation', () => {
+		expect(() =>
+			createPortfolio({
+				states: STATES,
+				state: 'answer-partial',
+				variants: VARIANTS,
+				variant: 'dark-390',
+				directory: DIRECTORY,
+			}),
+		).toThrow('Capture state "answer-partial" is not registered')
+	})
+
+	it.each(['', '.', '..', 'start/empty', 'start\\empty'])(
+		'refuses a scope that is not one path segment at creation: %j',
+		(scope) => {
+			expect(() =>
+				createPortfolio({
+					states: STATES,
+					variants: VARIANTS,
+					variant: 'dark-390',
+					directory: DIRECTORY,
+					scope: () => scope,
+				}),
+			).toThrow(
+				`Capture scope ${JSON.stringify(scope)} of state "start-empty" is not one path segment`,
+			)
+		},
+	)
+
+	it('writes each state under its scope and keeps placement order across interleaved scopes', async () => {
+		const portfolio = createPortfolio({
+			states: ['start-empty', 'answer-ideal', 'start-filled'],
+			variants: VARIANTS,
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			enabled: true,
+			scope: (state) => state.slice(0, state.indexOf('-')),
+		})
+		expect(portfolio.files).toStrictEqual([
+			'start/start-empty--light-1440.png',
+			'start/start-empty--dark-390.png',
+			'answer/answer-ideal--light-1440.png',
+			'answer/answer-ideal--dark-390.png',
+			'start/start-filled--light-1440.png',
+			'start/start-filled--dark-390.png',
+		])
+		await portfolio.place('start-filled')
+		await portfolio.place('answer-ideal')
+		await portfolio.place('start-empty')
+		const expected = [
+			'start/start-filled--dark-390.png',
+			'answer/answer-ideal--dark-390.png',
+			'start/start-empty--dark-390.png',
+		].map((file) =>
+			rewriteWindowsAbsolutePath(`${server.config.root}/tmp/capture/portfolio/${file}`),
+		)
+		expect(portfolio.placements).toStrictEqual(['start-filled', 'answer-ideal', 'start-empty'])
+		expect(portfolio.observed).toStrictEqual(['start-filled', 'answer-ideal', 'start-empty'])
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual(expected)
+		for (const path of expected) expect((await commands.readFile(path)).length).toBeGreaterThan(0)
+	})
+
+	it('writes only the projected state and accepts every other state unwritten', async () => {
+		const applied = createRecorder<[]>()
+		const portfolio = createPortfolio({
+			states: STATES,
+			state: 'answer-ideal',
+			variants: [{ name: 'dark-390', width: 390, height: 844, apply: applied.handler }],
+			variant: 'dark-390',
+			directory: DIRECTORY,
+			enabled: true,
+			scope: (state) => state.slice(0, state.indexOf('-')),
+		})
+		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
+		expect(applied.count).toBe(0)
+		const written = await portfolio.place('answer-ideal')
+		const expected = rewriteWindowsAbsolutePath(
+			`${server.config.root}/tmp/capture/portfolio/answer/answer-ideal--dark-390.png`,
+		)
+		expect(applied.count).toBe(1)
+		expect(rewriteWindowsAbsolutePath(requireValue(written))).toBe(expected)
+		expect(portfolio.files).toStrictEqual([
+			'start/start-empty--dark-390.png',
+			'answer/answer-ideal--dark-390.png',
+		])
+		expect(portfolio.observed).toStrictEqual(['start-empty', 'answer-ideal'])
+		expect(portfolio.placements).toStrictEqual(['answer-ideal'])
+		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
+		await expect(portfolio.place('start-empty')).rejects.toThrow(
+			'Capture state "start-empty" is already placed',
+		)
+		await expect(portfolio.place('answer-partial')).rejects.toThrow(
+			'Capture state "answer-partial" is not registered',
+		)
 	})
 
 	it('refuses a second placement of one state while the run is not enabled', async () => {
@@ -110,6 +229,7 @@ describe('createPortfolio', () => {
 		})
 		await expect(portfolio.place('start-empty')).resolves.toBeUndefined()
 		await expect(portfolio.place('answer-ideal')).resolves.toBeUndefined()
+		expect(portfolio.observed).toStrictEqual(['start-empty', 'answer-ideal'])
 		expect(portfolio.placements).toStrictEqual([])
 		expect(portfolio.paths).toStrictEqual([])
 	})
@@ -154,6 +274,7 @@ describe('createPortfolio', () => {
 		expect(rewriteWindowsAbsolutePath(requireValue(written))).toBe(expected)
 		expect((await commands.readFile(expected)).length).toBeGreaterThan(0)
 		expect(portfolio.placements).toStrictEqual(['start-empty'])
+		expect(portfolio.observed).toStrictEqual(['start-empty'])
 		expect(portfolio.paths.map(rewriteWindowsAbsolutePath)).toStrictEqual([expected])
 		// The readers hand out snapshots, so a list read before a placement stays what it was.
 		expect(before).toStrictEqual([])
