@@ -2205,7 +2205,8 @@ the helper rather than to the host, and each names what to reach for instead.
 - **`settleCapture` holds endless animations until its resume runs.** It parks the pointer through
   `parkPointer`, so a held press stays held and only loses its hover and pressed paint; `pointer: false`
   leaves the pointer, its hover, and that paint where they are. It waits out every finite animation
-  in the document, root element included, then pauses each endless one at its first frame and
+  in the document, root element included, yields one task so that a listener on an animation's end
+  event, such as `transitionend`, has run, then pauses each endless one at its first frame and
   resolves to the resume. Call the resume from a `finally` block after the frame is shot. A settle
   whose wait exhausts throws before it holds anything, so it owes no resume.
 - **`readShotPixel` reads a shot at the runner's scale.** The position is a fraction of the shot,
@@ -4123,11 +4124,13 @@ portfolio.place('answer-partial') // rejects: Capture state "answer-partial" is 
 
 Settle the page before each frame of a capture run. `settleCapture` parks the pointer, waits out
 every finite animation in the document, and holds each endless one at its first frame, so a hover,
-a transition caught part way, and a spinner's phase stay out of the picture. It resolves to the
-resume; call `place` after it, and call the resume from a `finally` block, so the held animations
-run again whether or not the frame was written. Pass `pointer: false` where the pointer is part of
-the state, such as a drag in flight. Gate the settle on the flag that `enabled` takes: an ordinary run's
-`place` shoots nothing, and parking the pointer there changes the journey that run is proving.
+a transition caught part way, and a spinner's phase stay out of the picture. A listener the page
+runs on a transition's end has run when the settle resolves, so the layout it finalizes is the one
+shot. It resolves to the resume; call `place` after it, and call the resume from a `finally`
+block, so the held animations run again whether or not the frame was written. Pass
+`pointer: false` where the pointer is part of the state, such as a drag in flight. Gate the settle
+on the flag that `enabled` takes: an ordinary run's `place` shoots nothing, and parking the
+pointer there changes the journey that run is proving.
 Where a frame holds a scroll region, record `describeScrollRegions` of what `collectScrollRegions`
 finds beside it, because a picture does not show how far a pane scrolls.
 
@@ -4327,8 +4330,11 @@ Each entry names the contracts its file proves. The test names carry the cases.
   outside the subject left out, and a detached element read as two empty lists. `settleCapture`
   takes a hovered control's transition waited out and a spinner held at its first frame until the
   resume sets it running, a held press whose hover and pressed paint `pointer: false` leaves in
-  place beside the default park that takes both away, and an exhausted wait refused with nothing
-  held. `collectScrollRegions` takes a vertical and a horizontal scroller beside a box whose content
+  place beside the default park that takes both away, an exhausted wait and an aborted one refused
+  with nothing held, a transition's end listener run by the time it resolves, and one frame shot
+  across repeated settles of a held spinner, a parked hover, and a finalized transition, beside a
+  running spinner, a kept hover, and an unfinalized transition that each shoot another.
+  `collectScrollRegions` takes a vertical and a horizontal scroller beside a box whose content
   fits, a clipping box, and a hidden one, each axis alone, and a scrolling root counted itself;
   `describeScrollRegions` takes a region named by its tag, its id, and its cut accessible name with
   its offsets after a scroll, the window's position after a scroll, and an empty population.

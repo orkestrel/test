@@ -1,5 +1,5 @@
-import { sendProtocol } from '@src/browser'
-import { createRecorder, waitForCondition } from '@src/core'
+import { readAnimations, sendProtocol, waitForAnimations } from '@src/browser'
+import { createRecorder, requireValue, waitForCondition, waitForDelay } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import {
 	buildFileFixture,
@@ -10,6 +10,10 @@ import {
 	readPointerMedia,
 	requirePointerRestoration,
 	resetFixtures,
+	restartTransition,
+	SETTLE_MARKUP,
+	SETTLE_SHEET,
+	startTransition,
 	supportsPointerRestoration,
 } from './setupBrowser.js'
 
@@ -69,6 +73,66 @@ describe('buildStylesheet', () => {
 		const sheet = buildStylesheet('.badge { color: blue }')
 		resetFixtures()
 		expect(document.head.contains(sheet)).toBe(false)
+	})
+})
+
+describe('startTransition', () => {
+	it('starts the opacity transition, and the final listener grows the box once its end has been dispatched, beside the box no listener finalizes', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		const final = requireValue(
+			buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end'),
+		)
+		const plain = requireValue(
+			buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end'),
+		)
+		try {
+			startTransition(final, true)
+			startTransition(plain, false)
+			expect(
+				[...readAnimations(final).finite, ...readAnimations(plain).finite].map((animation) =>
+					animation instanceof CSSTransition ? animation.transitionProperty : animation.id,
+				),
+			).toStrictEqual(['opacity', 'opacity'])
+			await waitForAnimations(document.body, { budget: 2000 })
+			await waitForDelay(0)
+			expect(final.getBoundingClientRect().height).toBe(60)
+			expect(final.style.backgroundColor).toBe('rgb(0, 128, 0)')
+			expect(plain.getBoundingClientRect().height).toBe(20)
+			expect(plain.style.backgroundColor).toBe('')
+		} finally {
+			resetFixtures()
+		}
+	})
+
+	it('restarts from a fresh fixture: the earlier stage is gone and the new box transitions toward its final listener', async () => {
+		restartTransition()
+		const earlier = requireValue(document.querySelector('.settle-end'))
+		restartTransition()
+		try {
+			expect(earlier.isConnected).toBe(false)
+			expect(document.querySelectorAll('.settle-end')).toHaveLength(1)
+			const box = requireValue(document.querySelector<HTMLElement>('.settle-end'))
+			expect(readAnimations(document.body).finite).toHaveLength(1)
+			await waitForAnimations(document.body, { budget: 2000 })
+			await waitForDelay(0)
+			expect(box.getBoundingClientRect().height).toBe(60)
+		} finally {
+			resetFixtures()
+		}
+	})
+
+	it('refuses a box that is not at full opacity, and starts nothing', () => {
+		buildStylesheet(SETTLE_SHEET)
+		const box = requireValue(
+			buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end'),
+		)
+		try {
+			box.style.opacity = '0.5'
+			expect(() => startTransition(box, true)).toThrow('Settle box must rest at full opacity')
+			expect(readAnimations(box).finite).toStrictEqual([])
+		} finally {
+			resetFixtures()
+		}
 	})
 })
 

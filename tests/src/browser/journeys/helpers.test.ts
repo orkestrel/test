@@ -56,6 +56,7 @@ import {
 	readStyle,
 	readText,
 	recordConsole,
+	releasePane,
 	releasePointer,
 	removeDatabase,
 	render,
@@ -66,6 +67,7 @@ import {
 	sendProtocol,
 	settleCapture,
 	SEGMENTED_INPUT_TYPES,
+	stagePane,
 	stepFocus,
 	supportsSegmentedFocus,
 	traverseAccessible,
@@ -77,7 +79,14 @@ import {
 	waitForState,
 	walkFocus,
 } from '@src/browser'
-import { createRecorder, readProperty, requireValue, retryUntil, waitForCondition } from '@src/core'
+import {
+	createRecorder,
+	readProperty,
+	requireValue,
+	retryUntil,
+	waitForCondition,
+	waitForDelay,
+} from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { commands, page, userEvent } from 'vitest/browser'
 import {
@@ -89,6 +98,10 @@ import {
 	IMPLICIT_ROLE_CASES,
 	requirePointerRestoration,
 	resetFixtures,
+	restartTransition,
+	SETTLE_MARKUP,
+	SETTLE_SHEET,
+	startTransition,
 } from '../../../setupBrowser.js'
 
 // An icon font paints its glyph as `::before` content on an element marked `aria-hidden`, which is
@@ -3992,6 +4005,120 @@ describe('settleCapture', () => {
 			'Animation "html" did not settle within 20ms',
 		)
 		expect(turn.getAnimations()[0]?.playState).toBe('running')
+	})
+
+	it('rejects with the abort reason when its wait is aborted, and holds nothing', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		const stage = requireValue(buildFixture(SETTLE_MARKUP.held).firstElementChild)
+		const spin = requireValue(stage.querySelector('.settle-spin'))
+		const reason = new Error('Capture run stopped')
+		await expect(settleCapture({ signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
+		expect(spin.getAnimations()[0]?.playState).toBe('running')
+	})
+
+	it('resolves after a finished transition has reached the end listener that finalizes the layout', async () => {
+		restartTransition()
+		const box = requireValue(document.querySelector<HTMLElement>('.settle-end'))
+		expect(readAnimations(box).finite).toHaveLength(1)
+		expect(box.getBoundingClientRect().height).toBe(20)
+		const resume = await settleCapture({ budget: 2000 })
+		try {
+			expect(box.getBoundingClientRect().height).toBe(60)
+			expect(readStyle(box, 'background-color')).toBe('rgb(0, 128, 0)')
+		} finally {
+			resume()
+		}
+	})
+
+	it('shoots one frame across repeated settles of a spinner held at its first frame, beside the running spinner whose frames differ', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		await stagePane(390, 844)
+		try {
+			const stage = requireValue(buildFixture(SETTLE_MARKUP.held).firstElementChild)
+			// Control: two shots of the spinner left running catch it at two phases.
+			const first = await page.screenshot({ element: stage, save: false })
+			const second = await page.screenshot({ element: stage, save: false })
+			expect(first === second).toBe(false)
+			const shots: string[] = []
+			for (const _ of Array.from({ length: 3 })) {
+				// The resumed spinner turns away from its first frame before the next settle holds it.
+				await waitForDelay(70)
+				const resume = await settleCapture({ budget: 2000 })
+				try {
+					shots.push(await page.screenshot({ element: stage, save: false }))
+				} finally {
+					resume()
+				}
+			}
+			expect(new Set(shots).size).toBe(1)
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('shoots one frame across repeated settles of a control the pointer hovered, beside the settle that keeps the pointer and its hover', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		await stagePane(390, 844)
+		try {
+			const stage = requireValue(buildFixture(SETTLE_MARKUP.hover).firstElementChild)
+			const shots: string[] = []
+			for (const _ of Array.from({ length: 3 })) {
+				await hoverAccessible('Hover target')
+				await waitForAnimations(document.documentElement, { budget: 2000 })
+				expect(resolveAccessible('Hover target').matches(':hover')).toBe(true)
+				const resume = await settleCapture({ budget: 2000 })
+				try {
+					shots.push(await page.screenshot({ element: stage, save: false }))
+				} finally {
+					resume()
+				}
+			}
+			expect(new Set(shots).size).toBe(1)
+			// Control: a settle that keeps the pointer shoots the hover fill, a different frame.
+			await hoverAccessible('Hover target')
+			await waitForAnimations(document.documentElement, { budget: 2000 })
+			const kept = await settleCapture({ budget: 2000, pointer: false })
+			try {
+				const hovered = await page.screenshot({ element: stage, save: false })
+				expect(shots.includes(hovered)).toBe(false)
+			} finally {
+				kept()
+			}
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('shoots one frame across repeated settles of a transition whose end listener finalizes the box, beside the same transition with no listener', async () => {
+		await stagePane(390, 844)
+		try {
+			const shots: string[] = []
+			for (const _ of Array.from({ length: 3 })) {
+				restartTransition()
+				const stage = requireValue(document.querySelector('.settle-stage'))
+				const resume = await settleCapture({ budget: 2000 })
+				try {
+					shots.push(await page.screenshot({ element: stage, save: false }))
+				} finally {
+					resume()
+				}
+			}
+			expect(new Set(shots).size).toBe(1)
+			// Control: the same transition with nothing listening for its end settles to another frame.
+			resetFixtures()
+			buildStylesheet(SETTLE_SHEET)
+			const stage = requireValue(buildFixture(SETTLE_MARKUP.end).firstElementChild)
+			startTransition(requireValue(stage.querySelector<HTMLElement>('.settle-end')), false)
+			const resume = await settleCapture({ budget: 2000 })
+			try {
+				const unfinalized = await page.screenshot({ element: stage, save: false })
+				expect(shots.includes(unfinalized)).toBe(false)
+			} finally {
+				resume()
+			}
+		} finally {
+			await releasePane()
+		}
 	})
 })
 

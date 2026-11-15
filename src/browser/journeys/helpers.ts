@@ -24,6 +24,7 @@ import {
 	readProperty,
 	waitForAbort,
 	waitForCondition,
+	waitForDelay,
 } from '@src/core'
 import { commands, page, server, userEvent } from 'vitest/browser'
 import { waitForStability } from '../captures/helpers.js'
@@ -2416,8 +2417,8 @@ export function readAnimations(element: Element): AnimationResult {
  * each endless animation at its first frame.
  *
  * @param options - The time bounds of the wait, its abort signal, and whether the pointer parks.
- * @returns A promise resolving, after one more frame has painted, to the resume: a function that
- * sets every held animation running again.
+ * @returns A promise resolving, after the listeners a finished animation's end event reaches have
+ * run, to the resume: a function that sets every held animation running again.
  * @throws Thrown when the pointer cannot park, as {@link parkPointer} raises it, and when a finite
  * animation is still running at the budget, as {@link waitForAnimations} raises it. An aborted wait
  * rejects with the signal's reason.
@@ -2428,6 +2429,10 @@ export function readAnimations(element: Element): AnimationResult {
  * spinner or a placeholder shimmer, stands at a different phase in every frame unless it is held at
  * the same one, so each is paused at its first frame. Call the resume after the frame is shot; a
  * capture that throws still owes it, so call it from a `finally` block.
+ *
+ * The browser dispatches an animation's end event, such as `transitionend`, after its `finished`
+ * promise settles, so the settle yields one task after the wait: a page listener that finalizes
+ * its layout on that event has run when the settle resolves.
  *
  * The subject is the whole document, its root element included. The pointer parks through
  * {@link parkPointer}, which sends no button release, so a held press stays held either way. Pass
@@ -2446,14 +2451,13 @@ export function readAnimations(element: Element): AnimationResult {
  */
 export async function settleCapture(options?: SettleOptions): Promise<() => void> {
 	if (options?.pointer ?? true) await parkPointer()
-	await waitForFrame()
 	await waitForAnimations(document.documentElement, options)
+	await waitForDelay(0)
 	const held = readAnimations(document.documentElement).endless
 	for (const animation of held) {
 		animation.pause()
 		animation.currentTime = 0
 	}
-	await waitForFrame()
 	return () => {
 		for (const animation of held) animation.play()
 	}

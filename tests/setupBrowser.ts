@@ -6,6 +6,7 @@ import {
 	clickAccessible,
 	clickDisclosure,
 	readStates,
+	readStyle,
 	render,
 	sendProtocol,
 	waitForStability,
@@ -215,6 +216,80 @@ export const BANDS_MARKUP = [
 	'<div class="band" style="background: rgb(255, 255, 0)"></div>',
 	'<div class="band" style="background: rgb(128, 0, 128)"></div>',
 ].join('')
+
+/**
+ * Holds the sheet of the settle fixtures: a stage, a spinner that turns forever, a control whose
+ * hover fill transitions, and a box whose opacity transitions from full to half.
+ */
+export const SETTLE_SHEET =
+	'.settle-stage { width: 160px; height: 100px; padding: 10px; background: rgb(250, 250, 250) }' +
+	'@keyframes settle-spin { to { transform: rotate(360deg) } }' +
+	'.settle-spin { width: 40px; height: 40px; background: linear-gradient(90deg, rgb(255, 0, 0), rgb(0, 0, 255)); animation: settle-spin 900ms linear infinite }' +
+	'.settle-hover { width: 120px; height: 30px; border: 0; background-color: rgb(255, 255, 255); transition: background-color 150ms linear }' +
+	'.settle-hover:hover { background-color: rgb(200, 0, 0) }' +
+	'.settle-end { width: 60px; height: 20px; opacity: 1; background-color: rgb(0, 0, 255); transition: opacity 120ms linear }'
+
+/**
+ * Holds the markup of each settle fixture, a stage around one subject, keyed by what the settle
+ * meets: an endless animation to hold, a hover to clear, and a transition whose end a listener can
+ * finalize.
+ */
+export const SETTLE_MARKUP = Object.freeze({
+	held: '<div class="settle-stage"><div class="settle-spin"></div></div>',
+	hover:
+		'<div class="settle-stage"><button class="settle-hover" type="button">Hover target</button></div>',
+	end: '<div class="settle-stage"><div class="settle-end"></div></div>',
+})
+
+/**
+ * Starts the end fixture's opacity transition from rest.
+ *
+ * @param element - The rendered `.settle-end` box of `SETTLE_MARKUP.end`.
+ * @param final - If `true`, a `transitionend` listener grows the box to 60 pixels tall and paints
+ * it green when the transition ends; if `false`, nothing listens.
+ * @throws Thrown when the box is not at full opacity, because the change would start no transition.
+ *
+ * @example
+ * ```ts
+ * startTransition(requireValue(stage.querySelector<HTMLElement>('.settle-end')), true)
+ * ```
+ */
+export function startTransition(element: HTMLElement, final: boolean): void {
+	if (readStyle(element, 'opacity') !== '1') throw new Error('Settle box must rest at full opacity')
+	if (final) {
+		element.addEventListener(
+			'transitionend',
+			() => {
+				element.style.height = '60px'
+				element.style.backgroundColor = 'rgb(0, 128, 0)'
+			},
+			{ once: true },
+		)
+	}
+	element.style.opacity = '0.5'
+}
+
+/**
+ * Removes every recorded fixture, then builds the end fixture with its sheet and starts its
+ * transition with the final listener attached.
+ *
+ * @remarks
+ * It returns nothing, so a bench passes it as a `beforeEach` hook; read the stage and the box from
+ * the document by their `.settle-stage` and `.settle-end` classes.
+ *
+ * @example
+ * ```ts
+ * bench('settle', { beforeEach: restartTransition }, () => settleCapture())
+ * ```
+ */
+export function restartTransition(): void {
+	resetFixtures()
+	buildStylesheet(SETTLE_SHEET)
+	startTransition(
+		requireValue(buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end')),
+		true,
+	)
+}
 
 /** Lists the window size each capture variant renders at, keyed by its own descriptive name. */
 export const VARIANTS: readonly CaptureVariant[] = Object.freeze([
