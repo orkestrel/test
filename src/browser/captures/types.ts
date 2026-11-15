@@ -11,14 +11,18 @@ export interface FrameShot {
 	readonly base64: string
 }
 
-/** Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots. */
-export interface FrameOptions {
+/** Configures one viewport shot: where it is written and the viewport it is shot at. */
+export interface ViewportOptions {
 	/** Holds the frame's path, relative to the calling test file. */
 	readonly path: string
 	/** Holds the viewport width in CSS pixels the frame is shot at. */
 	readonly width: number
 	/** Holds the viewport height in CSS pixels the frame is shot at. */
 	readonly height: number
+}
+
+/** Configures one captured frame: where it is written, the viewport it is shot at, and what it shoots. */
+export interface FrameOptions extends ViewportOptions {
 	/** Holds the element to shoot. Omit it to shoot the whole page. */
 	readonly element?: Element | undefined
 	/**
@@ -26,15 +30,7 @@ export interface FrameOptions {
 	 * omitted, the frame ends where the document's own content ends.
 	 */
 	readonly unrolled?: boolean | undefined
-	/**
-	 * If `true`, the frame shoots the declared viewport at the tester's current scroll and stages no
-	 * taller pane; if `false` or omitted, the frame covers the document or the element.
-	 */
-	readonly visible?: boolean | undefined
 }
-
-/** Configures one placement: the element it shoots, or the viewport at the current scroll. */
-export type PlacementOptions = Pick<FrameOptions, 'element' | 'visible'>
 
 /**
  * Represents how far an element frame moves the tester frame from the runner window's origin for the
@@ -124,13 +120,15 @@ export interface PortfolioOptions {
 	 */
 	readonly scope?: ScopeHandler
 	/**
-	 * Determines whether this run writes files. An ordinary run leaves it unset, so `place` resizes
-	 * nothing, writes nothing, and records nothing.
+	 * Determines whether this run writes files. An ordinary run leaves it unset, so `place` and
+	 * `view` resize nothing and write nothing, and `placements` and `paths` stay empty while
+	 * `observed` still lists every state they accept.
 	 */
 	readonly enabled?: boolean
 	/**
-	 * If `true`, every frame `place` writes also covers the rows every vertical scroll region hides;
-	 * if `false` or omitted, each frame ends where the document's own content ends.
+	 * If `true`, every frame `place` writes also covers the rows every vertical scroll region hides,
+	 * and `view` refuses every state; if `false` or omitted, each frame ends where the document's own
+	 * content ends.
 	 */
 	readonly unrolled?: boolean
 }
@@ -139,7 +137,7 @@ export interface PortfolioOptions {
 export interface PortfolioInterface {
 	/** Holds the name of the variant this run renders. */
 	readonly variant: string
-	/** Lists every state `place` accepted so far, written or not, in placement order. */
+	/** Lists every state `place` and `view` accepted so far, written or not, in placement order. */
 	readonly observed: readonly string[]
 	/** Lists every state written so far, in placement order. */
 	readonly placements: readonly string[]
@@ -152,14 +150,26 @@ export interface PortfolioInterface {
 	 * screenshot.
 	 *
 	 * @param state - The state name from the registry.
-	 * @param placement - The element to shoot, or `visible` to shoot the viewport at the current
-	 * scroll. Omit it to shoot the whole page.
+	 * @param element - The element to shoot. Omit it to shoot the whole page.
 	 * @returns The written path, or `undefined` when the portfolio is not enabled or the state is not
 	 * the one `state` projects.
-	 * @throws When the state is not registered, has already been placed, or the written frame does
-	 * not read back as the bytes this shot produced.
+	 * @throws When the state is not registered, has already been placed or is being placed, or the
+	 * written frame does not read back as the bytes this shot produced.
 	 */
-	place(state: string, placement?: PlacementOptions): Promise<string | undefined>
+	place(state: string, element?: Element): Promise<string | undefined>
+	/**
+	 * Places one registered state as the declared viewport at the scroll the journey reached:
+	 * applies the variant, stages the pane at the variant's size alone, and writes the verified
+	 * screenshot.
+	 *
+	 * @param state - The state name from the registry.
+	 * @returns The written path, or `undefined` when the portfolio is not enabled or the state is not
+	 * the one `state` projects.
+	 * @throws When the state is not registered, has already been placed or is being placed, or the
+	 * portfolio is unrolled, in every run; and when the written frame does not read back as the bytes
+	 * this shot produced.
+	 */
+	view(state: string): Promise<string | undefined>
 }
 
 /**

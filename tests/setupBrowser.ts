@@ -1,10 +1,13 @@
 import type { CaptureVariant } from '@src/browser'
 import type { StateScenario } from '@src/core'
-import { requireValue, waitForCondition } from '@src/core'
+import { createRecorder, requireValue, waitForCondition } from '@src/core'
 import { TestValue } from './setup.js'
 import {
 	clickAccessible,
 	clickDisclosure,
+	collectClippingAncestors,
+	readClipEdge,
+	readPixels,
 	readStates,
 	readStyle,
 	render,
@@ -299,6 +302,79 @@ export const VARIANTS: readonly CaptureVariant[] = Object.freeze([
 
 /** Lists the states a store fixture builds against, in the order a portfolio walks them. */
 export const STATES: readonly string[] = Object.freeze(['start-empty', 'answer-ideal'])
+
+/**
+ * Computes the document's content edge by climbing each element's clipping ancestors on its own,
+ * with no bound shared between elements.
+ *
+ * @returns The largest bottom edge, in document coordinates, plus its own bottom margin, of every
+ * element in the body, each capped at the clip edge `readClipEdge` measures on every clipping
+ * ancestor below the body, plus the body's and the root's bottom padding and margin, rounded up.
+ * @remarks This is the reading `measureContent` took before its clip bounds shared one memo, kept as
+ * the second mechanism its proofs and its bench compare the shipped reading with.
+ * @example
+ * ```ts
+ * expect(measureContent()).toBe(climbContentEdge())
+ * ```
+ */
+export function climbContentEdge(): number {
+	const edge = Array.from(document.body.querySelectorAll('*')).reduce((greatest, element) => {
+		const bottom = Math.min(
+			element.getBoundingClientRect().bottom +
+				window.scrollY +
+				readPixels(element, 'margin-bottom'),
+			...collectClippingAncestors(element)
+				.filter((frame) => frame !== document.body && frame !== document.documentElement)
+				.flatMap((frame) => {
+					const limit = readClipEdge(frame)
+					return limit === undefined ? [] : [limit]
+				}),
+		)
+		return bottom > greatest ? bottom : greatest
+	}, 0)
+	return Math.ceil(
+		edge +
+			readPixels(document.body, 'padding-bottom') +
+			readPixels(document.body, 'margin-bottom') +
+			readPixels(document.documentElement, 'padding-bottom') +
+			readPixels(document.documentElement, 'margin-bottom'),
+	)
+}
+
+/**
+ * Records the element of every computed-style read the page makes while a reading runs.
+ *
+ * @param read - The reading to run.
+ * @returns The element each `getComputedStyle` call named, in call order.
+ * @throws Thrown when the window refuses the recording function in place of its own, and whatever
+ * `read` throws.
+ * @remarks The window's own `getComputedStyle` answers every call: the recording function notes
+ * the element and forwards the call. The window's own function is put back on every path.
+ * @example
+ * ```ts
+ * const reads = recordStyleReads(() => measureContent())
+ * reads.filter((element) => element === frame).length // the reads of one frame
+ * ```
+ */
+export function recordStyleReads(read: () => unknown): readonly Element[] {
+	const original = window.getComputedStyle
+	const reads = createRecorder<[element: Element]>()
+	const installed = Reflect.set(
+		window,
+		'getComputedStyle',
+		(element: Element, pseudo?: string | null) => {
+			reads.handler(element)
+			return original.call(window, element, pseudo)
+		},
+	)
+	if (!installed) throw new Error('The window refused a recorder in place of getComputedStyle')
+	try {
+		read()
+	} finally {
+		Reflect.set(window, 'getComputedStyle', original)
+	}
+	return reads.calls.map(([element]) => element)
+}
 
 /**
  * Lists every tag whose implicit role a name computation reads from the markup rather than from an
@@ -709,8 +785,10 @@ export async function supportsPointerRestoration(): Promise<boolean> {
  * readPointerMedia() // 'fine'
  * ```
  */
-export function readPointerMedia(): string | undefined {
-	return ['fine', 'coarse', 'none'].find((value) => matchMedia(`(pointer: ${value})`).matches)
+export function readPointerMedia(): 'fine' | 'coarse' | 'none' | undefined {
+	return (['fine', 'coarse', 'none'] as const).find(
+		(value) => matchMedia(`(pointer: ${value})`).matches,
+	)
 }
 
 /**
@@ -721,11 +799,11 @@ export function readPointerMedia(): string | undefined {
  * @example
  * ```ts
  * it('restores a fine pointer', async (context) => {
- * 	await requirePointerRestoration(context)
+ * 	await skipUnrestoredPointer(context)
  * })
  * ```
  */
-export async function requirePointerRestoration(context: {
+export async function skipUnrestoredPointer(context: {
 	readonly skip: (condition: boolean, note?: string) => void
 }): Promise<void> {
 	context.skip(!(await supportsPointerRestoration()), POINTER_RESTORATION)

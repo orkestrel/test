@@ -1,18 +1,26 @@
-import { readAnimations, sendProtocol, waitForAnimations } from '@src/browser'
+import {
+	measureContent,
+	readAnimations,
+	readStyle,
+	sendProtocol,
+	waitForAnimations,
+} from '@src/browser'
 import { createRecorder, requireValue, waitForCondition, waitForDelay } from '@src/core'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
 	buildFileFixture,
 	buildFixture,
 	buildStylesheet,
+	climbContentEdge,
 	inferPointerRestoration,
 	POINTER_RESTORATION,
 	readPointerMedia,
-	requirePointerRestoration,
+	recordStyleReads,
 	resetFixtures,
 	restartTransition,
 	SETTLE_MARKUP,
 	SETTLE_SHEET,
+	skipUnrestoredPointer,
 	startTransition,
 	supportsPointerRestoration,
 } from './setupBrowser.js'
@@ -169,6 +177,10 @@ describe('readPointerMedia', () => {
 		expect(['fine', 'none']).toContain(pointer)
 		expect(matchMedia(`(pointer: ${String(pointer)})`).matches).toBe(true)
 	})
+
+	it('returns the closed set of pointer values, or undefined', () => {
+		expectTypeOf(readPointerMedia).returns.toEqualTypeOf<'fine' | 'coarse' | 'none' | undefined>()
+	})
 })
 
 describe('supportsPointerRestoration', () => {
@@ -180,10 +192,58 @@ describe('supportsPointerRestoration', () => {
 	})
 })
 
-describe('requirePointerRestoration', () => {
+describe('climbContentEdge', () => {
+	it('caps a row at the clip edge of the frame around it and adds the body padding under it', () => {
+		buildStylesheet('body { margin: 0; padding-bottom: 7px }')
+		const container = buildFixture(
+			'<div style="height: 120px"></div>' +
+				'<div style="overflow: hidden; height: 50px"><div style="height: 900px"></div></div>',
+		)
+		try {
+			const top = container.getBoundingClientRect().top + window.scrollY
+			// The 900-row child ends 850 rows under the frame's clip edge, so an uncapped climb reads
+			// 1027 rows past the container's top rather than 177.
+			expect(climbContentEdge()).toBe(Math.ceil(top + 120 + 50 + 7))
+			expect(climbContentEdge()).toBe(measureContent())
+		} finally {
+			resetFixtures()
+		}
+	})
+})
+
+describe('recordStyleReads', () => {
+	it('records the element of each computed-style read in call order, answered by the window', () => {
+		const original = window.getComputedStyle
+		const container = buildFixture('<p style="display: inline">First</p><p>Second</p>')
+		try {
+			const first = requireValue(container.firstElementChild)
+			const second = requireValue(container.lastElementChild)
+			const reads = recordStyleReads(() => {
+				expect(readStyle(first, 'display')).toBe('inline')
+				expect(readStyle(second, 'display')).toBe('block')
+			})
+			expect(reads).toStrictEqual([first, second])
+			expect(window.getComputedStyle).toBe(original)
+		} finally {
+			resetFixtures()
+		}
+	})
+
+	it('puts the window function back when the reading throws', () => {
+		const original = window.getComputedStyle
+		expect(() =>
+			recordStyleReads(() => {
+				throw new Error('The reading failed')
+			}),
+		).toThrow('The reading failed')
+		expect(window.getComputedStyle).toBe(original)
+	})
+})
+
+describe('skipUnrestoredPointer', () => {
 	it('skips with the named mechanism exactly where no fine pointer returns', async () => {
 		const skips = createRecorder<[condition: boolean, note?: string]>()
-		await requirePointerRestoration({ skip: skips.handler })
+		await skipUnrestoredPointer({ skip: skips.handler })
 		expect(skips.calls).toStrictEqual([
 			[!matchMedia('(pointer: fine)').matches, POINTER_RESTORATION],
 		])

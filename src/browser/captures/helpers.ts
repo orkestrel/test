@@ -9,6 +9,7 @@ import type {
 	MediaOptions,
 	ScopeHandler,
 	StabilityOptions,
+	ViewportOptions,
 } from './types.js'
 import { readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
@@ -529,9 +530,11 @@ export function collectRegionRows(region: Element): readonly Element[] {
  * The `scrollHeight` property never reads less than the `clientHeight` property, so a region whose
  * rows fit reads its box rather than its rows, and the slack under its last row cannot be read
  * there. This reading can, because it is taken over the elements inside the region rather than
- * over its box: each element contributes its bottom edge plus its own bottom margin, capped at the
- * clip edge, as the {@link readClipEdge} helper measures it, of every clipping ancestor between it
- * and the region, and the largest contribution wins. The region's scroll offset is added back, so
+ * over its box: each element contributes its bottom edge plus its own bottom margin, and the
+ * largest contribution wins. Where the region itself clips its overflow, as the {@link clipsOverflow}
+ * helper reports it, each contribution is capped at the clip edge, as the {@link readClipEdge}
+ * helper measures it, of every clipping ancestor between the element and the region; where the
+ * region clips nothing, no contribution is capped. The region's scroll offset is added back, so
  * a scrolled region reads the same rows as an unscrolled one. The elements are the ones
  * {@link collectRegionRows} reaches through the flat tree, so a host's shadow rows and a slot's
  * assigned rows count, and a fixed or absolute box laid out against a block outside the region
@@ -1109,9 +1112,8 @@ export async function releaseMedia(): Promise<void> {
  * @returns The absolute path of the written frame, after it has been read back and matched.
  * @throws Thrown when the pane cannot be staged, when the document's height or an element frame's
  * element height never settles under {@link CAPTURE_STAGE_LIMIT} restagings, when an unrolled frame
- * leaves rows hidden in a scroll region, when a visible frame names an element or an unrolled frame
- * or cannot cover the viewport, when the provider wrote the frame somewhere else, and when the bytes
- * on disk are not the ones this shot produced.
+ * leaves rows hidden in a scroll region, when the provider wrote the frame somewhere else, and when
+ * the bytes on disk are not the ones this shot produced.
  *
  * @remarks
  * The path a screenshot call returns is the path it meant to write, so it is not evidence a file
@@ -1227,17 +1229,8 @@ export async function releaseMedia(): Promise<void> {
  * transformed ancestor is counted as a row, though the top layer lays it out. A region inside a
  * closed shadow root is unreachable, so its rows stay hidden without a refusal.
  *
- * Set the `visible` option to shoot what the tester shows: the declared viewport at the scroll the
- * page holds. The pane is staged at the declared viewport alone, no height is measured, and no
- * taller pane is staged, so a scroll-driven mark keeps naming what the viewport shows. The shot is
- * taken of a transparent fixed box appended to the root element and removed on every path; the
- * box sends no pointer input and receives none. A tester that is not at the declared viewport is
- * resized to it first, and the frame then holds the scroll the page keeps at that size. A visible
- * frame refuses an `element` and `unrolled: true` before it stages anything, with
- * `Capture frame at <path> is visible, so it takes neither an element nor unrolled`. A root element
- * that becomes the box's containing block, through a transform or a paint containment, refuses the
- * shot with
- * `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`.
+ * To shoot the declared viewport at the scroll the page holds rather than the document, call
+ * {@link captureViewport}.
  *
  * @example
  * ```ts
@@ -1246,38 +1239,9 @@ export async function releaseMedia(): Promise<void> {
  */
 export async function captureFrame(options: FrameOptions): Promise<string> {
 	const element = options.element
-	if (options.visible === true && (element !== undefined || options.unrolled === true)) {
-		throw new Error(
-			`Capture frame at ${options.path} is visible, so it takes neither an element nor unrolled`,
-		)
-	}
-	const scroll = { left: window.scrollX, top: window.scrollY }
-	const placements = collectScrollContainers().map((container) => ({
-		container,
-		left: container.scrollLeft,
-		top: container.scrollTop,
-	}))
+	const restore = recordScroll()
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
-	const cover = options.visible === true ? document.createElement('div') : undefined
 	try {
-		if (cover !== undefined) {
-			await stagePane(options.width, options.height)
-			cover.setAttribute('aria-hidden', 'true')
-			cover.style.cssText = 'position:fixed;inset:0;opacity:0;pointer-events:none'
-			// The root element, not the body, holds the cover, so a transformed or contained body
-			// cannot become the cover's containing block.
-			document.documentElement.append(cover)
-			const box = cover.getBoundingClientRect()
-			const { clientWidth, clientHeight } = document.documentElement
-			if (box.x !== 0 || box.y !== 0 || box.width !== clientWidth || box.height !== clientHeight) {
-				throw new Error(
-					`Capture frame at ${options.path} cannot cover the viewport: a fixed box on the root element lays out at ${String(box.width)}x${String(box.height)} from (${String(box.x)}, ${String(box.y)}) in a ${String(clientWidth)}x${String(clientHeight)} viewport`,
-				)
-			}
-			const shot = await takeFrameShot(options, cover)
-			await verifyFrame(shot, options.path, readCaptureReader())
-			return shot.path
-		}
 		if (!prepared) await stagePane(options.width, options.height)
 		const declared = new Map(
 			(options.unrolled === true ? collectUnrolledRegions(element) : []).map(
@@ -1310,16 +1274,140 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
-		cover?.remove()
 		try {
 			await releasePane()
 		} finally {
-			window.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' })
-			for (const { container, left, top } of placements) {
-				container.scrollTo({ left, top, behavior: 'instant' })
-			}
+			restore()
 		}
 	}
+}
+
+/**
+ * Shoots the declared viewport at the scroll the page holds and proves the file on disk holds this
+ * run's bytes.
+ *
+ * @param options - The path to write and the viewport to shoot at.
+ * @returns The absolute path of the written frame, after it has been read back and matched.
+ * @throws Thrown when the pane cannot be staged, when the cover cannot lay out over the viewport,
+ * when the provider wrote the frame somewhere else, and when the bytes on disk are not the ones this
+ * shot produced.
+ *
+ * @remarks
+ * The pane is staged at the declared viewport alone, no height is measured, and no taller pane is
+ * staged, so a mark the scroll drives keeps naming what the viewport shows. A tester that is not at
+ * the declared viewport is resized to it first, and the frame then holds the scroll the page keeps
+ * at that size. The shot is taken of a transparent fixed box, the cover, appended to the root
+ * element and removed on every path; the cover sends no pointer input and receives none. Its
+ * `position`, `inset`, `opacity`, and `pointer-events` declarations are set inline as important, so
+ * a page rule marked important does not paint it over the shot.
+ *
+ * The cover's box is read after it is appended, and a box that does not start at the viewport's
+ * origin at the viewport's size refuses the shot with
+ * `Capture frame at <path> cannot cover the viewport: a fixed box on the root element lays out at <w>x<h> from (<x>, <y>) in a <w>x<h> viewport`.
+ * The check reads the box, not its cause: a root element that becomes the cover's containing block,
+ * through a transform or a paint containment, lays the cover out over its own box, so the shot is
+ * refused wherever that box differs from the viewport, as a scrolled or a taller document's does,
+ * and taken where the two coincide.
+ *
+ * The pane is released and the scroll of the window and of every scroll container
+ * {@link collectScrollContainers} finds is restored before this returns, on every path, as
+ * {@link captureFrame} does. The file is verified as {@link verifyFrame} verifies it.
+ *
+ * @example
+ * ```ts
+ * await captureViewport({ path: '../../tmp/capture/contents.png', width: 390, height: 844 })
+ * ```
+ */
+export async function captureViewport(options: ViewportOptions): Promise<string> {
+	const restore = recordScroll()
+	const cover = document.createElement('div')
+	try {
+		await stagePane(options.width, options.height)
+		cover.setAttribute('aria-hidden', 'true')
+		cover.style.setProperty('position', 'fixed', 'important')
+		cover.style.setProperty('inset', '0', 'important')
+		cover.style.setProperty('opacity', '0', 'important')
+		cover.style.setProperty('pointer-events', 'none', 'important')
+		// The root element, not the body, holds the cover, so a transformed or contained body
+		// cannot become the cover's containing block.
+		document.documentElement.append(cover)
+		const box = cover.getBoundingClientRect()
+		const { clientWidth, clientHeight } = document.documentElement
+		if (box.x !== 0 || box.y !== 0 || box.width !== clientWidth || box.height !== clientHeight) {
+			throw new Error(
+				`Capture frame at ${options.path} cannot cover the viewport: a fixed box on the root element lays out at ${String(box.width)}x${String(box.height)} from (${String(box.x)}, ${String(box.y)}) in a ${String(clientWidth)}x${String(clientHeight)} viewport`,
+			)
+		}
+		const shot = await takeFrameShot(options, cover)
+		await verifyFrame(shot, options.path, readCaptureReader())
+		return shot.path
+	} finally {
+		cover.remove()
+		try {
+			await releasePane()
+		} finally {
+			restore()
+		}
+	}
+}
+
+/**
+ * Records the scroll position of the tester's window and of every scroll container in its body, and
+ * returns the callback that scrolls each of them back.
+ *
+ * @returns A callback that scrolls the window and each recorded container back to the position this
+ * call read, instantly.
+ *
+ * @remarks
+ * The containers are the ones {@link collectScrollContainers} finds when this is called. A capture
+ * records them before its first staging, because growing a region clamps its scroll position and an
+ * element frame's alignment scrolls a container too, and restores them after the pane is released.
+ *
+ * @example
+ * ```ts
+ * const restore = recordScroll()
+ * window.scrollTo({ top: 600, behavior: 'instant' })
+ * restore() // the window is back at the scroll it held
+ * ```
+ */
+export function recordScroll(): () => void {
+	const left = window.scrollX
+	const top = window.scrollY
+	const placements = collectScrollContainers().map((container) => ({
+		container,
+		left: container.scrollLeft,
+		top: container.scrollTop,
+	}))
+	return () => {
+		window.scrollTo({ left, top, behavior: 'instant' })
+		for (const placement of placements) {
+			placement.container.scrollTo({
+				left: placement.left,
+				top: placement.top,
+				behavior: 'instant',
+			})
+		}
+	}
+}
+
+/**
+ * Describes the refusal of a viewport placement in an unrolled portfolio.
+ *
+ * @param state - The state the placement named.
+ * @returns The refusal, naming the state and the two placements that can shoot it.
+ *
+ * @remarks
+ * An unrolled portfolio covers every row each scroll region hides, and a viewport frame covers the
+ * rows the scroll shows, so a portfolio refuses the pairing in every run, written or not.
+ *
+ * @example
+ * ```ts
+ * describeUnrolledView('contents-scrolled')
+ * // 'Capture state "contents-scrolled" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled'
+ * ```
+ */
+export function describeUnrolledView(state: string): string {
+	return `Capture state "${state}" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled`
 }
 
 /**

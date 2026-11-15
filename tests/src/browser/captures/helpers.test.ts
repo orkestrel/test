@@ -1,3 +1,4 @@
+import type { FrameOptions, ViewportOptions } from '@src/browser'
 import { TestValue } from '../../../setup.js'
 import { isNumber, isRecord } from '@orkestrel/contract'
 import * as browser from '@src/browser'
@@ -5,6 +6,7 @@ import {
 	build,
 	CAPTURE_PANE,
 	captureFrame,
+	captureViewport,
 	clipsOverflow,
 	collectClippingAncestors,
 	collectRegionRows,
@@ -12,6 +14,7 @@ import {
 	collectUnrolledRegions,
 	computeOffset,
 	containsFixed,
+	describeUnrolledView,
 	expandCaptures,
 	hoverAccessible,
 	measureContent,
@@ -29,6 +32,7 @@ import {
 	readPixels,
 	readShotPixel,
 	readStyle,
+	recordScroll,
 	releaseMedia,
 	releasePane,
 	releasePointer,
@@ -44,7 +48,7 @@ import {
 	waitForStability,
 } from '@src/browser'
 import { createRecorder, requireValue, waitForCondition } from '@src/core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, expectTypeOf, it } from 'vitest'
 import { commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../../setup.js'
 import {
@@ -55,13 +59,15 @@ import {
 	CLIP_CASES,
 	CLIP_EDGE_CASES,
 	CLIP_MARGIN_CASES,
+	climbContentEdge,
 	FIXED_CASES,
 	PANES_SHEET,
-	requirePointerRestoration,
+	recordStyleReads,
 	resetFixtures,
 	SHADOW_PANES,
 	SHELL_MARKUP,
 	SHELL_SHEET,
+	skipUnrestoredPointer,
 	VARIANTS,
 } from '../../../setupBrowser.js'
 
@@ -287,9 +293,9 @@ describe('readClipBound', () => {
 describe('content measurement over generated trees', () => {
 	// Each seed builds one tree of styled boxes, broad on even seeds and deep on odd ones, with open
 	// and closed shadow wrappers, shadow-tree children, slot elements, scrolled regions, and a
-	// scrolled window. The reference transcribes the per-element climb the shipped measurement took
-	// before it read its clip bounds through one memo: every element climbs its whole clipping
-	// ancestry, and every frame on that climb is read again for each element under it.
+	// scrolled window. The content reference is `climbContentEdge`, the per-element climb the shipped
+	// measurement took before it read its clip bounds through one memo: every element climbs its
+	// whole clipping ancestry, and every frame on that climb is read again for each element under it.
 	it('reads every tree and every region in it as the per-element climb reads them', () => {
 		const styles = [...CLIP_CASES, ...CLIP_EDGE_CASES, ...CLIP_MARGIN_CASES, ...FIXED_CASES].map(
 			({ style }) => style,
@@ -374,22 +380,7 @@ describe('content measurement over generated trees', () => {
 				seed,
 				scrolled: window.scrollY > 0 && regions.some((region) => region.scrollTop > 0),
 				content: measureContent(),
-				reference: Math.ceil(
-					Array.from(document.body.querySelectorAll('*')).reduce((greatest, element) => {
-						const bottom = Math.min(
-							element.getBoundingClientRect().bottom +
-								window.scrollY +
-								readPixels(element, 'margin-bottom'),
-							...collectClippingAncestors(element)
-								.filter((frame) => frame !== document.body && frame !== document.documentElement)
-								.flatMap((frame) => {
-									const limit = readClipEdge(frame)
-									return limit === undefined ? [] : [limit]
-								}),
-						)
-						return bottom > greatest ? bottom : greatest
-					}, 0) + pads,
-				),
+				reference: climbContentEdge(),
 				uncapped: Math.ceil(
 					Array.from(document.body.querySelectorAll('*')).reduce(
 						(greatest, element) =>
@@ -648,6 +639,29 @@ describe('collectRegionRows', () => {
 })
 
 describe('measureRegion', () => {
+	it('reads a shared clipping ancestor as often under twelve rows as under one', () => {
+		const [one, twelve] = [1, 12].map((rows) => {
+			const root = buildFixture(
+				'<div data-region style="overflow: auto; height: 50px">' +
+					`<div data-wrapper style="overflow: clip">${'<div style="height: 10px"></div>'.repeat(rows)}</div></div>`,
+			)
+			const region = requireValue(root.querySelector('[data-region]'))
+			const wrapper = requireValue(root.querySelector('[data-wrapper]'))
+			const measured = recordStyleReads(() => measureRegion(region))
+			const climbed = recordStyleReads(() => {
+				for (const row of wrapper.children) readClipBound(row, region, new Map())
+			})
+			resetFixtures()
+			return {
+				measured: measured.filter((element) => element === wrapper).length,
+				climbed: climbed.filter((element) => element === wrapper).length,
+			}
+		})
+		expect(requireValue(twelve).measured).toBe(requireValue(one).measured)
+		// Control: a memo per row reads the wrapper again for every row under it.
+		expect(requireValue(twelve).climbed).toBeGreaterThan(requireValue(one).climbed)
+	})
+
 	it('reads the rows an overflowing region lays out, as its scroll height does, scrolled or not', () => {
 		const container = buildFixture(
 			'<div style="overflow: auto; height: 50px; padding: 5px"><div style="height: 200px"></div></div>',
@@ -811,6 +825,29 @@ describe('readClippedBlock', () => {
 })
 
 describe('measureContent', () => {
+	it('reads a shared clipping ancestor as often under twelve rows as under one', () => {
+		const [one, twelve] = [1, 12].map((rows) => {
+			const root = buildFixture(
+				'<div data-frame style="overflow: hidden; height: 300px">' +
+					`<div data-wrapper>${'<div style="height: 10px"></div>'.repeat(rows)}</div></div>`,
+			)
+			const frame = requireValue(root.querySelector('[data-frame]'))
+			const wrapper = requireValue(root.querySelector('[data-wrapper]'))
+			const measured = recordStyleReads(() => measureContent())
+			const climbed = recordStyleReads(() => {
+				for (const row of wrapper.children) readClipBound(row, document.body, new Map())
+			})
+			resetFixtures()
+			return {
+				measured: measured.filter((element) => element === frame).length,
+				climbed: climbed.filter((element) => element === frame).length,
+			}
+		})
+		expect(requireValue(twelve).measured).toBe(requireValue(one).measured)
+		// Control: a memo per row reads the frame again for every row under it.
+		expect(requireValue(twelve).climbed).toBeGreaterThan(requireValue(one).climbed)
+	})
+
 	// guides/test.md → Patterns → "Measure a document's content edge". A browser fence carries in
 	// this directory because the guides project runs with the browser disabled.
 	it('reads one content edge under a pane the document outruns and under a pane it does not', async () => {
@@ -1201,114 +1238,6 @@ describe('captureFrame', () => {
 		const result = await readFrame(written)
 		expect([result.width, result.height]).toStrictEqual([100, 85])
 		expect(window.scrollY).toBe(200)
-	})
-
-	it.each([true, false])(
-		'shoots the declared viewport at the current scroll and stages no taller pane, prepared: %s',
-		async (prepared) => {
-			buildStylesheet(BANDS_SHEET)
-			buildFixture(BANDS_MARKUP)
-			await page.viewport(390, prepared ? 400 : 500)
-			window.scrollTo({ top: 600, behavior: 'instant' })
-			const heights = createRecorder<[height: number]>()
-			const controller = new AbortController()
-			window.addEventListener('resize', () => heights.handler(window.innerHeight), {
-				signal: controller.signal,
-			})
-			try {
-				const written = await captureFrame({
-					path: `${FRAMES}/visible-${String(prepared)}.png`,
-					width: 390,
-					height: 400,
-					visible: true,
-				})
-				await waitForFrame()
-				// Rows 600 to 999 of the document: the green band's lower half over the blue band's upper.
-				expect(await readFrame(written)).toStrictEqual({
-					width: 390,
-					height: 400,
-					floor: 'rgb(0, 0, 255)',
-				})
-				const shot = await paintImage(await commands.readFile(written, 'base64'))
-				expect([...requireValue(shot).getImageData(5, 0, 1, 1).data]).toStrictEqual([
-					0, 128, 0, 255,
-				])
-				// The resize this case's own viewport request fires can land after the listener is added.
-				expect(Math.max(0, ...heights.calls.map(([height]) => height))).toBeLessThanOrEqual(
-					prepared ? 400 : 500,
-				)
-				expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([
-					390,
-					prepared ? 400 : 500,
-					600,
-				])
-				expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
-
-				// Control: the plain frame restages a pane as tall as the document and shoots it from the
-				// top, so it holds every band rather than the rows the scroll shows.
-				const restaged = await captureFrame({
-					path: `${FRAMES}/visible-control-${String(prepared)}.png`,
-					width: 390,
-					height: 400,
-				})
-				await waitForFrame()
-				expect(await readFrame(restaged)).toStrictEqual({
-					width: 390,
-					height: 2000,
-					floor: 'rgb(128, 0, 128)',
-				})
-				expect(heights.calls.map(([height]) => height)).toContain(2000)
-				expect(window.scrollY).toBe(600)
-			} finally {
-				controller.abort()
-			}
-		},
-	)
-
-	it('refuses a visible frame that also names an element or unrolled, before it stages', async () => {
-		const container = buildFixture('<div style="height: 40px">Subject</div>')
-		const pane = requireValue(window.frameElement?.parentElement)
-		const before = [window.innerWidth, window.innerHeight]
-		const path = `${FRAMES}/visible-refused.png`
-		const refusal = `Capture frame at ${path} is visible, so it takes neither an element nor unrolled`
-		await expect(
-			captureFrame({
-				path,
-				width: 390,
-				height: 400,
-				visible: true,
-				element: requireValue(container.firstElementChild),
-			}),
-		).rejects.toThrow(refusal)
-		await expect(
-			captureFrame({ path, width: 390, height: 400, visible: true, unrolled: true }),
-		).rejects.toThrow(refusal)
-		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
-		expect([window.innerWidth, window.innerHeight]).toStrictEqual(before)
-		// Control: `visible` with `unrolled` set to false writes the frame.
-		const written = await captureFrame({
-			path,
-			width: 390,
-			height: 400,
-			visible: true,
-			unrolled: false,
-		})
-		expect((await readFrame(written)).height).toBe(400)
-	})
-
-	it('refuses a visible frame whose root element contains its fixed cover, and hands the scroll back', async () => {
-		buildStylesheet(`${BANDS_SHEET} html { contain: paint }`)
-		buildFixture(BANDS_MARKUP)
-		await page.viewport(390, 400)
-		window.scrollTo({ top: 600, behavior: 'instant' })
-		const pane = requireValue(window.frameElement?.parentElement)
-		const path = `${FRAMES}/visible-contained.png`
-		await expect(captureFrame({ path, width: 390, height: 400, visible: true })).rejects.toThrow(
-			`Capture frame at ${path} cannot cover the viewport: a fixed box on the root element lays out at 390x2000 from (0, -600) in a 390x400 viewport`,
-		)
-		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
-		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([390, 400, 600])
-		expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
 	})
 
 	it('writes a real file, reads it back, and returns the verified absolute path', async () => {
@@ -2406,6 +2335,149 @@ describe('captureFrame', () => {
 	})
 })
 
+describe('captureViewport', () => {
+	it.each([true, false])(
+		'shoots the declared viewport at the current scroll and stages no taller pane, prepared: %s',
+		async (prepared) => {
+			buildStylesheet(BANDS_SHEET)
+			buildFixture(BANDS_MARKUP)
+			await page.viewport(390, prepared ? 400 : 500)
+			window.scrollTo({ top: 600, behavior: 'instant' })
+			const heights = createRecorder<[height: number]>()
+			const controller = new AbortController()
+			window.addEventListener('resize', () => heights.handler(window.innerHeight), {
+				signal: controller.signal,
+			})
+			try {
+				const written = await captureViewport({
+					path: `${FRAMES}/viewport-${String(prepared)}.png`,
+					width: 390,
+					height: 400,
+				})
+				await waitForFrame()
+				// Rows 600 to 999 of the document: the green band's lower half over the blue band's upper.
+				expect(await readFrame(written)).toStrictEqual({
+					width: 390,
+					height: 400,
+					floor: 'rgb(0, 0, 255)',
+				})
+				const shot = await paintImage(await commands.readFile(written, 'base64'))
+				expect([...requireValue(shot).getImageData(5, 0, 1, 1).data]).toStrictEqual([
+					0, 128, 0, 255,
+				])
+				// The resize this case's own viewport request fires can land after the listener is added.
+				expect(Math.max(0, ...heights.calls.map(([height]) => height))).toBeLessThanOrEqual(
+					prepared ? 400 : 500,
+				)
+				expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([
+					390,
+					prepared ? 400 : 500,
+					600,
+				])
+				expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
+
+				// Control: the plain frame restages a pane as tall as the document and shoots it from the
+				// top, so it holds every band rather than the rows the scroll shows.
+				const restaged = await captureFrame({
+					path: `${FRAMES}/viewport-control-${String(prepared)}.png`,
+					width: 390,
+					height: 400,
+				})
+				await waitForFrame()
+				expect(await readFrame(restaged)).toStrictEqual({
+					width: 390,
+					height: 2000,
+					floor: 'rgb(128, 0, 128)',
+				})
+				expect(heights.calls.map(([height]) => height)).toContain(2000)
+				expect(window.scrollY).toBe(600)
+			} finally {
+				controller.abort()
+			}
+		},
+	)
+
+	it('takes the path and the viewport alone, and the frame options take no viewport switch', () => {
+		expectTypeOf(captureViewport).parameter(0).toEqualTypeOf<ViewportOptions>()
+		expectTypeOf<keyof ViewportOptions>().toEqualTypeOf<'path' | 'width' | 'height'>()
+		expectTypeOf<FrameOptions>().not.toHaveProperty('visible')
+	})
+
+	it('refuses a cover the root element contains, and hands the pane and the scroll back', async () => {
+		buildStylesheet(`${BANDS_SHEET} html { contain: paint }`)
+		buildFixture(BANDS_MARKUP)
+		await page.viewport(390, 400)
+		window.scrollTo({ top: 600, behavior: 'instant' })
+		const pane = requireValue(window.frameElement?.parentElement)
+		const path = `${FRAMES}/viewport-contained.png`
+		await expect(captureViewport({ path, width: 390, height: 400 })).rejects.toThrow(
+			`Capture frame at ${path} cannot cover the viewport: a fixed box on the root element lays out at 390x2000 from (0, -600) in a 390x400 viewport`,
+		)
+		expect(pane.hasAttribute(CAPTURE_PANE)).toBe(false)
+		expect([window.innerWidth, window.innerHeight, window.scrollY]).toStrictEqual([390, 400, 600])
+		expect(document.documentElement.querySelectorAll(':scope > [aria-hidden]')).toHaveLength(0)
+	})
+
+	it('keeps the cover transparent under a page rule that marks its properties important', async () => {
+		buildStylesheet(
+			`${BANDS_SHEET} html > div { opacity: 1 !important; background: rgb(255, 0, 255) !important }`,
+		)
+		buildFixture(BANDS_MARKUP)
+		await page.viewport(390, 400)
+		window.scrollTo({ top: 600, behavior: 'instant' })
+		// Control: the cover's base declarations, written without priority, lose to the page rule.
+		const base = build('div', {
+			attributes: { style: 'position:fixed;inset:0;opacity:0;pointer-events:none' },
+		})
+		document.documentElement.append(base)
+		try {
+			expect(readStyle(base, 'opacity')).toBe('1')
+		} finally {
+			base.remove()
+		}
+		const written = await captureViewport({
+			path: `${FRAMES}/viewport-important.png`,
+			width: 390,
+			height: 400,
+		})
+		// Rows 600 to 999: the green band's lower half over the blue band's upper, with no magenta.
+		expect(await readFrame(written)).toStrictEqual({
+			width: 390,
+			height: 400,
+			floor: 'rgb(0, 0, 255)',
+		})
+		const shot = await paintImage(await commands.readFile(written, 'base64'))
+		expect([...requireValue(shot).getImageData(5, 0, 1, 1).data]).toStrictEqual([0, 128, 0, 255])
+	})
+})
+
+describe('recordScroll', () => {
+	it('scrolls the window and each scroll container back to the position it recorded', () => {
+		buildStylesheet('body { margin: 0 }')
+		const container = buildFixture(
+			'<div style="height: 3000px"><div data-region style="overflow: auto; height: 100px">' +
+				'<div style="height: 400px"></div></div></div>',
+		)
+		const region = requireValue(container.querySelector('[data-region]'))
+		window.scrollTo({ top: 300, behavior: 'instant' })
+		region.scrollTop = 50
+		const restore = recordScroll()
+		window.scrollTo({ top: 900, behavior: 'instant' })
+		region.scrollTop = 200
+		expect([window.scrollY, region.scrollTop]).toStrictEqual([900, 200])
+		restore()
+		expect([window.scrollY, region.scrollTop]).toStrictEqual([300, 50])
+	})
+})
+
+describe('describeUnrolledView', () => {
+	it('names the state and the two placements that can shoot it', () => {
+		expect(describeUnrolledView('contents-scrolled')).toBe(
+			'Capture state "contents-scrolled" cannot be viewed in an unrolled portfolio: place it to shoot every row, or view it from a portfolio created without unrolled',
+		)
+	})
+})
+
 describe('computeOffset', () => {
 	// A runner window of 800 by 513 CSS pixels, written out so each case is the same on every host.
 	it('leaves an element inside the window where it is', () => {
@@ -2691,7 +2763,7 @@ describe('readPixels', () => {
 
 describe('pointer media', () => {
 	it('stages coarse and fine pointers with their hover and any-pointer readings', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		await browser.stageMedia({ pointer: 'coarse' })
 		expect(matchMedia('(pointer: coarse)').matches).toBe(true)
 		expect(matchMedia('(any-pointer: coarse)').matches).toBe(true)
@@ -2707,7 +2779,7 @@ describe('pointer media', () => {
 	})
 
 	it('restores the first coarse reading after fine then coarse staging', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
 		await waitForCondition(
 			'the provider pointer is coarse',
@@ -2726,7 +2798,7 @@ describe('pointer media', () => {
 	})
 
 	it('restores a pre-call fine pointer and appends its bit to an earlier motion stage', async (context) => {
-		await requirePointerRestoration(context)
+		await skipUnrestoredPointer(context)
 		await sendProtocol('Emulation.setTouchEmulationEnabled', { enabled: false })
 		await stageMedia({ motion: false })
 		const marker = document.documentElement.getAttribute(MEDIA_STAGE)
