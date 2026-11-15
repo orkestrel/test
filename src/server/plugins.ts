@@ -8,9 +8,10 @@ import { ProgressReporter } from './reporters/ProgressReporter.js'
  *
  * @remarks Mount the value in the root `plugins` of a configuration. Vitest calls its hook once per
  * project that carries it, and the hook adds a reporter only while the run's reporters hold no
- * `ProgressReporter`, so a run writes one `init` line wherever the plugin is mounted. A run with no
- * `--outputFile.progress` gets no reporter, because `ProgressReporter` refuses to initialize
- * without that file.
+ * `ProgressReporter`, so a run writes one `init` line wherever the plugin is mounted. The hook adds
+ * a reporter when the resolved `outputFile` names `progress`, from `--outputFile.progress` or from
+ * the configuration's `outputFile`, and adds none otherwise, because `ProgressReporter` refuses to
+ * initialize without that file.
  *
  * @example
  * ```ts

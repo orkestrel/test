@@ -3319,8 +3319,8 @@ and `case` lines only for the cases each module plans to run, so a name filter's
 never count, and it writes one `case` line per planned case even where a bail makes Vitest report a
 case twice. It records every `cancel` Vitest delivers, registering its listener once a module
 queues, because Vitest clears cancel listeners after `onTestRunStart`. When one Vitest holds several
-instances, such as one from the configuration and one a plugin adds, only the first in
-`vitest.config.reporters` writes, so a run is never counted twice.
+instances, such as two a configuration lists, only the first in `vitest.config.reporters` writes,
+so a run is never counted twice.
 
 This read summarizes the file once, from another process or the same one, and renders it.
 
@@ -3337,9 +3337,13 @@ console.log(renderProgress(runs))
 and writes nothing. It returns one run per writing process, each read from that process's last
 `init` line, and each run carries that line's `wall` time. The rendered text gives cases done
 against planned per project, with `+` on the total until every module is collected, the elapsed
-time, rate, and estimate, all counting only cases that passed, failed, or skipped. A case a bail
-cut off before it started reports `pending`, as Vitest's JSON report reads it, and its project line
-names it beside the other tallies. The rendered text also gives the running cases, the cancel, and
+time, rate, and estimate, all counting the cases that passed, failed, or skipped. Under a bail,
+Vitest reports `skipped` for the case a module is running when the cancel arrives and for each case
+left after it in that module, and gives a reporter nothing that tells those cases from a case that
+skipped itself, so they count as done, in the rate, and in the estimate, as the JSON report counts
+them. Each case a bail leaves in a module that was running no case reports `pending`, as the JSON
+report reads it, stays outside done, and its project line names it beside the other tallies. The
+rendered text also gives the running cases, the cancel, and
 each failure under its module and case with its first message line and location. A module that fails to collect, such as one that throws
 while it is imported, reads as a failure under its module alone, and as `FIRST` when its line comes
 before every other failure line. The earliest failure line reads `FIRST` even when Vitest wrote the
@@ -3356,7 +3360,8 @@ one `init` line and are outside what the format reads.
 
 A command line that passes `--reporter` flags replaces the reporters a configuration lists, so
 mount the progress plugin instead. Its hook adds one `ProgressReporter` after the flags are read,
-and only when the command line names the progress file.
+and only when the resolved `outputFile` names `progress`, from `--outputFile.progress` or from the
+configuration's `outputFile`.
 
 ```ts
 import { defineConfig } from 'vitest/config'
@@ -3373,7 +3378,8 @@ export default defineConfig({
 The hook runs once for each project that carries the plugin, and a project that mounts the plugin
 itself makes Vitest evaluate the configuration again. The hook adds nothing while the run's
 reporters already hold a `ProgressReporter`, so the run writes one `init` line wherever the plugin
-is mounted. A run without `--outputFile.progress` gets no reporter and writes nothing.
+is mounted. A run whose resolved `outputFile` names no `progress` file gets no reporter and writes
+nothing.
 
 ### Probe what the host supports
 
