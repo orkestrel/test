@@ -1,14 +1,30 @@
-import type { JourneyVariant, WaitOptions } from '@src/core'
+import type { Result } from '@orkestrel/contract'
+import type { FrameClip, FrameShot, JourneyVariant, WaitOptions } from '@src/core'
 
 /** Reads the lowercase hexadecimal SHA-256 digest of a captured file through a browser command. */
 export type CaptureReader = (path: string) => Promise<string>
 
-/** Represents the path and base64 bytes returned by Vitest's screenshot operation. */
-export interface FrameShot {
-	/** Holds the absolute path the provider wrote. */
-	readonly path: string
-	/** Holds the screenshot bytes encoded as base64. */
-	readonly base64: string
+/**
+ * Shoots a clip of the runner page through the registered `shootClip` browser command and writes it
+ * at a path relative to the calling test file.
+ *
+ * @remarks
+ * The failure arm carries the command's refusal of a clip that leaves the runner window.
+ */
+export type ClipHandler = (path: string, clip: FrameClip) => Promise<Result<FrameShot, string>>
+
+/** Holds what restaging a capture settled: the regions it left at a fixed height and whether the subject moved. */
+export interface SettleResult {
+	/**
+	 * Lists the regions an unrolled frame left out of its extent because each kept its height across a
+	 * staging; empty for a plain frame.
+	 */
+	readonly fixed: readonly Element[]
+	/**
+	 * Holds whether the subject's box moved between the two painted frames of the last staging the
+	 * call made; `undefined` where the call staged nothing.
+	 */
+	readonly moved: boolean | undefined
 }
 
 /** Configures one viewport shot: where it is written and the viewport it is shot at. */

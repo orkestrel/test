@@ -2,7 +2,8 @@ import type { PlaywrightProviderOptions } from '@vitest/browser-playwright'
 import type { SpawnSyncReturns } from 'node:child_process'
 import type { TestContext } from 'vitest'
 import type { Reporter } from 'vitest/node'
-import type { ProgressEvent, ScratchInterface } from '@src/server'
+import type { RecorderInterface } from '@src/core'
+import type { ClipContext, ProgressEvent, ScratchInterface } from '@src/server'
 import type { DistributionResolution, Format } from './setup.js'
 import { attempt, isArray, isObject, isString } from '@orkestrel/contract'
 import { spawnSync } from 'node:child_process'
@@ -34,7 +35,7 @@ import { dirname, join, resolve } from 'node:path'
 import type { Browser, FrameLocator, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { resolveBrowser, resolvePinnedBrowser } from '../configs/browsers.js'
-import { invokeUnchecked, readProperty, requireValue } from '@src/core'
+import { createRecorder, invokeUnchecked, readProperty, requireValue } from '@src/core'
 import {
 	createScratch,
 	supportsBytes,
@@ -82,6 +83,33 @@ export async function createChooserFixture(): Promise<{
 	} catch (error) {
 		await browser.close()
 		throw error
+	}
+}
+
+/**
+ * Creates a real browser page at Playwright's default 1280x720 window and a clip command context over
+ * it, whose `writeFile` request is recorded rather than written.
+ */
+export async function createClipFixture(): Promise<{
+	readonly browser: Browser
+	readonly context: ClipContext
+	readonly writes: RecorderInterface<
+		readonly [name: string, path: string, content: string, encoding: string]
+	>
+}> {
+	const { browser, page } = await createChooserFixture()
+	const writes =
+		createRecorder<readonly [name: string, path: string, content: string, encoding: string]>()
+	return {
+		browser,
+		writes,
+		context: {
+			page,
+			testPath: resolve('fixture', 'tests', 'orders.test.ts'),
+			triggerCommand: async (...args) => {
+				writes.handler(...args)
+			},
+		},
 	}
 }
 

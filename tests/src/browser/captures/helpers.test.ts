@@ -1,6 +1,7 @@
 import type { FrameOptions, ViewportOptions } from '@src/browser'
+import type { FrameClip } from '@src/core'
 import { TestValue } from '../../../setup.js'
-import { isNumber, isRecord } from '@orkestrel/contract'
+import { isNumber, isRecord, isString } from '@orkestrel/contract'
 import * as browser from '@src/browser'
 import {
 	build,
@@ -25,9 +26,11 @@ import {
 	readClipEdge,
 	readClipMargin,
 	readCaptureReader,
+	readClipHandler,
 	readClippedBlock,
 	readFlatParent,
 	readFrame,
+	readFrameClip,
 	readFrameHeight,
 	readPixels,
 	readShotPixel,
@@ -42,14 +45,22 @@ import {
 	settleFrame,
 	stageMedia,
 	stagePane,
+	takeClipShot,
 	takeFrameShot,
 	verifyFrame,
 	waitForFrame,
 	waitForStability,
 } from '@src/browser'
-import { createRecorder, requireValue, waitForCondition } from '@src/core'
+import {
+	createRecorder,
+	invokeUnchecked,
+	readProperty,
+	requireValue,
+	waitForCondition,
+	waitForDelay,
+} from '@src/core'
 import { afterAll, afterEach, beforeAll, describe, expect, expectTypeOf, it } from 'vitest'
-import { commands, page, server } from 'vitest/browser'
+import { cdp, commands, page, server } from 'vitest/browser'
 import { rewriteWindowsAbsolutePath } from '../../../setup.js'
 import {
 	BANDS_MARKUP,
@@ -124,6 +135,42 @@ describe('capture frame stages', () => {
 			await settleFrame(options, undefined, false, 2460, 1660, 1, new Map([[main, 784]]))
 			expect(window.innerHeight).toBe(2060)
 			expect(main.clientHeight).toBe(2000)
+		} finally {
+			await releasePane()
+		}
+	})
+	it('reads whether the subject box moved between the two painted frames of a staging', async () => {
+		const container = buildFixture(
+			'<div style="position: relative; height: 80px"><div style="position: absolute; left: 0; width: 40px; height: 40px; background: black"></div></div><p>Still</p>',
+		)
+		const mover = requireValue(container.querySelector('div')?.querySelector('div'))
+		const still = requireValue(container.querySelector('p'))
+		try {
+			expect(await stagePane(390, 400, still)).toBe(false)
+			expect(await stagePane(390, 400)).toBe(false)
+			const start = performance.now()
+			requestAnimationFrame(function step(now: number): void {
+				const progress = Math.min(1, Math.max(0, (now - start) / 600))
+				mover.style.left = `${String(Math.round(progress * 200))}px`
+				if (progress < 1) requestAnimationFrame(step)
+			})
+			expect(await stagePane(390, 400, mover)).toBe(true)
+		} finally {
+			await releasePane()
+		}
+	})
+	it('returns the last staging motion reading, and none where it stages nothing', async () => {
+		const card = requireValue(
+			buildFixture('<p style="height: 80px">Settled</p>').querySelector('p'),
+		)
+		const options = { path: `${FRAMES}-settle.png`, width: 390, height: 400 }
+		try {
+			await stagePane(390, 400)
+			expect(await settleFrame(options, card, true)).toStrictEqual({ fixed: [], moved: false })
+			expect(await settleFrame(options, card, false)).toStrictEqual({
+				fixed: [],
+				moved: undefined,
+			})
 		} finally {
 			await releasePane()
 		}
@@ -2448,6 +2495,474 @@ describe('captureViewport', () => {
 		})
 		const shot = await paintImage(await commands.readFile(written, 'base64'))
 		expect([...requireValue(shot).getImageData(5, 0, 1, 1).data]).toStrictEqual([0, 128, 0, 255])
+	})
+})
+
+describe('readClipHandler', () => {
+	it('reads the registered shootClip command, which refuses a clip the window would trim', async () => {
+		const handler = requireValue(readClipHandler())
+		expect(handler).toBe(readProperty<unknown>(commands, 'shootClip'))
+		const view = requireValue(window.top)
+		const size = `${String(view.innerWidth)}x${String(view.innerHeight)}`
+		const taller = view.innerHeight + 1
+		expect(
+			await handler(`${FRAMES}/clip-refused.png`, {
+				x: 0,
+				y: 0,
+				width: view.innerWidth,
+				height: taller,
+			}),
+		).toStrictEqual({
+			success: false,
+			error: `Clip ${String(view.innerWidth)}x${String(taller)} at (0, 0) leaves the ${size} window, which trims it: set contextOptions.viewport to at least ${String(view.innerWidth)}x${String(taller)}`,
+		})
+		expect(
+			await handler(`${FRAMES}/clip-refused.png`, { x: -1, y: 0, width: 10, height: 10 }),
+		).toStrictEqual({
+			success: false,
+			error: `Clip 10x10 at (-1, 0) starts before the origin of the ${size} window, which trims it`,
+		})
+	})
+})
+
+describe('readFrameClip', () => {
+	it('rounds a staged subject box out to whole pixels in the runner window', async () => {
+		buildStylesheet('body { margin: 0 }')
+		const container = buildFixture(
+			'<div data-fraction style="position: absolute; left: 10.5px; top: 20.25px; width: 100.5px; height: 50.5px"></div>' +
+				'<div data-whole style="position: absolute; left: 30px; top: 100px; width: 120px; height: 40px"></div>' +
+				'<div data-empty style="position: absolute; left: 30.5px; top: 200px; width: 0; height: 40px"></div>',
+		)
+		const nested = container.appendChild(build('iframe'))
+		const inner = requireValue(nested.contentDocument).body.appendChild(
+			requireValue(nested.contentDocument).createElement('div'),
+		)
+		inner.setAttribute('style', 'width: 40px; height: 40px')
+		try {
+			await stagePane(390, 400)
+			expect(readFrameClip(requireValue(container.querySelector('[data-fraction]')))).toStrictEqual(
+				{
+					x: 10,
+					y: 20,
+					width: 101,
+					height: 51,
+				},
+			)
+			expect(readFrameClip(requireValue(container.querySelector('[data-whole]')))).toStrictEqual({
+				x: 30,
+				y: 100,
+				width: 120,
+				height: 40,
+			})
+			expect(readFrameClip(requireValue(container.querySelector('[data-empty]')))).toBeUndefined()
+			// The nested element has a box, in its own document's coordinates.
+			expect(inner.getBoundingClientRect().width).toBe(40)
+			expect(readFrameClip(inner)).toBeUndefined()
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('reads no clip from a tester the runner fits into its window with a scale', async () => {
+		const view = requireValue(window.top)
+		const card = requireValue(buildFixture('<p style="height: 40px">Scaled</p>').querySelector('p'))
+		await page.viewport(390, view.innerHeight + 400)
+		expect(requireValue(window.frameElement).getBoundingClientRect().height).toBeLessThan(
+			window.innerHeight,
+		)
+		expect(readFrameClip(card)).toBeUndefined()
+	})
+})
+
+describe('takeClipShot', () => {
+	it('falls back where the clip leaves the runner window, and throws the command refusal', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const view = requireValue(window.top)
+		const height = view.innerHeight + 124
+		buildStylesheet('body { margin: 0 }')
+		const container = buildFixture(
+			`<div style="height: ${String(height)}px; background: rgb(240, 200, 120)"><p style="margin: 0; height: 80px">Order summary</p></div>`,
+		)
+		const summary = requireValue(container.querySelector('p'))
+		try {
+			await stagePane(390, height)
+			expect(
+				await takeClipShot(
+					async (path, clip) => {
+						clips.handler(path, clip)
+						return await handler(path, clip)
+					},
+					`${FRAMES}/clip-tall.png`,
+					document.body,
+				),
+			).toBeUndefined()
+			expect(clips.count).toBe(0)
+			const path = `${FRAMES}/clip-moved.png`
+			await expect(
+				takeClipShot(
+					async (target, clip) => await handler(target, { ...clip, y: clip.y + view.innerHeight }),
+					path,
+					summary,
+				),
+			).rejects.toThrow(
+				`Capture frame at ${path} was refused by the shootClip command: Clip 390x80 at (0, ${String(view.innerHeight)}) leaves the ${String(view.innerWidth)}x${String(view.innerHeight)} window, which trims it: set contextOptions.viewport to at least 390x${String(view.innerHeight + 80)}`,
+			)
+		} finally {
+			await releasePane()
+		}
+	})
+})
+
+describe('clip route', () => {
+	it.each([1, 2])(
+		'writes the element path bytes for an element, a page, a focused field, and a viewport at device scale %i',
+		async (scale) => {
+			const handler = requireValue(readClipHandler())
+			const clips = createRecorder<[path: string, clip: FrameClip]>()
+			const view = requireValue(window.top)
+			const metrics = {
+				width: view.innerWidth,
+				height: view.innerHeight,
+				screenWidth: view.screen.width,
+				screenHeight: view.screen.height,
+				mobile: false,
+				// The protocol spells `landscape-primary` as `landscapePrimary`.
+				screenOrientation: {
+					angle: view.screen.orientation.angle,
+					type: view.screen.orientation.type.replace(/-./u, (dash) => dash.slice(1).toUpperCase()),
+				},
+			}
+			const original = view.devicePixelRatio
+			const prefix = `${FRAMES}/clip-${String(scale)}x`
+			buildStylesheet('body { margin: 0; font: 15px/1.4 sans-serif }')
+			const container = buildFixture(
+				'<main style="box-sizing: border-box; height: 400px; padding: 12.5px; background: linear-gradient(90deg, rgb(250, 240, 230), rgb(200, 220, 240))">' +
+					'<article style="margin: 11.25px; padding: 16px; border: 1px solid rgb(30, 60, 90); border-radius: 6px; background: rgb(255, 255, 255)">Quarterly orders shipped on schedule</article>' +
+					'<label style="display: block; margin: 20px">Customer name <input value="Ada Lovelace" style="font: inherit; padding: 6px"></label></main>',
+			)
+			const card = requireValue(container.querySelector('article'))
+			const field = requireValue(container.querySelector('input'))
+			const label = requireValue(container.querySelector('label'))
+			const cover = build('div', {
+				attributes: {
+					'aria-hidden': 'true',
+					style:
+						'position: fixed !important; inset: 0 !important; opacity: 0 !important; pointer-events: none !important',
+				},
+			})
+			if (scale !== original) {
+				await sendProtocol('Emulation.setDeviceMetricsOverride', {
+					...metrics,
+					deviceScaleFactor: scale,
+				})
+			}
+			try {
+				await waitForCondition('the device scale', () => window.devicePixelRatio === scale)
+				await stagePane(390, 400)
+				const options = { width: 390, height: 400 }
+				for (const subject of [card, undefined, label]) {
+					const name = subject === undefined ? 'page' : subject.localName
+					if (subject === label) {
+						field.focus()
+						field.setSelectionRange(4, 4)
+					}
+					const element = await takeFrameShot(
+						{ ...options, path: `${prefix}-${name}.png` },
+						subject,
+					)
+					const path = `${prefix}-${name}-clip.png`
+					const clipped = await takeFrameShot(
+						{ ...options, path },
+						subject,
+						async (target, clip) => {
+							clips.handler(target, clip)
+							return await handler(target, clip)
+						},
+					)
+					expect(clips.calls.at(-1)?.[0]).toBe(path)
+					expect(clipped.base64).toBe(element.base64)
+					await verifyFrame(clipped, path, readCaptureReader())
+				}
+				expect(clips.count).toBe(3)
+				expect(document.activeElement).toBe(field)
+				// Control: the card's clip one pixel across, and one pixel down, writes other bytes.
+				const [, clip] = requireValue(clips.calls[0])
+				const again = await takeFrameShot({ ...options, path: `${prefix}-article-again.png` }, card)
+				for (const shifted of [
+					{ ...clip, x: clip.x + 1 },
+					{ ...clip, y: clip.y + 1 },
+				]) {
+					const result = await handler(`${prefix}-shifted.png`, shifted)
+					expect(result.success && result.value.base64 !== again.base64).toBe(true)
+				}
+				field.blur()
+				await releasePane()
+				// The viewport form: rows 60 to 359 of the page, as a cover over the viewport shoots them.
+				await page.viewport(390, 300)
+				window.scrollTo({ top: 60, behavior: 'instant' })
+				const viewport = await captureViewport({
+					path: `${prefix}-viewport.png`,
+					width: 390,
+					height: 300,
+				})
+				await stagePane(390, 300)
+				document.documentElement.append(cover)
+				const element = await takeFrameShot(
+					{ path: `${prefix}-viewport-element.png`, width: 390, height: 300 },
+					cover,
+				)
+				const clipped = await takeClipShot(
+					async (target, frame) => {
+						clips.handler(target, frame)
+						return await handler(target, frame)
+					},
+					`${prefix}-viewport-clip.png`,
+					cover,
+				)
+				expect(clips.count).toBe(4)
+				expect(clipped?.base64).toBe(element.base64)
+				expect(await commands.readFile(viewport, 'base64')).toBe(element.base64)
+			} finally {
+				cover.remove()
+				await releasePane()
+				if (scale !== original) {
+					await sendProtocol('Emulation.setDeviceMetricsOverride', {
+						...metrics,
+						deviceScaleFactor: original,
+					})
+					await waitForCondition('the device scale', () => window.devicePixelRatio === original)
+				}
+			}
+		},
+	)
+
+	it('waits for a tester web font that arrives late before the clip, as the element path does', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const paused = createRecorder<[event: unknown]>()
+		const session: unknown = cdp()
+		const options = { width: 390, height: 200 }
+		buildStylesheet(
+			[
+				'body { margin: 0 }',
+				...['element', 'clip'].map(
+					(arm) =>
+						`@font-face { font-family: "late-face-${arm}"; src: url("/late-face-${arm}.woff2") format("woff2"); font-display: block }`,
+				),
+			].join(' '),
+		)
+		invokeUnchecked(session, readProperty(session, 'on'), ['Fetch.requestPaused', paused.handler])
+		await sendProtocol('Fetch.enable', {
+			patterns: [{ urlPattern: '*late-face-*', requestStage: 'Request' }],
+		})
+		try {
+			// Each line's font answers 300 ms after its request is held, with a failure that ends the
+			// font's block period, so the line paints in its fallback face only after that answer.
+			const first = buildFixture(
+				`<p style="margin: 16px; font: 28px 'late-face-element', serif">Late</p>`,
+			)
+			await stagePane(390, 200)
+			await waitForCondition('the element font request held', () => paused.count === 1)
+			expect(document.fonts.status).toBe('loading')
+			const element = takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-font-element.png` },
+				requireValue(first.querySelector('p')),
+			)
+			await waitForDelay(300)
+			const [held] = requireValue(paused.calls[0])
+			await sendProtocol('Fetch.failRequest', {
+				requestId: isRecord(held) && isString(held.requestId) ? held.requestId : '',
+				errorReason: 'Failed',
+			})
+			const reference = await element
+			expect(document.fonts.status).toBe('loaded')
+			first.remove()
+			const line = requireValue(
+				buildFixture(
+					`<p style="margin: 16px; font: 28px 'late-face-clip', serif">Late</p>`,
+				).querySelector('p'),
+			)
+			await stagePane(390, 200)
+			await waitForCondition('the clip font request held', () => paused.count === 2)
+			expect(document.fonts.status).toBe('loading')
+			const clipped = takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-font-clip.png` },
+				line,
+				async (target, clip) => {
+					clips.handler(target, clip)
+					return await handler(target, clip)
+				},
+			)
+			// Control: the same clip shot while the font is held writes the line unpainted.
+			const unpainted = await handler(
+				`${FRAMES}/clip-font-held.png`,
+				requireValue(readFrameClip(line)),
+			)
+			expect(unpainted.success && unpainted.value.base64 !== reference.base64).toBe(true)
+			await waitForDelay(300)
+			const [second] = requireValue(paused.calls[1])
+			await sendProtocol('Fetch.failRequest', {
+				requestId: isRecord(second) && isString(second.requestId) ? second.requestId : '',
+				errorReason: 'Failed',
+			})
+			expect((await clipped).base64).toBe(reference.base64)
+			expect(document.fonts.status).toBe('loaded')
+			expect(clips.count).toBe(1)
+		} finally {
+			invokeUnchecked(session, readProperty(session, 'off'), [
+				'Fetch.requestPaused',
+				paused.handler,
+			])
+			await sendProtocol('Fetch.disable')
+			await releasePane()
+		}
+	})
+
+	it('hands a subject that moves across the staging frames to the element path, which writes it at rest', async () => {
+		buildStylesheet('body { margin: 0 }')
+		const track = requireValue(
+			buildFixture(
+				'<div style="position: relative; height: 120px; background: linear-gradient(90deg, rgb(0, 0, 0), rgb(255, 255, 255))">' +
+					'<div style="position: absolute; left: 0; top: 40px; width: 40px; height: 40px; background: rgba(255, 0, 0, 0.5)"></div></div>',
+			).querySelector('div'),
+		)
+		const mover = requireValue(track.querySelector('div'))
+		const start = performance.now()
+		requestAnimationFrame(function step(now: number): void {
+			const progress = Math.min(1, Math.max(0, (now - start) / 900))
+			mover.style.left = `${String(Math.round(progress * 200))}px`
+			if (progress < 1) requestAnimationFrame(step)
+		})
+		const written = await captureFrame({
+			path: `${FRAMES}/clip-mover.png`,
+			width: 390,
+			height: 400,
+			element: mover,
+		})
+		await waitForCondition('the mover at rest', () => mover.style.left === '200px', {
+			budget: 2000,
+		})
+		const rest = await captureFrame({
+			path: `${FRAMES}/clip-rest.png`,
+			width: 390,
+			height: 400,
+			element: mover,
+		})
+		expect(await commands.readFile(written, 'base64')).toBe(await commands.readFile(rest, 'base64'))
+	})
+
+	it('takes the element path for a frame taller than the runner window', async () => {
+		const height = requireValue(window.top).innerHeight + 124
+		buildStylesheet('body { margin: 0 }')
+		buildFixture(`<div style="height: ${String(height)}px; background: rgb(240, 200, 120)"></div>`)
+		const written = await captureFrame({ path: `${FRAMES}/clip-taller.png`, width: 390, height })
+		expect(await readFrame(written)).toStrictEqual({
+			width: 390,
+			height,
+			floor: 'rgb(240, 200, 120)',
+		})
+	})
+
+	it('takes the element path where no clip command is handed over', async () => {
+		const card = requireValue(
+			buildFixture(
+				'<article style="margin: 20px; padding: 16px; border: 1px solid rgb(30, 60, 90)">Invoice 2041 paid</article>',
+			).querySelector('article'),
+		)
+		try {
+			await stagePane(390, 200)
+			const path = `${FRAMES}/clip-unregistered.png`
+			const shot = await takeFrameShot({ path, width: 390, height: 200 }, card)
+			await verifyFrame(shot, path, readCaptureReader())
+			expect(await readFrame(shot.path)).toMatchObject({
+				width: Math.ceil(card.getBoundingClientRect().width),
+			})
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it.each([
+		{ hidden: 'visibility: hidden', shown: 'visibility: visible' },
+		{ hidden: 'display: none', shown: 'display: block' },
+		{ hidden: 'width: 0', shown: 'width: 160px' },
+	])(
+		'hands a subject hidden by $hidden to the element path, which waits for it to show',
+		async ({ hidden, shown }) => {
+			const handler = requireValue(readClipHandler())
+			const clips = createRecorder<[path: string, clip: FrameClip]>()
+			const base =
+				'margin: 20px; width: 160px; height: 60px; background: rgb(20, 120, 200); color: rgb(255, 255, 255)'
+			const subject = requireValue(
+				buildFixture(`<div style="${base}; ${hidden}">Ready</div>`).querySelector('div'),
+			)
+			try {
+				await stagePane(390, 200)
+				// The subject shows 500 ms after the shot starts, well after a clip route would shoot it.
+				const timer = setTimeout(() => {
+					subject.setAttribute('style', `${base}; ${shown}`)
+				}, 500)
+				try {
+					const options = { width: 390, height: 200 }
+					const shot = await takeFrameShot(
+						{ ...options, path: `${FRAMES}/clip-hidden.png` },
+						subject,
+						async (target, clip) => {
+							clips.handler(target, clip)
+							return await handler(target, clip)
+						},
+					)
+					const routed = clips.count
+					await waitForCondition(
+						'the subject shown',
+						() => subject.getAttribute('style') === `${base}; ${shown}`,
+						{ budget: 2000 },
+					)
+					const visible = await takeFrameShot(
+						{ ...options, path: `${FRAMES}/clip-shown.png` },
+						subject,
+						async (target, clip) => {
+							clips.handler(target, clip)
+							return await handler(target, clip)
+						},
+					)
+					expect(shot.base64).toBe(visible.base64)
+					expect([routed, clips.count]).toStrictEqual([0, 1])
+				} finally {
+					clearTimeout(timer)
+				}
+			} finally {
+				await releasePane()
+			}
+		},
+	)
+
+	it('hands a transparent subject to the element path, which writes it as Playwright counts it visible', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		buildStylesheet('body { margin: 0; background: rgb(255, 255, 255) }')
+		const subject = requireValue(
+			buildFixture(
+				'<div style="margin: 20px; width: 160px; height: 60px; background: rgb(20, 120, 200); opacity: 0">Ready</div>',
+			).querySelector('div'),
+		)
+		try {
+			await stagePane(390, 200)
+			const shot = await takeFrameShot(
+				{ path: `${FRAMES}/clip-transparent.png`, width: 390, height: 200 },
+				subject,
+				async (target, clip) => {
+					clips.handler(target, clip)
+					return await handler(target, clip)
+				},
+			)
+			expect(clips.count).toBe(0)
+			const painted = requireValue(await paintImage(shot.base64))
+			expect([...painted.getImageData(80, 30, 1, 1).data]).toStrictEqual([255, 255, 255, 255])
+		} finally {
+			await releasePane()
+		}
 	})
 })
 
