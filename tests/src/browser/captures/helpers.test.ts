@@ -21,6 +21,7 @@ import {
 	measureContent,
 	measureRegion,
 	MEDIA_STAGE,
+	overflowsClip,
 	paintImage,
 	readClipBound,
 	readClipEdge,
@@ -34,6 +35,7 @@ import {
 	readFrameHeight,
 	readPixels,
 	readShotPixel,
+	readSnapport,
 	readStyle,
 	recordScroll,
 	releaseMedia,
@@ -47,6 +49,7 @@ import {
 	stagePane,
 	takeClipShot,
 	takeFrameShot,
+	transformsSpace,
 	verifyFrame,
 	waitForFrame,
 	waitForStability,
@@ -184,6 +187,72 @@ describe('clipsOverflow', () => {
 			const frame = requireValue(buildFixture(`<div style="${style}"></div>`).firstElementChild)
 			expect({ style, clips: clipsOverflow(frame) }).toStrictEqual({ style, clips })
 		}
+	})
+})
+
+describe('overflowsClip', () => {
+	it('reads a box clear of every edge as inside, and a box within 1 px of an edge as reaching past', () => {
+		buildStylesheet('body { margin: 0 }')
+		const container = buildFixture(
+			'<div style="position: relative; height: 100px; overflow: hidden"><p data-clear style="margin: 10px; height: 20px"></p>' +
+				'<p data-near style="position: absolute; margin: 0; left: 10px; right: 10px; top: 79.5px; height: 20px"></p></div>' +
+				'<p data-bare style="height: 20px"></p>',
+		)
+		expect(
+			['[data-clear]', '[data-near]', '[data-bare]'].map((selector) =>
+				overflowsClip(requireValue(container.querySelector(selector))),
+			),
+		).toStrictEqual([false, true, false])
+	})
+
+	it('leaves the root element out, so a root that clips its overflow cuts nothing', () => {
+		buildStylesheet('html { overflow: hidden } body { margin: 0 }')
+		const card = requireValue(
+			buildFixture(
+				'<div style="height: 900px"><p style="margin-top: 600px">Late</p></div>',
+			).querySelector('p'),
+		)
+		expect(clipsOverflow(document.documentElement)).toBe(true)
+		expect(overflowsClip(card)).toBe(false)
+	})
+})
+
+describe('transformsSpace', () => {
+	it('reports a transform, an individual transform property, or a zoom on the element or above it, and nothing else', () => {
+		const container = buildFixture(
+			'<div><p></p></div>' +
+				'<div style="transform: scale(0.5)"><p></p></div>' +
+				'<div style="rotate: 10deg"><p></p></div>' +
+				'<div style="scale: 2"><p></p></div>' +
+				'<div style="translate: 4px"><p></p></div>' +
+				'<div style="zoom: 2"><p></p></div>' +
+				'<p style="transform: translateX(4px)"></p>',
+		)
+		expect([...container.querySelectorAll('p')].map((p) => transformsSpace(p))).toStrictEqual([
+			false,
+			true,
+			true,
+			true,
+			true,
+			true,
+			true,
+		])
+	})
+})
+
+describe('readSnapport', () => {
+	it('reads the client area less the scroll padding, a percentage against that area, and nothing for a mixed value', () => {
+		buildStylesheet('body { margin: 0 } div { width: 200px; height: 100px; overflow: hidden }')
+		const container = buildFixture(
+			'<div data-length style="box-sizing: border-box; border: 2px solid; scroll-padding: 10px 20px 30px 40px"></div>' +
+				'<div data-percent style="scroll-padding-top: 10%; scroll-padding-left: 10%"></div>' +
+				'<div data-mixed style="scroll-padding-top: calc(10% + 4px)"></div>',
+		)
+		const read = ['[data-length]', '[data-percent]', '[data-mixed]'].map((selector) => {
+			const port = readSnapport(requireValue(container.querySelector(selector)))
+			return port === undefined ? undefined : [port.x, port.y, port.width, port.height]
+		})
+		expect(read).toStrictEqual([[42, 12, 136, 56], [20, 110, 180, 90], undefined])
 	})
 })
 
@@ -2853,100 +2922,115 @@ describe('clip route', () => {
 		expect(await commands.readFile(written, 'base64')).toBe(await commands.readFile(rest, 'base64'))
 	})
 
-	it('hands a subject that starts moving while the tester fonts load to the element path, which writes it at rest', async () => {
-		const paused = createRecorder<[event: unknown]>()
-		const session: unknown = cdp()
-		buildStylesheet(
-			'body { margin: 0 } @font-face { font-family: "late-face-gap"; src: url("/late-face-gap.woff2") format("woff2"); font-display: block }',
-		)
-		invokeUnchecked(session, readProperty(session, 'on'), ['Fetch.requestPaused', paused.handler])
-		await sendProtocol('Fetch.enable', {
-			patterns: [{ urlPattern: '*late-face-*', requestStage: 'Request' }],
-		})
-		try {
-			const track = requireValue(
-				buildFixture(
-					'<div style="position: relative; height: 120px; background: linear-gradient(90deg, rgb(0, 0, 0), rgb(255, 255, 255))">' +
-						'<div style="position: absolute; left: 0; top: 40px; width: 40px; height: 40px; background: rgba(255, 0, 0, 0.5)"></div></div>' +
-						`<p style="margin: 0; font: 20px 'late-face-gap', serif">Late</p>`,
-				).querySelector('div'),
+	it.each([
+		{ property: 'left', to: '200px' },
+		{ property: 'top', to: '70px' },
+		{ property: 'width', to: '120px' },
+		{ property: 'height', to: '80px' },
+	])(
+		'hands a subject whose $property starts to change while the tester fonts load to the element path, which writes it at rest',
+		async ({ property, to }) => {
+			const paused = createRecorder<[event: unknown]>()
+			const session: unknown = cdp()
+			buildStylesheet(
+				`body { margin: 0 } @font-face { font-family: "late-face-gap-${property}"; src: url("/late-face-gap-${property}.woff2") format("woff2"); font-display: block }`,
 			)
-			const mover = requireValue(track.querySelector('div'))
-			await page.viewport(390, 400)
-			await waitForCondition(
-				'the tester at the frame size',
-				() => window.innerWidth === 390 && window.innerHeight === 400,
-			)
-			await waitForCondition('the gap font request held', () => paused.count === 1)
-			expect(document.fonts.status).toBe('loading')
-			const written = captureFrame({
-				path: `${FRAMES}/clip-gap.png`,
-				width: 390,
-				height: 400,
-				element: mover,
+			invokeUnchecked(session, readProperty(session, 'on'), ['Fetch.requestPaused', paused.handler])
+			await sendProtocol('Fetch.enable', {
+				patterns: [{ urlPattern: '*late-face-*', requestStage: 'Request' }],
 			})
-			// A tester already at the frame size stages without a resize, so the staging's two frames
-			// come before these two, and the capture then waits on the held font.
-			await waitForFrame()
-			await waitForFrame()
-			mover.style.transition = 'left 1500ms linear'
-			mover.style.left = '200px'
-			await waitForCondition('the mover under way', () => mover.getBoundingClientRect().x > 0)
-			const [held] = requireValue(paused.calls[0])
-			await sendProtocol('Fetch.failRequest', {
-				requestId: isRecord(held) && isString(held.requestId) ? held.requestId : '',
-				errorReason: 'Failed',
-			})
-			const shot = await written
-			await waitForCondition('the mover at rest', () => mover.getBoundingClientRect().x === 200, {
-				budget: 3000,
-			})
-			const rest = await captureFrame({
-				path: `${FRAMES}/clip-gap-rest.png`,
-				width: 390,
-				height: 400,
-				element: mover,
-			})
-			expect(await commands.readFile(shot, 'base64')).toBe(await commands.readFile(rest, 'base64'))
-		} finally {
-			invokeUnchecked(session, readProperty(session, 'off'), [
-				'Fetch.requestPaused',
-				paused.handler,
-			])
-			await sendProtocol('Fetch.disable')
-		}
-	})
+			try {
+				const track = requireValue(
+					buildFixture(
+						'<div style="position: relative; height: 120px; background: linear-gradient(90deg, rgb(0, 0, 0), rgb(255, 255, 255))">' +
+							'<div style="position: absolute; left: 0; top: 40px; width: 40px; height: 40px; background: rgba(255, 0, 0, 0.5)"></div></div>' +
+							`<p style="margin: 0; font: 20px 'late-face-gap-${property}', serif">Late</p>`,
+					).querySelector('div'),
+				)
+				const mover = requireValue(track.querySelector('div'))
+				const start = readStyle(mover, property)
+				await page.viewport(390, 400)
+				await waitForCondition(
+					'the tester at the frame size',
+					() => window.innerWidth === 390 && window.innerHeight === 400,
+				)
+				await waitForCondition('the gap font request held', () => paused.count === 1)
+				expect(document.fonts.status).toBe('loading')
+				const written = captureFrame({
+					path: `${FRAMES}/clip-gap-${property}.png`,
+					width: 390,
+					height: 400,
+					element: mover,
+				})
+				// A tester already at the frame size stages without a resize, so the staging's two frames
+				// come before these two, and the capture then waits on the held font.
+				await waitForFrame()
+				await waitForFrame()
+				mover.style.setProperty('transition', `${property} 1500ms linear`)
+				mover.style.setProperty(property, to)
+				await waitForCondition('the mover under way', () => readStyle(mover, property) !== start)
+				const [held] = requireValue(paused.calls[0])
+				await sendProtocol('Fetch.failRequest', {
+					requestId: isRecord(held) && isString(held.requestId) ? held.requestId : '',
+					errorReason: 'Failed',
+				})
+				const shot = await written
+				await waitForCondition('the mover at rest', () => readStyle(mover, property) === to, {
+					budget: 3000,
+				})
+				const rest = await captureFrame({
+					path: `${FRAMES}/clip-gap-${property}-rest.png`,
+					width: 390,
+					height: 400,
+					element: mover,
+				})
+				expect(await commands.readFile(shot, 'base64')).toBe(
+					await commands.readFile(rest, 'base64'),
+				)
+			} finally {
+				invokeUnchecked(session, readProperty(session, 'off'), [
+					'Fetch.requestPaused',
+					paused.handler,
+				])
+				await sendProtocol('Fetch.disable')
+			}
+		},
+	)
 
 	it('hands a row a scrolling ancestor cuts, wholly or in part, to the element path, which scrolls it into view', async () => {
 		const handler = requireValue(readClipHandler())
 		const clips = createRecorder<[path: string, clip: FrameClip]>()
-		const options = { width: 390, height: 400 }
+		const options = { width: 390, height: 600 }
 		buildStylesheet(
-			'body { margin: 0 } li { height: 60px } [data-card] { flex: none; width: 120px; height: 40px }',
+			'body { margin: 0 } li { height: 60px; margin: 0 20px } [data-card] { flex: none; width: 120px; height: 40px; margin: 10px 0 }',
 		)
 		const container = buildFixture(
-			'<ul style="margin: 0; padding: 0; list-style: none; height: 120px; overflow: auto">' +
+			'<div style="height: 100px"></div>' +
+				'<ul style="margin: 0; padding: 0; list-style: none; height: 150px; overflow: auto">' +
 				'<li style="background: rgb(200, 40, 40)"></li><li style="background: rgb(40, 160, 60)"></li>' +
 				'<li style="background: rgb(40, 80, 200)"></li><li style="background: rgb(220, 180, 30)"></li>' +
 				'<li style="background: rgb(140, 50, 160)"></li></ul>' +
-				'<div style="display: flex; width: 200px; overflow-x: auto">' +
+				'<div data-strip style="display: flex; width: 200px; margin-left: 100px; overflow-x: auto">' +
 				'<div data-card style="background: rgb(30, 30, 30)"></div><div data-card style="background: rgb(90, 90, 90)"></div>' +
 				'<div data-card style="background: rgb(160, 160, 160)"></div></div>',
 		)
 		const list = requireValue(container.querySelector('ul'))
-		const strip = requireValue(container.querySelector('div'))
+		const strip = requireValue(container.querySelector('[data-strip]'))
 		const rows = [...list.querySelectorAll('li')]
 		const cards = [...strip.querySelectorAll('[data-card]')]
-		// The fifth row lies wholly below the list, the first and third rows each lose 30 px of a
-		// list scrolled 30 px down, and the third card lies wholly past the strip's right edge.
+		// The list starts 100 px down and the strip 100 px in, so no case reaches past the window and
+		// each one is cut on one side alone: the fifth row wholly below the list, the third row partly
+		// below it, the first row partly above a list scrolled 30 px down, the first card partly left
+		// of a strip scrolled 60 px right, and the third card wholly past the strip's right edge.
 		const cases = [
 			{ subject: rows[4], scroller: list, top: 0, left: 0 },
+			{ subject: rows[2], scroller: list, top: 0, left: 0 },
 			{ subject: rows[0], scroller: list, top: 30, left: 0 },
-			{ subject: rows[2], scroller: list, top: 30, left: 0 },
+			{ subject: cards[0], scroller: strip, top: 0, left: 60 },
 			{ subject: cards[2], scroller: strip, top: 0, left: 0 },
 		]
 		try {
-			await stagePane(390, 400)
+			await stagePane(390, 600)
 			for (const [index, { subject, scroller, top, left }] of cases.entries()) {
 				scroller.scrollTo({ top, left, behavior: 'instant' })
 				const routed = await takeFrameShot(
@@ -2965,22 +3049,28 @@ describe('clip route', () => {
 				expect(routed.base64).toBe(element.base64)
 			}
 			expect(clips.count).toBe(0)
-			// Control: the second row, wholly inside the list at scroll 0, takes the clip route.
-			list.scrollTo({ top: 0, behavior: 'instant' })
-			const shown = requireValue(rows[1])
-			const routed = await takeFrameShot(
-				{ ...options, path: `${FRAMES}/clip-uncut.png` },
-				shown,
-				async (target, clip) => {
-					clips.handler(target, clip)
-					return await handler(target, clip)
-				},
-			)
-			const element = await takeFrameShot(
-				{ ...options, path: `${FRAMES}/clip-uncut-element.png` },
-				shown,
-			)
-			expect([clips.count, routed.base64]).toStrictEqual([1, element.base64])
+			// Control: the second row at scroll 0 and the second card at a strip scrolled 60 px right
+			// each lie clear of every edge, and each takes the clip route.
+			const controls = [
+				{ subject: rows[1], scroller: list, left: 0 },
+				{ subject: cards[1], scroller: strip, left: 60 },
+			]
+			for (const [index, { subject, scroller, left }] of controls.entries()) {
+				scroller.scrollTo({ top: 0, left, behavior: 'instant' })
+				const routed = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-uncut-${String(index)}.png` },
+					requireValue(subject),
+					async (target, clip) => {
+						clips.handler(target, clip)
+						return await handler(target, clip)
+					},
+				)
+				const element = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-uncut-${String(index)}-element.png` },
+					requireValue(subject),
+				)
+				expect([clips.count, routed.base64]).toStrictEqual([index + 1, element.base64])
+			}
 			list.scrollTo({ top: 0, behavior: 'instant' })
 			const reference = await takeFrameShot(
 				{ ...options, path: `${FRAMES}/clip-row-element.png` },
@@ -2996,6 +3086,147 @@ describe('clip route', () => {
 			expect(await commands.readFile(written, 'base64')).toBe(reference.base64)
 			expect(list.scrollTop).toBe(0)
 		} finally {
+			await releasePane()
+		}
+	})
+
+	it('hands a row of a scaled, rotated, or zoomed scroller to the element path, and keeps the route through a transform inside the scroller', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const options = { width: 390, height: 600 }
+		const list = 'margin: 0; padding: 0; list-style: none; overflow: auto; height: 120px'
+		const rows =
+			'<li style="background: rgb(200, 40, 40)"></li><li style="background: rgb(40, 160, 60)"></li>' +
+			'<li style="background: rgb(40, 80, 200)"></li><li style="background: rgb(220, 180, 30)"></li>' +
+			'<li style="background: rgb(140, 50, 160)"></li>'
+		buildStylesheet('body { margin: 0 } li { height: 60px; margin: 0 20px }')
+		// The scaled and zoomed lists show half their rows' height, so the third row lies wholly
+		// below each list on screen while its box reads inside the list's unscaled client area. The
+		// rotated list turns about its centre, and its second row lies clear of every edge.
+		const container = buildFixture(
+			`<div data-scaled style="transform: scale(0.5); transform-origin: 0 0; height: 60px"><ul style="${list}">${rows}</ul></div>` +
+				`<div data-zoomed style="zoom: 0.5"><ul style="${list}">${rows}</ul></div>` +
+				`<div data-rotated style="rotate: 180deg"><ul style="${list}; height: 150px; overflow: hidden">${rows}</ul></div>` +
+				`<ul data-inner style="${list}; height: 150px"><div style="transform: translateY(10px)">${rows}</div></ul>`,
+		)
+		const cases = [
+			{ subject: container.querySelector('[data-scaled] li:nth-child(3)'), route: 0 },
+			{ subject: container.querySelector('[data-zoomed] li:nth-child(3)'), route: 0 },
+			{ subject: container.querySelector('[data-rotated] li:nth-child(2)'), route: 0 },
+			{ subject: container.querySelector('[data-inner] li:nth-child(2)'), route: 1 },
+		]
+		try {
+			await stagePane(390, 600)
+			for (const [index, { subject, route }] of cases.entries()) {
+				const before = clips.count
+				const routed = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-space-${String(index)}.png` },
+					requireValue(subject),
+					async (target, clip) => {
+						clips.handler(target, clip)
+						return await handler(target, clip)
+					},
+				)
+				for (const scroller of container.querySelectorAll('ul')) {
+					scroller.scrollTo({ top: 0, behavior: 'instant' })
+				}
+				const element = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-space-${String(index)}-element.png` },
+					requireValue(subject),
+				)
+				expect([clips.count - before, routed.base64]).toStrictEqual([route, element.base64])
+				for (const scroller of container.querySelectorAll('ul')) {
+					scroller.scrollTo({ top: 0, behavior: 'instant' })
+				}
+			}
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('hands a row under a sticky header the scroll padding reserves, and a row flush with a fractional edge, to the element path', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const options = { width: 390, height: 400 }
+		buildStylesheet('body { margin: 0 } ul { margin: 0; padding: 0; list-style: none }')
+		const container = buildFixture(
+			'<ul data-sticky style="height: 180px; overflow: auto; scroll-padding-top: 40px">' +
+				'<li style="position: sticky; top: 0; height: 40px; background: rgb(20, 20, 20)"></li>' +
+				'<li data-row style="height: 60px; margin: 0 20px; background: rgb(200, 40, 40)"></li>' +
+				'<li style="height: 60px; margin: 0 20px; background: rgb(40, 160, 60)"></li>' +
+				'<li style="height: 60px; margin: 0 20px; background: rgb(40, 80, 200)"></li>' +
+				'<li style="height: 60px; margin: 0 20px; background: rgb(220, 180, 30)"></li></ul>' +
+				'<ul data-fraction style="height: 120.9px; overflow: hidden">' +
+				'<li style="height: 60.45px; margin: 0 20px; background: rgb(140, 50, 160)"></li>' +
+				'<li data-row style="height: 60.45px; margin: 0 20px; background: rgb(30, 120, 120)"></li></ul>',
+		)
+		const sticky = requireValue(container.querySelector('[data-sticky]'))
+		const fraction = requireValue(container.querySelector('[data-fraction]'))
+		// The sticky list scrolled 20 px down slides its first row 20 px under the header, inside
+		// the list's client area but inside the 40 px the scroll padding reserves. The fractional
+		// list ends at its second row's bottom edge, which its rounded client height reads past.
+		const cases = [
+			{ subject: sticky.querySelector('[data-row]'), scroller: sticky, top: 20 },
+			{ subject: fraction.querySelector('[data-row]'), scroller: fraction, top: 0 },
+		]
+		try {
+			await stagePane(390, 400)
+			expect(fraction.clientHeight).toBeGreaterThan(
+				requireValue(cases[1]?.subject).getBoundingClientRect().bottom -
+					fraction.getBoundingClientRect().top,
+			)
+			for (const [index, { subject, scroller, top }] of cases.entries()) {
+				scroller.scrollTo({ top, behavior: 'instant' })
+				const routed = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-edge-${String(index)}.png` },
+					requireValue(subject),
+					async (target, clip) => {
+						clips.handler(target, clip)
+						return await handler(target, clip)
+					},
+				)
+				scroller.scrollTo({ top, behavior: 'instant' })
+				const element = await takeFrameShot(
+					{ ...options, path: `${FRAMES}/clip-edge-${String(index)}-element.png` },
+					requireValue(subject),
+				)
+				expect(routed.base64).toBe(element.base64)
+			}
+			expect(clips.count).toBe(0)
+		} finally {
+			await releasePane()
+		}
+	})
+
+	it('keeps the clip route for a visible subject of a scrolled page whose root element clips its overflow', async () => {
+		const handler = requireValue(readClipHandler())
+		const clips = createRecorder<[path: string, clip: FrameClip]>()
+		const options = { width: 390, height: 400 }
+		buildStylesheet('html { overflow: hidden } body { margin: 0 }')
+		const card = requireValue(
+			buildFixture(
+				'<div style="height: 900px"><article style="margin: 500px 20px 0; height: 60px; background: rgb(240, 200, 120)">Order 2041</article></div>',
+			).querySelector('article'),
+		)
+		try {
+			await stagePane(390, 400)
+			window.scrollTo({ top: 300, behavior: 'instant' })
+			expect([window.scrollY, card.getBoundingClientRect().top]).toStrictEqual([300, 200])
+			const routed = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-root.png` },
+				card,
+				async (target, clip) => {
+					clips.handler(target, clip)
+					return await handler(target, clip)
+				},
+			)
+			const element = await takeFrameShot(
+				{ ...options, path: `${FRAMES}/clip-root-element.png` },
+				card,
+			)
+			expect([clips.count, routed.base64]).toStrictEqual([1, element.base64])
+		} finally {
+			window.scrollTo({ top: 0, behavior: 'instant' })
 			await releasePane()
 		}
 	})
