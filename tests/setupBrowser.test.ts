@@ -2,17 +2,26 @@ import {
 	measureContent,
 	readAnimations,
 	readStyle,
+	releaseMedia,
+	releasePane,
 	sendProtocol,
+	stageMedia,
+	stagePane,
 	waitForAnimations,
+	waitForFrame,
 } from '@src/browser'
 import { createRecorder, requireValue, waitForCondition, waitForDelay } from '@src/core'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import { page } from 'vitest/browser'
 import {
 	buildFileFixture,
 	buildFixture,
 	buildStylesheet,
 	climbContentEdge,
 	inferPointerRestoration,
+	MOTION_MARKUP,
+	MOTION_SHEET,
+	navigateMotion,
 	POINTER_RESTORATION,
 	readPointerMedia,
 	recordStyleReads,
@@ -20,6 +29,7 @@ import {
 	restartTransition,
 	SETTLE_MARKUP,
 	SETTLE_SHEET,
+	shootSettled,
 	skipUnrestoredPointer,
 	startTransition,
 	supportsPointerRestoration,
@@ -180,6 +190,114 @@ describe('readPointerMedia', () => {
 
 	it('returns the closed set of pointer values, or undefined', () => {
 		expectTypeOf(readPointerMedia).returns.toEqualTypeOf<'fine' | 'coarse' | 'none' | undefined>()
+	})
+})
+
+describe('navigateMotion', () => {
+	it('opens the panel with its slide left running, holds the region at its landing, and replaces the earlier fixture', async () => {
+		await stageMedia({ motion: true })
+		try {
+			const earlier = await navigateMotion(MOTION_MARKUP.panel)
+			const panel = requireValue(earlier.querySelector('.motion-panel'))
+			expect(panel.classList.contains('motion-open')).toBe(true)
+			expect(
+				readAnimations(earlier).finite.map((animation) =>
+					animation instanceof CSSTransition ? animation.transitionProperty : animation.id,
+				),
+			).toStrictEqual(['transform'])
+			const stage = await navigateMotion(MOTION_MARKUP.landing)
+			expect(earlier.isConnected).toBe(false)
+			expect(document.querySelectorAll('.motion-stage')).toHaveLength(1)
+			const region = requireValue(stage.querySelector('.motion-region'))
+			const target = requireValue(stage.querySelector<HTMLElement>('.motion-target'))
+			expect(target.offsetTop).toBeGreaterThan(0)
+			expect(region.scrollTop).toBe(target.offsetTop)
+		} finally {
+			resetFixtures()
+			await releaseMedia()
+		}
+	})
+
+	it('records the motion query at mount and keeps it after the query changes, beside a stage that records nothing', async () => {
+		await stageMedia({ motion: false })
+		try {
+			const stage = await navigateMotion(MOTION_MARKUP.mount)
+			expect(stage.dataset.motion).toBe('reduce')
+			await stageMedia({ motion: true })
+			expect(stage.dataset.motion).toBe('reduce')
+			expect((await navigateMotion(MOTION_MARKUP.mount)).dataset.motion).toBe('full')
+			expect((await navigateMotion(MOTION_MARKUP.rule)).hasAttribute('data-motion')).toBe(false)
+		} finally {
+			resetFixtures()
+			await releaseMedia()
+		}
+	})
+
+	it('lands the region over several frames under default motion and in one step under reduced motion', async () => {
+		buildStylesheet(MOTION_SHEET)
+		const region = requireValue(
+			buildFixture(MOTION_MARKUP.landing).querySelector<HTMLElement>('.motion-region'),
+		)
+		const top = requireValue(region.querySelector<HTMLElement>('.motion-target')).offsetTop
+		try {
+			await stageMedia({ motion: true })
+			region.scrollTop = top
+			await waitForFrame()
+			expect(region.scrollTop).toBeLessThan(top)
+			await waitForCondition('the region lands', () => region.scrollTop === top, { budget: 2000 })
+			await stageMedia({ motion: false })
+			region.scrollTop = 0
+			expect(region.scrollTop).toBe(0)
+			region.scrollTop = top
+			expect(region.scrollTop).toBe(top)
+		} finally {
+			resetFixtures()
+			await releaseMedia()
+		}
+	})
+
+	it('refuses a fixture with no stage, a region with no target, and a target the region cannot reach', async () => {
+		try {
+			await expect(navigateMotion('<div></div>')).rejects.toThrow(
+				'Motion fixture holds no .motion-stage',
+			)
+			await expect(
+				navigateMotion('<div class="motion-stage"><div class="motion-region"></div></div>'),
+			).rejects.toThrow('Motion region holds no .motion-target')
+			// Two rows fit the region, so it cannot scroll to the second row's offset.
+			await expect(
+				navigateMotion(
+					'<div class="motion-stage"><div class="motion-region"><div class="motion-row"></div><div class="motion-row motion-target"></div></div></div>',
+				),
+			).rejects.toThrow(
+				'Condition "the motion region holds its landing" did not hold within 2000ms',
+			)
+		} finally {
+			resetFixtures()
+		}
+	})
+})
+
+describe('shootSettled', () => {
+	it('shoots one frame of a spinner held at its first frame across calls and sets it running again after each, beside the running spinner', async () => {
+		buildStylesheet(SETTLE_SHEET)
+		await stagePane(390, 844)
+		try {
+			const stage = requireValue(buildFixture(SETTLE_MARKUP.held).firstElementChild)
+			const spin = requireValue(stage.querySelector('.settle-spin'))
+			const first = await shootSettled(stage)
+			expect(spin.getAnimations()[0]?.playState).toBe('running')
+			// The resumed spinner turns away from its first frame before the next settle holds it.
+			await waitForDelay(70)
+			const running = await page.screenshot({ element: stage, save: false })
+			const second = await shootSettled(stage)
+			expect(spin.getAnimations()[0]?.playState).toBe('running')
+			expect(first === second).toBe(true)
+			expect(running === first).toBe(false)
+		} finally {
+			resetFixtures()
+			await releasePane()
+		}
 	})
 })
 

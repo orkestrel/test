@@ -4159,6 +4159,9 @@ block, so the held animations run again whether or not the frame was written. Pa
 `pointer: false` where the pointer is part of the state, such as a drag in flight. Gate the settle
 on the flag that `enabled` takes: an ordinary run's `place` shoots nothing, and parking the
 pointer there changes the journey that run is proving.
+Where a run navigates under reduced motion, call `stageMedia` with `{ motion: true }` before each
+settle; the frame then equals a default-motion run's only where the application fixes no state at
+mount from the motion query.
 Where a frame holds a scroll region, record `describeScrollRegions` of what `collectScrollRegions`
 finds beside it, because a picture does not show how far a pane scrolls.
 

@@ -12,8 +12,11 @@ import {
 	readStyle,
 	render,
 	sendProtocol,
+	settleCapture,
+	waitForFrame,
 	waitForStability,
 } from '@src/browser'
+import { page } from 'vitest/browser'
 
 /** Lists native file-input arrangements that a journey must refuse before activation. */
 export const FILE_REFUSALS = Object.freeze([
@@ -292,6 +295,154 @@ export function restartTransition(): void {
 		requireValue(buildFixture(SETTLE_MARKUP.end).querySelector<HTMLElement>('.settle-end')),
 		true,
 	)
+}
+
+/**
+ * Holds the sheet of the motion fixtures: a stage, a panel that slides in over 300 milliseconds, a
+ * scroll region that lands on its target smoothly, a badge, a card whose entrance animation runs
+ * one time, and a hero painted by the state its stage fixed at mount. Under reduced motion the slide,
+ * the smooth landing, and the entrance are removed, and the badge paints grey at rest.
+ */
+export const MOTION_SHEET =
+	'.motion-stage { position: relative; width: 200px; height: 140px; overflow: hidden; background-color: rgb(250, 250, 250) }' +
+	'.motion-panel { position: absolute; top: 0; bottom: 0; left: 0; width: 120px; background-color: rgb(0, 96, 160); transform: translateX(-100%); transition: transform 300ms ease-out }' +
+	'.motion-panel.motion-open { transform: none }' +
+	'.motion-region { position: relative; height: 140px; overflow: auto; scroll-behavior: smooth }' +
+	'.motion-row { height: 60px; border-bottom: 1px solid rgb(200, 200, 200) }' +
+	'.motion-target { background-color: rgb(255, 200, 0) }' +
+	'.motion-badge { width: 80px; height: 30px; background-color: rgb(0, 0, 255) }' +
+	'@keyframes motion-enter { from { opacity: 0; transform: translateY(12px) } }' +
+	'.motion-card { width: 120px; height: 60px; background-color: rgb(0, 128, 0); animation: motion-enter 400ms ease-out }' +
+	'.motion-hero { width: 120px; height: 60px; background-color: rgb(255, 160, 0) }' +
+	".motion-stage[data-motion='reduce'] .motion-hero { background-color: rgb(128, 128, 128) }" +
+	'@media (prefers-reduced-motion: reduce) {' +
+	' .motion-panel { transition: none }' +
+	' .motion-region { scroll-behavior: auto }' +
+	' .motion-card { animation: none }' +
+	' .motion-badge { background-color: rgb(128, 128, 128) }' +
+	' }'
+
+/**
+ * Holds the markup of each motion fixture, a stage around one subject, keyed by what reduced motion
+ * changes: the panel's slide, the region's landing, the badge's paint at rest, the card's entrance,
+ * and the hero's state, which the stage's empty `data-motion` attribute asks to be fixed at mount.
+ */
+export const MOTION_MARKUP = Object.freeze({
+	panel: '<div class="motion-stage"><div class="motion-panel"></div></div>',
+	landing: `<div class="motion-stage"><div class="motion-region">${'<div class="motion-row"></div>'.repeat(8)}<div class="motion-row motion-target"></div>${'<div class="motion-row"></div>'.repeat(3)}</div></div>`,
+	rule: '<div class="motion-stage"><div class="motion-badge"></div></div>',
+	entrance: '<div class="motion-stage"><div class="motion-card"></div></div>',
+	mount: '<div class="motion-stage" data-motion><div class="motion-hero"></div></div>',
+})
+
+/**
+ * Lists the fixtures whose frame a run under reduced motion matches after it restores motion,
+ * each with the subject's resolved property under default motion and under reduced motion.
+ */
+export const MOTION_CASES: ReadonlyArray<{
+	readonly fixture: 'panel' | 'landing' | 'rule' | 'entrance'
+	readonly subject: string
+	readonly property: string
+	readonly full: string
+	readonly reduced: string
+}> = Object.freeze([
+	Object.freeze({
+		fixture: 'panel',
+		subject: '.motion-panel',
+		property: 'transition-duration',
+		full: '0.3s',
+		reduced: '0s',
+	}),
+	Object.freeze({
+		fixture: 'landing',
+		subject: '.motion-region',
+		property: 'scroll-behavior',
+		full: 'smooth',
+		reduced: 'auto',
+	}),
+	Object.freeze({
+		fixture: 'rule',
+		subject: '.motion-badge',
+		property: 'background-color',
+		full: 'rgb(0, 0, 255)',
+		reduced: 'rgb(128, 128, 128)',
+	}),
+	Object.freeze({
+		fixture: 'entrance',
+		subject: '.motion-card',
+		property: 'animation-name',
+		full: 'motion-enter',
+		reduced: 'none',
+	}),
+])
+
+/**
+ * Removes every recorded fixture, then mounts one motion fixture with its sheet and navigates it the
+ * way a journey reaches its state.
+ *
+ * @param markup - One of the `MOTION_MARKUP` fixtures.
+ * @returns The rendered `.motion-stage` element.
+ * @throws Thrown when the markup holds no `.motion-stage`, when a region holds no `.motion-target`,
+ * and when a region does not hold its target's offset within 2000 milliseconds.
+ *
+ * @remarks
+ * A stage carrying `data-motion` records the reduced-motion query at mount, as `reduce` or `full`,
+ * and keeps it. After one frame every panel opens, and every region scrolls to its target and is
+ * waited on until it holds the target's offset, because the settle waits out animations and no
+ * scroll. Every motion the act starts under default motion is left running for the settle.
+ *
+ * @example
+ * ```ts
+ * const stage = await navigateMotion(MOTION_MARKUP.panel)
+ * ```
+ */
+export async function navigateMotion(markup: string): Promise<HTMLElement> {
+	resetFixtures()
+	buildStylesheet(MOTION_SHEET)
+	const stage = requireValue(
+		buildFixture(markup).querySelector<HTMLElement>('.motion-stage'),
+		'Motion fixture holds no .motion-stage',
+	)
+	if (stage.hasAttribute('data-motion')) {
+		stage.dataset.motion = matchMedia('(prefers-reduced-motion: reduce)').matches
+			? 'reduce'
+			: 'full'
+	}
+	await waitForFrame()
+	for (const panel of stage.querySelectorAll('.motion-panel')) panel.classList.add('motion-open')
+	for (const region of stage.querySelectorAll<HTMLElement>('.motion-region')) {
+		const top = requireValue(
+			region.querySelector<HTMLElement>('.motion-target'),
+			'Motion region holds no .motion-target',
+		).offsetTop
+		region.scrollTop = top
+		await waitForCondition('the motion region holds its landing', () => region.scrollTop === top, {
+			budget: 2000,
+		})
+	}
+	return stage
+}
+
+/**
+ * Settles the page and shoots one element, resuming the held animations on every path.
+ *
+ * @param element - The rendered element to shoot.
+ * @returns The provider's screenshot of the element as base64 PNG bytes, unsaved.
+ * @throws Thrown when the settle refuses, as `settleCapture` raises it with a 2000 millisecond
+ * budget, and when the provider cannot shoot the element.
+ *
+ * @example
+ * ```ts
+ * const frame = await shootSettled(await navigateMotion(MOTION_MARKUP.rule))
+ * ```
+ */
+export async function shootSettled(element: Element): Promise<string> {
+	const resume = await settleCapture({ budget: 2000 })
+	try {
+		return await page.screenshot({ element, save: false })
+	} finally {
+		resume()
+	}
 }
 
 /** Lists the window size each capture variant renders at, keyed by its own descriptive name. */
