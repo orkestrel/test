@@ -14,7 +14,6 @@ import {
 	createHostileValues,
 	createRecorder,
 	decodeJSONLines,
-	describeWindowlessClip,
 	dropRegistration,
 	executeScenario,
 	executeScenarios,
@@ -1365,16 +1364,5 @@ describe('renderRetryValue', () => {
 				},
 			}),
 		).toBe('[unrenderable]')
-	})
-})
-
-describe('describeWindowlessClip', () => {
-	it('names the clip and the viewport that fits its far corner', () => {
-		expect(describeWindowlessClip({ x: 0, y: 40, width: 390, height: 80 })).toBe(
-			'Clip 390x80 at (0, 40) has no emulated window, so a page screenshot trims it to the window size Playwright reads from the page: set contextOptions.viewport to at least 390x120',
-		)
-		expect(describeWindowlessClip({ x: 12, y: 0, width: 30, height: 20 })).toBe(
-			'Clip 30x20 at (12, 0) has no emulated window, so a page screenshot trims it to the window size Playwright reads from the page: set contextOptions.viewport to at least 42x20',
-		)
 	})
 })

@@ -1,19 +1,17 @@
-import type { FrameClip, FrameShot } from '@src/core'
 import type { RGBA } from '../types.js'
 import type {
 	CaptureReader,
 	CaptureVariant,
-	ClipHandler,
 	FrameOffset,
 	FrameOptions,
 	FrameResult,
+	FrameShot,
 	MediaOptions,
 	ScopeHandler,
-	SettleResult,
 	StabilityOptions,
 	ViewportOptions,
 } from './types.js'
-import { describeWindowlessClip, readProperty, waitForCondition } from '@src/core'
+import { readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
 import { readStyle, sendProtocol, waitForFrame } from '../helpers.js'
 import {
@@ -301,56 +299,6 @@ export function clipsOverflow(element: Element): boolean {
 	return (
 		readStyle(element, 'overflow-y') !== 'visible' ||
 		/\b(?:paint|content|strict)\b/u.test(readStyle(element, 'contain'))
-	)
-}
-
-/**
- * Reports whether a shot of an element can differ between the clip route and the element path,
- * which scrolls the element into view.
- *
- * @param subject - The element to shoot.
- * @returns True if the subject has a clipping ancestor other than the root element, the root
- * element computes a `scroll-padding` side other than `auto` or `0px`, the root element's client
- * area differs from the window's inner size, the subject's box rounded out to whole pixels leaves
- * the window, or the subject computes a `scroll-margin` side other than `0px`; false otherwise.
- * @throws Thrown when the subject is not connected to a document, as the
- * {@link collectClippingAncestors} helper throws.
- *
- * @remarks
- * Each condition is one where the element path can scroll the subject while the clip route scrolls
- * nothing, so the two can write other bytes. The check models no geometry: a subject under any
- * ancestor that clips its overflow, the body included, reads as needing the scroll whether or not
- * that ancestor cuts it, which costs the frame the route's gain and keeps its bytes. A transform, a
- * zoom, or an `offset-path` with no clipping ancestor keeps the route, because both paths shoot the
- * box the screen shows. A root scrollbar takes room from the window only where the browser lays one
- * out, which Playwright's `--hide-scrollbars` default argument prevents. Each start edge of the box
- * rounds down and each end edge rounds up before it is compared with the window, with no tolerance.
- * The climb is the one {@link collectClippingAncestors} takes, so a subject assigned to a slot of a
- * closed shadow root climbs through its light parent and a scroller inside that shadow tree is not
- * read.
- *
- * @example
- * ```ts
- * needsScroll(row) // true where a scrolling list holds the row
- * ```
- */
-export function needsScroll(subject: Element): boolean {
-	const root = subject.ownerDocument.documentElement
-	const box = subject.getBoundingClientRect()
-	return (
-		collectClippingAncestors(subject).some((frame) => frame !== root) ||
-		readStyle(root, 'scroll-padding')
-			.split(' ')
-			.some((side) => side !== 'auto' && side !== '0px') ||
-		root.clientWidth !== window.innerWidth ||
-		root.clientHeight !== window.innerHeight ||
-		Math.floor(box.left) < 0 ||
-		Math.floor(box.top) < 0 ||
-		Math.ceil(box.right) > window.innerWidth ||
-		Math.ceil(box.bottom) > window.innerHeight ||
-		readStyle(subject, 'scroll-margin')
-			.split(' ')
-			.some((side) => side !== '0px')
 	)
 }
 
@@ -740,18 +688,11 @@ export function measureContent(): number {
  *
  * @param width - The viewport width in CSS pixels.
  * @param height - The viewport height in CSS pixels.
- * @param subject - The element whose box is read after each of the two painted frames. Omit it to
- * read none.
- * @returns A promise resolving after the resized pane has been painted: true if the subject's box
- * moved between the two painted frames; false otherwise, and false without a subject.
+ * @returns A promise resolving after the resized pane has been painted.
  * @throws Thrown when the tester sits inside no pane a capture can size, and when the staged pane
  * does not render at the viewport it was given.
  *
  * @remarks
- * The motion reading is Playwright's stability rule for an element screenshot, an equal box on two
- * consecutive frames, read across the frames the staging already waits for. {@link captureFrame}
- * hands a subject that moved to the element path, whose own stability wait shoots it at rest.
- *
  * This depends on the runner's own tester layout, and that dependency is contract rather than an
  * accident: `vitest@5.1.0` lays its tester out inside a smaller page, fits it with a CSS scale, and
  * clips whatever overflows the pane the tester sits in. Layout inside the tester is
@@ -793,11 +734,7 @@ export function measureContent(): number {
  * await stagePane(390, 844)
  * ```
  */
-export async function stagePane(
-	width: number,
-	height: number,
-	subject?: Element,
-): Promise<boolean> {
+export async function stagePane(width: number, height: number): Promise<void> {
 	const viewport = `${String(window.innerWidth)}x${String(window.innerHeight)}`
 	if (window.innerWidth !== width || window.innerHeight !== height) {
 		await page.viewport(width, height)
@@ -823,7 +760,6 @@ export async function stagePane(
 		owner.head.append(rule)
 	}
 	await waitForFrame()
-	const first = subject?.getBoundingClientRect()
 	await waitForFrame()
 	const box = frame.getBoundingClientRect()
 	if (Math.round(box.width) !== width || Math.round(box.height) !== height) {
@@ -831,15 +767,6 @@ export async function stagePane(
 			`Tester pane rendered ${String(Math.round(box.width))}x${String(Math.round(box.height))} for a ${String(width)}x${String(height)} viewport`,
 		)
 	}
-	const second = subject?.getBoundingClientRect()
-	return (
-		first !== undefined &&
-		second !== undefined &&
-		(first.x !== second.x ||
-			first.y !== second.y ||
-			first.width !== second.width ||
-			first.height !== second.height)
-	)
 }
 
 /**
@@ -1301,17 +1228,6 @@ export async function releaseMedia(): Promise<void> {
  * transformed ancestor is counted as a row, though the top layer lays it out. A region inside a
  * closed shadow root is unreachable, so its rows stay hidden without a refusal.
  *
- * Where the page registered the `shootClip` command, {@link readClipHandler} returns it and the shot
- * takes the clip route that {@link takeFrameShot} describes, for a subject whose box held still
- * across the two frames of the last staging, as {@link stagePane} reads it. The clip route writes the
- * element path's bytes without the element path's locator and stability round trips. The element
- * path scrolls its subject into view, and the clip route scrolls nothing, so a subject
- * {@link needsScroll} reports keeps the element path: one under any ancestor below the root element
- * that clips its overflow, one on a page whose root element reserves scroll padding or loses room to
- * a scrollbar, one whose box leaves the window, and one with a scroll margin. A frame whose clip
- * leaves the runner window, a frame the tester must be offset for, a subject that moved, and a frame
- * the command refuses for a page with no emulated window keep the element path too.
- *
  * To shoot the declared viewport at the scroll the page holds rather than the document, call
  * {@link captureViewport}.
  *
@@ -1325,16 +1241,13 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 	const restore = recordScroll()
 	const prepared = window.innerWidth === options.width && window.innerHeight === options.height
 	try {
-		const staged = prepared
-			? undefined
-			: await stagePane(options.width, options.height, element ?? document.body)
+		if (!prepared) await stagePane(options.width, options.height)
 		const declared = new Map(
 			(options.unrolled === true ? collectUnrolledRegions(element) : []).map(
 				(region): [Element, number] => [region, region.clientHeight],
 			),
 		)
-		const settled = await settleFrame(options, element, prepared)
-		const fixed = settled.fixed
+		const fixed = await settleFrame(options, element, prepared)
 		const scrolled = options.unrolled === true ? collectUnrolledRegions(element) : []
 		if (scrolled.length > 0) {
 			const grown = window.innerHeight > options.height
@@ -1356,8 +1269,7 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
 				`Capture frame at ${options.path} leaves rows hidden in scroll regions: ${regions.join('; ')}. Shoot the frame without unrolled to keep them scrolled`,
 			)
 		}
-		const moved = settled.moved ?? staged ?? true
-		const shot = await takeFrameShot(options, element, moved ? undefined : readClipHandler())
+		const shot = await takeFrameShot(options, element)
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
@@ -1398,10 +1310,7 @@ export async function captureFrame(options: FrameOptions): Promise<string> {
  *
  * The pane is released and the scroll of the window and of every scroll container
  * {@link collectScrollContainers} finds is restored before this returns, on every path, as
- * {@link captureFrame} does. The file is verified as {@link verifyFrame} verifies it. Where the page
- * registered the `shootClip` command, the cover is shot through {@link takeClipShot}; the cover is
- * transparent by design, so the visibility rule {@link takeFrameShot} applies to a subject does not
- * apply to it.
+ * {@link captureFrame} does. The file is verified as {@link verifyFrame} verifies it.
  *
  * @example
  * ```ts
@@ -1428,10 +1337,7 @@ export async function captureViewport(options: ViewportOptions): Promise<string>
 				`Capture frame at ${options.path} cannot cover the viewport: a fixed box on the root element lays out at ${String(box.width)}x${String(box.height)} from (${String(box.x)}, ${String(box.y)}) in a ${String(clientWidth)}x${String(clientHeight)} viewport`,
 			)
 		}
-		const handler = readClipHandler()
-		const clipped =
-			handler === undefined ? undefined : await takeClipShot(handler, options.path, cover)
-		const shot = clipped ?? (await takeFrameShot(options, cover))
+		const shot = await takeFrameShot(options, cover)
 		await verifyFrame(shot, options.path, readCaptureReader())
 		return shot.path
 	} finally {
@@ -1520,24 +1426,6 @@ export function describeUnrolledView(state: string): string {
 export function readCaptureReader(): CaptureReader | undefined {
 	if (typeof commands !== 'object' || commands === null) return undefined
 	return readProperty<CaptureReader | undefined>(commands, 'readCapture')
-}
-
-/**
- * Reads the optional clip command the tester page registered.
- *
- * @returns The registered `shootClip` command, or undefined where none is registered.
- *
- * @remarks Vitest publishes only registered commands, so an unregistered `shootClip` reads as
- * undefined and every frame keeps the element path. Outside a Vitest browser page, where `commands`
- * is no object, the command reads as undefined too.
- * @example
- * ```ts
- * const shot = await takeFrameShot(options, element, readClipHandler())
- * ```
- */
-export function readClipHandler(): ClipHandler | undefined {
-	if (typeof commands !== 'object' || commands === null) return undefined
-	return readProperty<ClipHandler | undefined>(commands, 'shootClip')
 }
 
 /**
@@ -1781,8 +1669,7 @@ export function expandCaptures(
  * Restages a capture until its content extent equals the pane height.
  *
  * @returns The regions an unrolled frame left out of its extent because each kept its height across
- * a staging, an empty list for a plain frame, and whether the subject moved across the last staging
- * the call made, which every staging reads from the element or, for a page frame, the body.
+ * a staging, and an empty list for a plain frame.
  *
  * @remarks The stage limit bounds the recursion; a prepared pane is staged before accepting it. An
  * unrolled frame adds the rows its regions hide to the extent. `regions` maps each region tracked
@@ -1807,7 +1694,7 @@ export async function settleFrame(
 	covered?: number,
 	stage = 0,
 	regions?: ReadonlyMap<Element, number>,
-): Promise<SettleResult> {
+): Promise<readonly Element[]> {
 	const height = readFrameHeight(options, element, pane)
 	const measured = height === undefined ? measureContent() : Math.ceil(height)
 	const hiding = options.unrolled === true ? collectUnrolledRegions(element) : []
@@ -1830,14 +1717,12 @@ export async function settleFrame(
 	const heights = new Map(
 		[...tracked, ...hiding].map((region): [Element, number] => [region, region.clientHeight]),
 	)
-	const subject = element ?? document.body
 	if (pane === extent) {
 		if (prepared && stage === 0) {
-			const moved = await stagePane(options.width, pane, subject)
-			const settled = await settleFrame(options, element, prepared, pane, extent, stage + 1)
-			return { fixed: settled.fixed, moved: settled.moved ?? moved }
+			await stagePane(options.width, pane)
+			return settleFrame(options, element, prepared, pane, extent, stage + 1)
 		}
-		return { fixed, moved: undefined }
+		return fixed
 	}
 	if (stage === CAPTURE_STAGE_LIMIT) {
 		const still =
@@ -1849,9 +1734,8 @@ export async function settleFrame(
 		)
 	}
 	const next = extent + growth === pane ? extent : extent + growth
-	const moved = await stagePane(options.width, next, subject)
-	const settled = await settleFrame(options, element, prepared, next, extent, stage + 1, heights)
-	return { fixed: settled.fixed, moved: settled.moved ?? moved }
+	await stagePane(options.width, next)
+	return settleFrame(options, element, prepared, next, extent, stage + 1, heights)
 }
 
 /**
@@ -1910,18 +1794,6 @@ export function readFrameHeight(
 /**
  * Takes a screenshot while temporarily positioning the runner frame around its subject.
  *
- * @param options - The frame's path and declared viewport.
- * @param element - The element to shoot. Omit it to shoot the page's body.
- * @param handler - The registered clip command. Omit it to keep the element path.
- * @remarks
- * Given a handler, the shot takes the clip route through {@link takeClipShot} for a subject that
- * `checkVisibility` reports visible with its opacity and visibility checks, unless
- * {@link takeClipShot} hands the subject back. Every other subject takes the element path, which
- * scrolls each scroll container around the subject until it shows: a `visibility: hidden`, a
- * `display: none`, or an empty-box subject waits there until Playwright counts it visible, and an
- * `opacity: 0` subject is written at once, because Playwright counts it visible. Pass a handler only
- * for a subject that held still, as {@link captureFrame} does: the clip route runs no stability wait.
- *
  * @example
  * ```ts
  * const shot = await takeFrameShot({ path: 'frame.png', width: 390, height: 844 }, undefined)
@@ -1930,27 +1802,16 @@ export function readFrameHeight(
 export async function takeFrameShot(
 	options: FrameOptions,
 	element: Element | undefined,
-	handler?: ClipHandler,
 ): Promise<FrameShot> {
-	if (element !== undefined) {
+	if (element === undefined) {
+		return await page.screenshot({ path: options.path, base64: true })
+	} else {
 		const box = element.getBoundingClientRect()
 		const down = box.top < 0 ? box.top : Math.max(0, box.bottom - window.innerHeight)
 		const across = box.left < 0 ? box.left : Math.max(0, box.right - window.innerWidth)
 		if (down !== 0 || across !== 0) {
 			window.scrollBy({ top: down, left: across, behavior: 'instant' })
 		}
-	}
-	const subject = element ?? document.body
-	const clipped =
-		handler === undefined ||
-		!subject.checkVisibility({ opacityProperty: true, visibilityProperty: true })
-			? undefined
-			: await takeClipShot(handler, options.path, subject)
-	if (clipped !== undefined) {
-		return clipped
-	} else if (element === undefined) {
-		return await page.screenshot({ path: options.path, base64: true })
-	} else {
 		// The offset outranks the fixed placement the `stagePane` function writes, because an
 		// inline declaration wins over a stylesheet one of equal importance, and it moves the frame
 		// only because that placement is fixed at the window's origin.
@@ -1976,105 +1837,4 @@ export async function takeFrameShot(
 			else if (offset && style !== null) frame.setAttribute('style', style)
 		}
 	}
-}
-
-/**
- * Reads the clip that shoots a subject off the runner page: its border box in the runner window's
- * coordinates, rounded out to whole pixels.
- *
- * @param subject - An element of the tester's own document.
- * @returns The clip, or `undefined` where the subject's box is empty, the subject belongs to another
- * document, or the tester frame renders scaled or bordered rather than staged.
- *
- * @remarks
- * The rounding is Playwright's for an element screenshot: each start edge rounds down and each end
- * edge rounds up, each after a 0.001 pixel tolerance, so a clip covers the rows and columns the
- * element path shoots. The tester frame's box is added, which a staged pane puts at the window's
- * origin.
- *
- * @example
- * ```ts
- * readFrameClip(card) // { x: 16, y: 120, width: 358, height: 201 }
- * ```
- */
-export function readFrameClip(subject: Element): FrameClip | undefined {
-	const box = subject.getBoundingClientRect()
-	const frame = window.frameElement
-	if (!(box.width > 0 && box.height > 0) || subject.ownerDocument !== document || frame === null) {
-		return undefined
-	}
-	const placed = frame.getBoundingClientRect()
-	if (placed.width !== window.innerWidth || placed.height !== window.innerHeight) return undefined
-	const left = box.x + placed.x
-	const top = box.y + placed.y
-	const x = Math.floor(left + 1e-3)
-	const y = Math.floor(top + 1e-3)
-	return {
-		x,
-		y,
-		width: Math.ceil(left + box.width - 1e-3) - x,
-		height: Math.ceil(top + box.height - 1e-3) - y,
-	}
-}
-
-/**
- * Shoots a subject through the clip command where its clip lies inside the runner window.
- *
- * @param handler - The registered clip command, as {@link readClipHandler} returns it.
- * @param path - The frame's path, relative to the calling test file.
- * @param subject - The element whose box the frame covers.
- * @returns The written shot, or `undefined` where the subject's box changed during the fonts wait,
- * {@link readFrameClip} reads no clip, the clip leaves the runner window, which Playwright trims a
- * page clip to, {@link needsScroll} reports the subject, or the command refuses the clip with the
- * {@link describeWindowlessClip} text of a page with no emulated window.
- * @throws Thrown when the command refuses the clip for another reason, naming the clip and the
- * window, and when the command fails.
- *
- * @remarks
- * The tester document's `document.fonts.ready` is awaited before the clip is read, because
- * Playwright's page screenshot waits only for the runner document's fonts, and a web font that
- * loads late changes both the glyphs and the box. The subject's box is read before that wait and
- * again after it, immediately before the command, so a subject that starts to move or changes size
- * while the fonts load is handed back for the element path's stability wait. A move that starts
- * after the second reading, during the command's round trip, reaches the shot. The window is
- * `window.top`'s inner size.
- *
- * @example
- * ```ts
- * const shot = await takeClipShot(handler, '../../tmp/capture/card.png', card)
- * ```
- */
-export async function takeClipShot(
-	handler: ClipHandler,
-	path: string,
-	subject: Element,
-): Promise<FrameShot | undefined> {
-	const staged = subject.getBoundingClientRect()
-	await subject.ownerDocument.fonts.ready
-	const box = subject.getBoundingClientRect()
-	const clip = readFrameClip(subject)
-	const view = window.top
-	if (
-		box.x !== staged.x ||
-		box.y !== staged.y ||
-		box.width !== staged.width ||
-		box.height !== staged.height ||
-		clip === undefined ||
-		view === null ||
-		clip.x < 0 ||
-		clip.y < 0 ||
-		clip.x + clip.width > view.innerWidth ||
-		clip.y + clip.height > view.innerHeight ||
-		needsScroll(subject)
-	) {
-		return undefined
-	}
-	const result = await handler(path, clip)
-	if (!result.success && result.error === describeWindowlessClip(clip)) return undefined
-	if (!result.success) {
-		throw new Error(
-			`Capture frame at ${path} was refused by the shootClip command: ${result.error}`,
-		)
-	}
-	return result.value
 }

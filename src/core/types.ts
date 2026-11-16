@@ -357,29 +357,3 @@ export interface ChooserRequest extends ChoiceOptions {
 	/** Holds the fixture selection; an empty collection clears the input. */
 	readonly files: readonly FixtureFile[]
 }
-
-/** Represents the path and base64 bytes a screenshot wrote, as Vitest's screenshot operation returns them. */
-export interface FrameShot {
-	/** Holds the absolute path the screenshot was written to. */
-	readonly path: string
-	/** Holds the screenshot bytes encoded as base64. */
-	readonly base64: string
-}
-
-/**
- * Holds a whole-pixel rectangle of the runner window, in CSS pixels from the window's origin, that a
- * page screenshot is clipped to.
- *
- * @remarks
- * The members mirror the `clip` option of Playwright's `page.screenshot`.
- */
-export interface FrameClip {
-	/** Holds the left edge, a whole number of pixels from the window's left. */
-	readonly x: number
-	/** Holds the top edge, a whole number of pixels from the window's top. */
-	readonly y: number
-	/** Holds the width, a positive whole number of pixels. */
-	readonly width: number
-	/** Holds the height, a positive whole number of pixels. */
-	readonly height: number
-}

@@ -42,16 +42,4 @@ export const commands: Readonly<NonNullable<BrowserConfigOptions['commands']>> =
 		if (!isString(digest)) throw new Error('The readCapture command returned no digest string')
 		return digest
 	},
-	shootClip: async (
-		context: BrowserCommandContext,
-		path: string,
-		clip: unknown,
-	): Promise<unknown> => {
-		const shootClip = readCommand(
-			await context.project.vitest.import<unknown>(SERVER_ENTRY),
-			'shootClip',
-		)
-		if (shootClip === undefined) throw new Error('The server entry exports no shootClip function')
-		return await shootClip(context, path, clip)
-	},
 })

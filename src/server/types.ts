@@ -10,27 +10,6 @@ export interface ChooserContext {
 	readonly iframe: FrameLocator
 }
 
-/**
- * Supplies the runner page, the calling test file, and Vitest's own file write to the clip command.
- *
- * @remarks
- * Vitest's `BrowserCommandContext` under the Playwright provider carries every member, so a
- * registered command passes its context through unchanged.
- */
-export interface ClipContext {
-	/** Holds the Playwright page of the runner window the clip is shot from. */
-	readonly page: Page
-	/** Holds the absolute path of the calling test file; `undefined` outside a test. */
-	readonly testPath: string | undefined
-	/** Runs Vitest's own `writeFile` command, which applies its write and file-access checks. */
-	readonly triggerCommand: (
-		name: 'writeFile',
-		path: string,
-		content: string,
-		encoding: 'base64',
-	) => Promise<void>
-}
-
 /** Holds a temporary directory a test owns, writes into, reads back, and removes when it is done. */
 export interface ScratchInterface {
 	/** Holds the absolute path of the allocated directory. */
