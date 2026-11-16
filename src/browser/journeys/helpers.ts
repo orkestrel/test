@@ -27,7 +27,7 @@ import {
 	waitForDelay,
 } from '@src/core'
 import { commands, page, server, userEvent } from 'vitest/browser'
-import { waitForStability } from '../captures/helpers.js'
+import { collectFlatAncestors, waitForStability } from '../captures/helpers.js'
 import { build, mount, sendProtocol, waitForFrame } from '../helpers.js'
 import {
 	ACCESSIBLE_ROLES,
@@ -1903,7 +1903,8 @@ export function readRefusal(first: string, second?: string): string | undefined 
  * Reads one element's rendered text the way a name computation reads it.
  *
  * @param element - The element whose announced words are wanted.
- * @returns The text with every `aria-hidden` descendant dropped and whitespace runs collapsed.
+ * @returns The text with every `aria-hidden` descendant and every hidden HTML descendant dropped,
+ * and whitespace runs collapsed.
  *
  * @remarks
  * A glyph marked `aria-hidden` contributes nothing to a name, so a control captioned by an icon
@@ -1911,12 +1912,22 @@ export function readRefusal(first: string, second?: string): string | undefined 
  * description has to compare against the copy a template writes. Reach for `readRows` wherever the
  * subject is what the page paints rather than what it announces: that one keeps the glyph.
  *
+ * Where the element renders, a text node held by an HTML element is dropped when that element's
+ * computed `visibility` is not `visible`, or when it or an HTML ancestor below the element computes
+ * `display: none`. So a closed menu's items join no name, and the `hidden` attribute is read through
+ * the `display: none` it computes. The reading is the computed style rather than the box, so a
+ * `display: contents` element and a `slot` keep their words. Text inside SVG reads in full, because
+ * the browser does not apply an SVG element's `display: none` to the name. An element that does not
+ * render itself keeps every word outside an `aria-hidden` subtree, because the name computation
+ * reads a hidden node that `aria-labelledby` names directly as a whole.
+ *
  * @example
  * ```ts
  * readText(requireValue(container.querySelector('button'))) // 'Save'
  * ```
  */
 export function readText(element: Element): string {
+	const shown = isRendered(element) && getComputedStyle(element).visibility === 'visible'
 	const parts: string[] = []
 	const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT)
 	while (true) {
@@ -1924,6 +1935,18 @@ export function readText(element: Element): string {
 		if (node === null) break
 		const owner = node.parentElement
 		if (owner === null || owner.closest('[aria-hidden="true"]') !== null) continue
+		if (
+			shown &&
+			owner instanceof HTMLElement &&
+			(getComputedStyle(owner).visibility !== 'visible' ||
+				[owner, ...collectFlatAncestors(owner, element)].some(
+					(current) =>
+						current !== element &&
+						current instanceof HTMLElement &&
+						getComputedStyle(current).display === 'none',
+				))
+		)
+			continue
 		parts.push(node.textContent ?? '')
 	}
 	return parts.join(' ').replaceAll(/\s+/g, ' ').trim()

@@ -96,6 +96,9 @@ import {
 	FIELD_ROLE_CASES,
 	FILE_REFUSALS,
 	IMPLICIT_ROLE_CASES,
+	NAME_SWEEP,
+	NAME_SWEEP_CASES,
+	readSweepNames,
 	resetFixtures,
 	restartTransition,
 	SETTLE_MARKUP,
@@ -3472,6 +3475,263 @@ describe('readName', () => {
 		expect(readName(requireValue(container.querySelector('#hinted')))).toBe('Why this matters')
 		expect(readName(requireValue(container.querySelector('#bare')))).toBe('')
 	})
+
+	// ARIA 1.2 names a list item from its author alone, so the row a menu sits in carries no name,
+	// and the closed menu's words reach no name at all. The browser's own tree is the second reading.
+	it('names no list item from its content, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<ul aria-label="Open records"><li id="row"><a href="#fix-1">Policy FIX-1</a>' +
+				'<div class="dropdown"><button type="button" title="Actions" aria-expanded="false">' +
+				'<span aria-hidden="true">⋮</span></button><ul style="display: none">' +
+				'<li><button type="button">Pin</button></li><li><button type="button">Hide</button></li>' +
+				'<li><button type="button">Remove</button></li></ul></div></li></ul>',
+		)
+		const row = requireValue(container.querySelector('#row'))
+		expect(readName(row)).toBe('')
+		expect(readName(row)).toBe((await readAccessibilityNode(row)).name ?? '')
+		expect(describeTree(requireValue(container.querySelector('ul')))).toBe(
+			[
+				'list "Open records"',
+				'  listitem',
+				'    link "Policy FIX-1"',
+				'    button "Actions" [collapsed]',
+			].join('\n'),
+		)
+	})
+
+	// Chromium publishes no name for a table row, so the link carries the browser's reading.
+	it('drops the words under display: none from a content role, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<table><tbody><tr id="row"><td>Policy FIX-1</td><td><div style="display: none">' +
+				'<button type="button">Pin</button><button type="button">Hide</button>' +
+				'<button type="button">Remove</button></div></td></tr></tbody></table>' +
+				'<a href="#fix-1">Policy FIX-1<span style="display: none"> Pin Hide Remove</span></a>',
+		)
+		const link = requireValue(container.querySelector('a'))
+		expect(readName(requireValue(container.querySelector('#row')))).toBe('Policy FIX-1')
+		expect(readName(link)).toBe('Policy FIX-1')
+		expect(readName(link)).toBe((await readAccessibilityNode(link)).name ?? '')
+	})
+
+	it('drops the words under visibility: hidden or collapse, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button" id="blanked">Save<span style="visibility: hidden"> draft</span>' +
+				'</button><button type="button" id="collapsed">Pin<span style="visibility: collapse">' +
+				' note</span></button>',
+		)
+		for (const id of ['blanked', 'collapsed']) {
+			const button = requireValue(container.querySelector(`#${id}`))
+			expect(readName(button)).toBe(id === 'blanked' ? 'Save' : 'Pin')
+			expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+		}
+	})
+
+	it('drops the words under the hidden attribute, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button">Close <span hidden>without saving</span></button>',
+		)
+		const button = requireValue(container.querySelector('button'))
+		expect(readName(button)).toBe('Close')
+		expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+	})
+
+	// A descendant made visible again inside a `visibility: hidden` ancestor renders, and a control
+	// inside an unnamed row keeps its own name: the reading is the node's computed style, not a guess
+	// from what an ancestor declares.
+	it('keeps a rendered descendant naming its own control, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<ul><li><button type="button" id="open">Open</button>' +
+				'<div style="display: none"><button type="button">Remove</button></div>' +
+				'<button type="button" id="save"><span style="visibility: hidden">' +
+				'<span style="visibility: visible">Save</span></span></button></li></ul>',
+		)
+		for (const id of ['open', 'save']) {
+			const button = requireValue(container.querySelector(`#${id}`))
+			expect(readName(button)).toBe(id === 'open' ? 'Open' : 'Save')
+			expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+		}
+	})
+
+	// The accessible-name computation reads a hidden node that `aria-labelledby` names directly, with
+	// its subtree, so a hidden caption still names the control that points at it.
+	it('reads a hidden node aria-labelledby names directly, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<span id="caption" hidden>Close <span style="display: none">dialog</span></span>' +
+				'<button type="button" aria-labelledby="caption"><span aria-hidden="true">×</span></button>',
+		)
+		const button = requireValue(container.querySelector('button'))
+		expect(readName(button)).toBe('Close dialog')
+		expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+	})
+
+	// A `display: contents` element generates no box, and its words still render.
+	it('keeps the words under display: contents, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button">Save <span style="display: contents">now</span></button>' +
+				'<a href="#home"><div style="display: contents">Home page</div></a>' +
+				'<h1><span style="display: contents">Page <span style="display: contents">title</span>' +
+				'</span></h1>',
+		)
+		const named = ['button', 'a', 'h1'].map((tag) => requireValue(container.querySelector(tag)))
+		expect(named.map((element) => readName(element))).toStrictEqual([
+			'Save now',
+			'Home page',
+			'Page title',
+		])
+		for (const element of named) {
+			expect(readName(element)).toBe((await readAccessibilityNode(element)).name ?? '')
+		}
+	})
+
+	it('names an svg inside a content role from its title, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<a href="#home"><svg width="10" height="10"><title>Home</title>' +
+				'<rect width="5" height="5"></rect></svg></a>',
+		)
+		const link = requireValue(container.querySelector('a'))
+		expect(readName(link)).toBe('Home')
+		expect(readName(link)).toBe((await readAccessibilityNode(link)).name ?? '')
+	})
+
+	// A label's text and an `aria-labelledby` traversal read an untitled svg's description as its words.
+	it('reads an svg description through a label or aria-labelledby, as the browser computes it', async () => {
+		const svg =
+			'<svg width="10" height="10"><desc>Icon</desc><rect width="5" height="5"></rect></svg>'
+		const container = buildFixture(
+			`<label for="bare">${svg}</label><input id="bare">` +
+				`<label for="worded">Go${svg}</label><input id="worded">` +
+				`<div id="caption">${svg}</div>` +
+				'<button type="button" id="pointed" aria-labelledby="caption">x</button>' +
+				`<div id="folded" hidden>Go${svg}</div>` +
+				'<button type="button" id="hidden" aria-labelledby="folded">x</button>',
+		)
+		const named = ['bare', 'worded', 'pointed', 'hidden'].map((id) =>
+			requireValue(container.querySelector(`#${id}`)),
+		)
+		expect(named.map((element) => readName(element))).toStrictEqual([
+			'Icon',
+			'Go Icon',
+			'Icon',
+			'Go Icon',
+		])
+		for (const element of named) {
+			expect(readName(element)).toBe((await readAccessibilityNode(element)).name ?? '')
+		}
+	})
+
+	it('reads an svg title through a label, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<label for="titled"><svg width="10" height="10"><title>Home</title>' +
+				'<rect width="5" height="5"></rect></svg></label><input id="titled">',
+		)
+		const input = requireValue(container.querySelector('input'))
+		expect(readName(input)).toBe('Home')
+		expect(readName(input)).toBe((await readAccessibilityNode(input)).name ?? '')
+	})
+
+	// The browser does not apply an svg element's `display: none` to a name read through a label or an
+	// `aria-labelledby` target, so a hidden group's title still joins it.
+	it('reads a title inside a hidden svg group, as the browser computes it', async () => {
+		const svg =
+			'<svg width="10" height="10"><g style="display: none"><title>Hidden</title></g>' +
+			'<desc>Fallback</desc><rect width="5" height="5"></rect></svg>'
+		const container = buildFixture(
+			`<label for="labelled">Go${svg}</label><input id="labelled">` +
+				`<div id="caption">Go${svg}</div>` +
+				'<button type="button" id="pointed" aria-labelledby="caption">x</button>',
+		)
+		const named = ['labelled', 'pointed'].map((id) =>
+			requireValue(container.querySelector(`#${id}`)),
+		)
+		expect(named.map((element) => readName(element))).toStrictEqual([
+			'Go Hidden Fallback',
+			'Go Hidden Fallback',
+		])
+		for (const element of named) {
+			expect(readName(element)).toBe((await readAccessibilityNode(element)).name ?? '')
+		}
+	})
+
+	it('reads an svg description under a button aria-labelledby points at, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button" id="caption">Go<svg width="10" height="10"><desc>Icon</desc>' +
+				'<rect width="5" height="5"></rect></svg></button>' +
+				'<button type="button" id="pointed" aria-labelledby="caption">x</button>',
+		)
+		const pointed = requireValue(container.querySelector('#pointed'))
+		expect(readName(pointed)).toBe('Go Icon')
+		expect(readName(pointed)).toBe((await readAccessibilityNode(pointed)).name ?? '')
+	})
+
+	// The release criterion: no fixture the browser names as 0.0.42 did may read otherwise now. The
+	// default suite reads a seeded slice of the table; the full table runs as the case below.
+	it('regresses no name 0.0.42 read as the browser does, across a seeded slice of the sweep', async () => {
+		const cases = Array.from({ length: NAME_SWEEP.count }, (_, step) =>
+			requireValue(
+				NAME_SWEEP_CASES[(NAME_SWEEP.seed + step * NAME_SWEEP.stride) % NAME_SWEEP_CASES.length],
+			),
+		)
+		const readings = await readSweepNames(cases)
+		expect(readings.filter((reading) => reading.verdict === 'regressed')).toStrictEqual([])
+	})
+
+	// The full table reads every one of its 27000 fixtures through the browser protocol, which takes
+	// minutes, so it runs only when `VITE_NAME_SWEEP=full` asks for it.
+	it.runIf(import.meta.env.VITE_NAME_SWEEP === 'full')(
+		'regresses no name 0.0.42 read as the browser does, across the full sweep',
+		async ({ annotate }) => {
+			const readings = await readSweepNames(NAME_SWEEP_CASES)
+			const verdicts = ['regressed', 'improved', 'unchanged'].map(
+				(verdict) =>
+					`${verdict}=${String(readings.filter((reading) => reading.verdict === verdict).length)}`,
+			)
+			await annotate(`name sweep over ${String(readings.length)} fixtures: ${verdicts.join(' ')}`)
+			expect(readings.filter((reading) => reading.verdict === 'regressed')).toStrictEqual([])
+		},
+		3_600_000,
+	)
+
+	it('keeps the words a slot renders, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button" id="light">Save <slot>now</slot></button>' +
+				'<div role="button" tabindex="0" id="host">Send <span>later</span></div>',
+		)
+		const host = requireValue(container.querySelector('#host'))
+		host.attachShadow({ mode: 'open' }).innerHTML = '<slot></slot>'
+		const named = ['light', 'host'].map((id) => requireValue(container.querySelector(`#${id}`)))
+		expect(named.map((element) => readName(element))).toStrictEqual(['Save now', 'Send later'])
+		for (const element of named) {
+			expect(readName(element)).toBe((await readAccessibilityNode(element)).name ?? '')
+		}
+	})
+
+	it('keeps the words under content-visibility: hidden, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button">Save<span style="content-visibility: hidden"><span> draft</span>' +
+				'</span></button>',
+		)
+		const button = requireValue(container.querySelector('button'))
+		expect(readName(button)).toBe('Save draft')
+		expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+	})
+
+	it('reads a hidden element its author displays, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<button type="button">Close <span hidden style="display: inline">now</span></button>',
+		)
+		const button = requireValue(container.querySelector('button'))
+		expect(readName(button)).toBe('Close now')
+		expect(readName(button)).toBe((await readAccessibilityNode(button)).name ?? '')
+	})
+
+	it('keeps the words inside an open details, as the browser computes it', async () => {
+		const container = buildFixture(
+			'<h2>Notes <details open><summary>More</summary><span>Body</span> tail</details></h2>',
+		)
+		const heading = requireValue(container.querySelector('h2'))
+		expect(readName(heading)).toBe('Notes More Body tail')
+		expect(readName(heading)).toBe((await readAccessibilityNode(heading)).name ?? '')
+	})
 })
 
 describe('readStates', () => {
@@ -3542,13 +3802,9 @@ describe('describeTree', () => {
 		// `div` and `blockquote` carry no role, so neither writes a line and neither adds a depth:
 		// the `h3` inside the blockquote sits at the same indent as the `h2` outside it.
 		expect(describeTree(requireValue(container.querySelector('main')))).toBe(
-			[
-				'main "Board"',
-				'  heading "Totals"',
-				'  heading "Quoted"',
-				'  list',
-				'    listitem "One"',
-			].join('\n'),
+			['main "Board"', '  heading "Totals"', '  heading "Quoted"', '  list', '    listitem'].join(
+				'\n',
+			),
 		)
 	})
 

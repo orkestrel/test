@@ -7,6 +7,8 @@ import {
 	clickDisclosure,
 	collectClippingAncestors,
 	readClipEdge,
+	readAccessibilityNode,
+	readName,
 	readPixels,
 	readStates,
 	readStyle,
@@ -653,6 +655,273 @@ export const FIELD_ROLE_CASES: ReadonlyArray<{ readonly type: string; readonly r
 		Object.freeze({ type: 'text', role: 'textbox' }),
 		Object.freeze({ type: 'url', role: 'textbox' }),
 	])
+
+/**
+ * Lists the frames the name sweep reads a name through, each naming the element `#sweep-target`
+ * from the word `Go` and what the frame holds.
+ *
+ * Every frame named the target from all of its text in 0.0.42, whichever path it takes: content (a
+ * button, a link, a heading, a list item, a table cell), a label, and an `aria-labelledby` target,
+ * shown or hidden.
+ */
+export const NAME_SWEEP_FRAMES: ReadonlyArray<{ readonly open: string; readonly close: string }> =
+	Object.freeze([
+		Object.freeze({ open: '<button type="button" id="sweep-target">Go ', close: '</button>' }),
+		Object.freeze({ open: '<a href="#sweep" id="sweep-target">Go ', close: '</a>' }),
+		Object.freeze({ open: '<h2 id="sweep-target">Go ', close: '</h2>' }),
+		Object.freeze({
+			open: '<label for="sweep-target">Go ',
+			close: '</label><input id="sweep-target">',
+		}),
+		Object.freeze({
+			open: '<div id="sweep-caption">Go ',
+			close:
+				'</div><button type="button" id="sweep-target" aria-labelledby="sweep-caption">x</button>',
+		}),
+		Object.freeze({
+			open: '<div id="sweep-caption" hidden>Go ',
+			close:
+				'</div><button type="button" id="sweep-target" aria-labelledby="sweep-caption">x</button>',
+		}),
+		Object.freeze({ open: '<ul><li id="sweep-target">Go ', close: '</li></ul>' }),
+		Object.freeze({
+			open: '<table><tbody><tr><td id="sweep-target">Go ',
+			close: '</td></tr></tbody></table>',
+		}),
+	])
+
+/**
+ * Lists the wrappers the name sweep nests a leaf in, the empty wrapper first, with what 0.0.42 read
+ * from each: `words` the wrapper itself adds before its content, and `muted` where 0.0.42 dropped the
+ * wrapper's whole content, which it did for `aria-hidden` alone.
+ */
+export const NAME_SWEEP_WRAPPERS: ReadonlyArray<{
+	readonly open: string
+	readonly close: string
+	readonly words: string
+	readonly muted: boolean
+}> = Object.freeze([
+	Object.freeze({ open: '', close: '', words: '', muted: false }),
+	Object.freeze({ open: '<span>', close: '</span>', words: '', muted: false }),
+	Object.freeze({
+		open: '<span style="display: none">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<span style="display: contents">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<span style="display: block">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<span style="display: inline-block">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<span style="visibility: hidden">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<span style="visibility: collapse">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({ open: '<span hidden>', close: '</span>', words: '', muted: false }),
+	Object.freeze({
+		open: '<span hidden style="display: inline">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<details open><summary>More</summary>',
+		close: '</details>',
+		words: 'More',
+		muted: false,
+	}),
+	Object.freeze({
+		open: '<details><summary>More</summary>',
+		close: '</details>',
+		words: 'More',
+		muted: false,
+	}),
+	Object.freeze({ open: '<slot>', close: '</slot>', words: '', muted: false }),
+	Object.freeze({
+		open: '<span style="content-visibility: hidden">',
+		close: '</span>',
+		words: '',
+		muted: false,
+	}),
+	Object.freeze({ open: '<span aria-hidden="true">', close: '</span>', words: '', muted: true }),
+])
+
+/**
+ * Lists the leaves the name sweep names, each with the words 0.0.42 read from it: text, hidden text,
+ * the svg naming elements in every placement of a hidden group or a hidden svg, svg text, an image's
+ * alternative text, a select, and an input's value.
+ */
+export const NAME_SWEEP_LEAVES: ReadonlyArray<{ readonly markup: string; readonly old: string }> =
+	Object.freeze([
+		Object.freeze({ markup: 'now', old: 'now' }),
+		Object.freeze({ markup: '<span style="display: contents">now</span>', old: 'now' }),
+		Object.freeze({ markup: 'later<span style="display: none"> gone</span>', old: 'later gone' }),
+		Object.freeze({
+			markup:
+				'A <span style="visibility: hidden">B <span style="visibility: visible">C</span></span>',
+			old: 'A B C',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><title>Home</title><rect width="5" height="5"></rect></svg>',
+			old: 'Home',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><desc>Icon</desc><rect width="5" height="5"></rect></svg>',
+			old: 'Icon',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><title>Home</title><desc>Icon</desc>' +
+				'<rect width="5" height="5"></rect></svg>',
+			old: 'Home Icon',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><g style="display: none"><title>Hidden</title></g>' +
+				'<desc>Fallback</desc><rect width="5" height="5"></rect></svg>',
+			old: 'Hidden Fallback',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><title>Home</title><g style="display: none">' +
+				'<desc>Icon</desc></g><rect width="5" height="5"></rect></svg>',
+			old: 'Home Icon',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10"><g style="display: none"><title>Home</title>' +
+				'<desc>Icon</desc></g><rect width="5" height="5"></rect></svg>',
+			old: 'Home Icon',
+		}),
+		Object.freeze({
+			markup:
+				'<svg width="10" height="10" style="display: none"><title>Home</title>' +
+				'<desc>Icon</desc><rect width="5" height="5"></rect></svg>',
+			old: 'Home Icon',
+		}),
+		Object.freeze({
+			markup: '<svg width="40" height="12"><text x="0" y="10">Chart</text></svg>',
+			old: 'Chart',
+		}),
+		Object.freeze({
+			markup: '<img alt="Logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">',
+			old: '',
+		}),
+		Object.freeze({
+			markup: '<select><option>Small</option><option selected>Large</option></select>',
+			old: 'Small Large',
+		}),
+		Object.freeze({ markup: '<input value="Typed">', old: '' }),
+	])
+
+/**
+ * Lists every name sweep fixture, a frame around two wrappers around a leaf, with the name 0.0.42
+ * read for it, composed from what the table declares 0.0.42 read from each part.
+ */
+export const NAME_SWEEP_CASES: ReadonlyArray<{ readonly markup: string; readonly old: string }> =
+	Object.freeze(
+		NAME_SWEEP_LEAVES.flatMap((leaf) =>
+			NAME_SWEEP_WRAPPERS.flatMap((inner) =>
+				NAME_SWEEP_WRAPPERS.flatMap((outer) =>
+					NAME_SWEEP_FRAMES.map((frame) =>
+						Object.freeze({
+							markup: `${frame.open}${outer.open}${inner.open}${leaf.markup}${inner.close}${outer.close}${frame.close}`,
+							old: [
+								'Go',
+								...(outer.muted
+									? []
+									: [outer.words, ...(inner.muted ? [] : [inner.words, leaf.old])]),
+							]
+								.join(' ')
+								.replaceAll(/\s+/g, ' ')
+								.trim(),
+						}),
+					),
+				),
+			),
+		),
+	)
+
+/**
+ * Fixes the slice of the name sweep the default suite reads: the `count` indexes from `seed` in
+ * steps of `stride` through {@link NAME_SWEEP_CASES}. The stride shares no factor with the table's
+ * length, so no index repeats, and the same fixtures run every time.
+ */
+export const NAME_SWEEP = Object.freeze({ seed: 17, stride: 2399, count: 160 })
+
+/**
+ * Reads each name sweep fixture through `readName` and through the browser's own computation, and
+ * rules it against the name 0.0.42 read.
+ *
+ * @param cases - The fixtures to read, each naming `#sweep-target`, with the name 0.0.42 read.
+ * @returns One reading per fixture, in order: `regressed` where 0.0.42 read the browser's name and
+ * the reader now does not, `improved` where the reader now reads it and 0.0.42 did not, and
+ * `unchanged` otherwise. The browser's name has its whitespace runs collapsed, as the reader's are.
+ * @example
+ * ```ts
+ * const readings = await readSweepNames(NAME_SWEEP_CASES.slice(0, 8))
+ * ```
+ */
+export async function readSweepNames(
+	cases: ReadonlyArray<{ readonly markup: string; readonly old: string }>,
+): Promise<
+	ReadonlyArray<{
+		readonly markup: string
+		readonly old: string
+		readonly reading: string
+		readonly computed: string
+		readonly verdict: 'regressed' | 'improved' | 'unchanged'
+	}>
+> {
+	const readings: Array<{
+		readonly markup: string
+		readonly old: string
+		readonly reading: string
+		readonly computed: string
+		readonly verdict: 'regressed' | 'improved' | 'unchanged'
+	}> = []
+	for (const entry of cases) {
+		const container = buildFixture(entry.markup)
+		const target = requireValue(container.querySelector('#sweep-target'))
+		const reading = readName(target)
+		const computed = ((await readAccessibilityNode(target)).name ?? '')
+			.replaceAll(/\s+/g, ' ')
+			.trim()
+		container.remove()
+		const verdict =
+			entry.old === computed && reading !== computed
+				? 'regressed'
+				: reading === computed && entry.old !== computed
+					? 'improved'
+					: 'unchanged'
+		readings.push(Object.freeze({ ...entry, reading, computed, verdict }))
+	}
+	return Object.freeze(readings)
+}
 
 /**
  * Renders fixture markup into a recorded container attached to the document.

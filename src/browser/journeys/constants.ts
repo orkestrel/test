@@ -30,7 +30,8 @@ export const ACCESSIBLE_ROLES: readonly string[] = Object.freeze([
  *
  * @remarks
  * `readName` reads an element in this list from its own rendered text, after every `aria-hidden`
- * descendant is dropped, and falls through to `title` for every other role.
+ * or unrendered descendant is dropped, and falls through to `title` for every other role. Each
+ * member is a role ARIA 1.2 names from content; `listitem` is named by its author alone.
  */
 export const CONTENT_ROLES: readonly string[] = Object.freeze([
 	'button',
@@ -38,7 +39,6 @@ export const CONTENT_ROLES: readonly string[] = Object.freeze([
 	'columnheader',
 	'heading',
 	'link',
-	'listitem',
 	'option',
 	'row',
 	'rowheader',

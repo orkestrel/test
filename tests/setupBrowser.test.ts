@@ -24,6 +24,7 @@ import {
 	navigateMotion,
 	POINTER_RESTORATION,
 	readPointerMedia,
+	readSweepNames,
 	recordStyleReads,
 	resetFixtures,
 	restartTransition,
@@ -355,6 +356,30 @@ describe('recordStyleReads', () => {
 			}),
 		).toThrow('The reading failed')
 		expect(window.getComputedStyle).toBe(original)
+	})
+})
+
+describe('readSweepNames', () => {
+	// A plain button reads its words in the reader and in the browser alike, so the declared 0.0.42
+	// reading alone decides each verdict; a desc under a button the reader keeps and the browser drops.
+	it('rules each fixture against the declared 0.0.42 reading and the browser', async () => {
+		const plain = '<button type="button" id="sweep-target">Go</button>'
+		const described =
+			'<button type="button" id="sweep-target">Go<svg width="10" height="10"><desc>Icon</desc>' +
+			'<rect width="5" height="5"></rect></svg></button>'
+		const readings = await readSweepNames([
+			{ markup: plain, old: 'Go' },
+			{ markup: plain, old: 'Stale' },
+			{ markup: described, old: 'Go' },
+		])
+		expect(
+			readings.map(({ reading, computed, verdict }) => ({ reading, computed, verdict })),
+		).toStrictEqual([
+			{ reading: 'Go', computed: 'Go', verdict: 'unchanged' },
+			{ reading: 'Go', computed: 'Go', verdict: 'improved' },
+			{ reading: 'Go Icon', computed: 'Go', verdict: 'regressed' },
+		])
+		expect(document.querySelector('#sweep-target')).toBeNull()
 	})
 })
 
