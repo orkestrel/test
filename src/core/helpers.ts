@@ -21,6 +21,7 @@ import {
 	isNumber,
 	isObject,
 	isSymbol,
+	settle,
 } from '@orkestrel/contract'
 import { Production } from './Production.js'
 
@@ -719,11 +720,13 @@ export async function executeScenario<TState extends string, TEvent extends stri
 	context: TContext,
 ): Promise<void> {
 	const transition = scenario.transition
-	try {
+	const outcome = await settle(async () => {
 		await scenario.arrange(context, transition.from)
 		await scenario.act(context, transition.event)
 		await scenario.assert(context, transition.to)
-	} catch (cause) {
+	})
+	if (!outcome.success) {
+		const cause = outcome.error
 		const message = isError(cause) ? cause.message : `threw a non-error ${typeof cause} value`
 		throw new Error(`${transition.name}: ${message}`, { cause })
 	}
@@ -776,11 +779,10 @@ export async function executeScenarios<TState extends string, TEvent extends str
 export async function captureProduction<T>(
 	produce: () => T | Promise<T>,
 ): Promise<Readonly<PromiseSettledResult<T>>> {
-	try {
-		return { status: 'fulfilled', value: await produce() }
-	} catch (error) {
-		return { status: 'rejected', reason: error }
-	}
+	const outcome = await settle(produce)
+	return outcome.success
+		? { status: 'fulfilled', value: outcome.value }
+		: { status: 'rejected', reason: outcome.error }
 }
 
 /**

@@ -11,6 +11,7 @@ import type {
 	StabilityOptions,
 	ViewportOptions,
 } from './types.js'
+import { settle } from '@orkestrel/contract'
 import { readProperty, waitForCondition } from '@src/core'
 import { commands, page } from 'vitest/browser'
 import { readStyle, sendProtocol, waitForFrame } from '../helpers.js'
@@ -944,10 +945,9 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 	}
 	await waitForFrame()
 	for (const query of queries) {
-		try {
-			await waitForCondition(query, () => matchMedia(query).matches)
-		} catch (cause) {
-			try {
+		const reached = await settle(() => waitForCondition(query, () => matchMedia(query).matches))
+		if (!reached.success) {
+			const restored = await settle(async () => {
 				await sendProtocol('Emulation.setEmulatedMedia', { media, features })
 				if (pointer !== undefined) {
 					await sendProtocol('Emulation.setTouchEmulationEnabled', {
@@ -963,12 +963,15 @@ export async function stageMedia(options: MediaOptions): Promise<void> {
 							matchMedia(`(pointer: ${coarse ? 'coarse' : 'fine'})`).matches) &&
 						features.every((feature) => matchMedia(`(${feature.name}: ${feature.value})`).matches),
 				)
-			} catch (restoration) {
+			})
+			if (!restored.success) {
 				throw new Error(`Media emulation did not reach the tester: ${query}`, {
-					cause: restoration,
+					cause: restored.error,
 				})
 			}
-			throw new Error(`Media emulation did not reach the tester: ${query}`, { cause })
+			throw new Error(`Media emulation did not reach the tester: ${query}`, {
+				cause: reached.error,
+			})
 		}
 	}
 }
@@ -1077,30 +1080,32 @@ export async function releaseMedia(): Promise<void> {
 				maxTouchPoints: 1,
 			})
 		}
-		try {
-			await Promise.all(
+		const cleared = await settle(() =>
+			Promise.all(
 				queries.map((query, index) =>
 					waitForCondition(query, async () => {
 						await waitForFrame()
 						return matchMedia(query).matches === matches[index]
 					}),
 				),
-			)
-		} catch (cause) {
-			throw new Error('Media emulation did not clear from the tester', { cause })
+			),
+		)
+		if (!cleared.success) {
+			throw new Error('Media emulation did not clear from the tester', { cause: cleared.error })
 		}
 		document.documentElement.removeAttribute(MEDIA_STAGE)
 		return
 	}
 	await sendProtocol('Emulation.setEmulatedMedia', { media: '', features: [] })
-	try {
-		await waitForStability(
+	const stable = await settle(() =>
+		waitForStability(
 			'media emulation cleared',
 			() => queries.map((query) => matchMedia(query).matches).join(),
 			{ frames: 1 },
-		)
-	} catch (cause) {
-		throw new Error('Media emulation did not clear from the tester', { cause })
+		),
+	)
+	if (!stable.success) {
+		throw new Error('Media emulation did not clear from the tester', { cause: stable.error })
 	}
 }
 

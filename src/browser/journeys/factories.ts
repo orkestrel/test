@@ -5,7 +5,7 @@ import type {
 	StorageOptions,
 	WebStorageInterface,
 } from './types.js'
-import { isError } from '@orkestrel/contract'
+import { isError, isSafeInteger } from '@orkestrel/contract'
 import {
 	buildRefusal,
 	captureProduction,
@@ -102,7 +102,7 @@ export function createJournal(): JournalInterface {
  */
 export function createStorage(options?: StorageOptions): WebStorageInterface {
 	const quota = options?.quota
-	if (quota !== undefined && (!Number.isSafeInteger(quota) || quota < 0)) {
+	if (quota !== undefined && (!isSafeInteger(quota) || quota < 0)) {
 		throw new Error('Storage quota must be a non-negative integer')
 	}
 	const storage = new WebStorage(options, quota)
